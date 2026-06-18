@@ -1,5 +1,0 @@
-https://developer.xamarin.com/api/type/OpenTK.Input.Key/
-Number0=Vanilla:Torch
-Number1=Vanilla:Dirt
-Number2=Vanilla:Glass
-Number3=Vanilla:TintedGlass

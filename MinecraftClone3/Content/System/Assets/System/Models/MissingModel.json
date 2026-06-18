@@ -1,0 +1,6 @@
+{
+    "parent": "CubeAll",
+    "textures": {
+        "all": "Textures/Blocks/MissingTexture.png"
+    }
+}

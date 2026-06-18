@@ -5,6 +5,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
 using MinecraftClone3API.Blocks;
+using MinecraftClone3API.IO;
 
 namespace MinecraftClone3API.Util
 {
@@ -28,7 +29,6 @@ namespace MinecraftClone3API.Util
 
         private const int MaxCachedIndexDatas = 6;
 
-        private const string WorldFolder = "World";
         private const string RegionsFolder = "Regions";
 
         private const string RegionIndexExt = ".ri";
@@ -44,7 +44,7 @@ namespace MinecraftClone3API.Util
             if (!chunk.NeedsSaving) return;
 
             var region = ChunkToRegion(chunk.Position);
-            var regionFilename = Path.Combine(WorldFolder, RegionsFolder, GetRegionFilename(region));
+            var regionFilename = Path.Combine(GamePaths.WorldDir, RegionsFolder, GetRegionFilename(region));
             var indexFile = new FileInfo(regionFilename + RegionIndexExt);
             var dataFile = new FileInfo(regionFilename + RegionDataExt);
             // ReSharper disable once PossibleNullReferenceException
@@ -106,7 +106,7 @@ namespace MinecraftClone3API.Util
         public static CachedChunk LoadChunk(WorldServer world, Vector3i chunkPos)
         {
             var region = ChunkToRegion(chunkPos);
-            var regionFilename = Path.Combine(WorldFolder, RegionsFolder, GetRegionFilename(region));
+            var regionFilename = Path.Combine(GamePaths.WorldDir, RegionsFolder, GetRegionFilename(region));
             var indexFile = new FileInfo(regionFilename + RegionIndexExt);
             var dataFile = new FileInfo(regionFilename + RegionDataExt);
 

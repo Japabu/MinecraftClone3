@@ -16,6 +16,37 @@
 
   <ItemGroup>
     <ProjectReference Include="..\MinecraftClone3API\MinecraftClone3API.csproj" />
+    <!-- Build VanillaPlugin before us, but don't link or copy its assembly into our root;
+         CopyVanillaPlugin assembles it into Plugins\VanillaPlugin\ instead. -->
+    <ProjectReference Include="..\VanillaPlugin\VanillaPlugin.csproj"
+                      ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
+
+  <!-- Stage the System plugin and keybindings next to the binary so the game runs from
+       AppContext.BaseDirectory regardless of the current working directory. -->
+  <ItemGroup>
+    <Content Include="Content\System\**\*"
+             Link="Plugins\System\%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Content\Keybindings.txt" Link="Keybindings.txt"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Assemble VanillaPlugin (content + freshly built DLL under Dlls\) into the client's
+       Plugins\VanillaPlugin\ folder, matching its PluginInfo.json layout. -->
+  <Target Name="CopyVanillaPlugin" AfterTargets="Build">
+    <MSBuild Projects="..\VanillaPlugin\VanillaPlugin.csproj" Targets="Build"
+             Properties="Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" ItemName="VanillaPluginDll" />
+    </MSBuild>
+    <ItemGroup>
+      <VanillaPluginContent Include="..\VanillaPlugin\Content\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(VanillaPluginContent)"
+          DestinationFiles="@(VanillaPluginContent->'$(OutDir)Plugins\VanillaPlugin\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(VanillaPluginDll)"
+          DestinationFolder="$(OutDir)Plugins\VanillaPlugin\Dlls" SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>

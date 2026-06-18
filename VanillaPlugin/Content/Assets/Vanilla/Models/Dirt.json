@@ -1,0 +1,6 @@
+{
+    "parent": "Models/CubeAll",
+    "textures": {
+        "all": "Textures/Blocks/Dirt"
+    }
+}

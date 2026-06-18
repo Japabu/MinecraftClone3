@@ -1,0 +1,4 @@
+{
+	"PluginName": "Vanilla",
+	"PluginDlls": ["Dlls/VanillaPlugin.dll"]
+}

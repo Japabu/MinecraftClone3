@@ -1,0 +1,7 @@
+https://opentk.net/api/OpenTK.Windowing.GraphicsLibraryFramework.Keys.html
+D1=Vanilla:Dirt
+D2=Vanilla:Grass
+D3=Vanilla:Stone
+D4=Vanilla:DirtStairs
+D5=Vanilla:BrewingStand
+D6=Vanilla:Torch

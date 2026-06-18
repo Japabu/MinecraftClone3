@@ -1,9 +1,0 @@
-{
-    "parent": "Stairs",
-    "textures": {
-        "particle": "Textures/Blocks/Dirt",
-        "bottom": "Textures/Blocks/Dirt",
-        "top": "Textures/Blocks/Dirt",
-        "side": "Textures/Blocks/Dirt"
-    }
-}

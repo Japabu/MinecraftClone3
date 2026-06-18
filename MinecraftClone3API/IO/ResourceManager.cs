@@ -24,7 +24,7 @@ namespace MinecraftClone3API.IO
             }
         }
 
-        private const string ResourceSettingsFile = "ResourceSettings.json";
+        private static string ResourceSettingsFile => GamePaths.ResourceSettingsFile;
         private const string AssetsDir = "Assets/";
         private const string LangDir = "Lang/";
         private const string LangExt = ".lang";

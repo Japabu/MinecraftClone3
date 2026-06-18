@@ -62,17 +62,24 @@ namespace MinecraftClone3API.Client
 
             //TODO: Remove
 
-            var lines = File.ReadAllLines("Keybindings.txt");
-            foreach (var line in lines)
+            if (File.Exists(GamePaths.KeybindingsFile))
             {
-                var splits = line.Split('=');
-
-                if (splits.Length != 2) continue;
-
-                if (Enum.TryParse(splits[0], true, out Keys key))
+                var lines = File.ReadAllLines(GamePaths.KeybindingsFile);
+                foreach (var line in lines)
                 {
-                    Keybindings.Add(key, splits[1]);
+                    var splits = line.Split('=');
+
+                    if (splits.Length != 2) continue;
+
+                    if (Enum.TryParse(splits[0], true, out Keys key))
+                    {
+                        Keybindings.Add(key, splits[1]);
+                    }
                 }
+            }
+            else
+            {
+                Logger.Error($"Keybindings file \"{GamePaths.KeybindingsFile}\" was not found!");
             }
         }
 

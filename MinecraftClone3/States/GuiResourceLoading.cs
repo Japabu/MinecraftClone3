@@ -29,7 +29,7 @@ namespace MinecraftClone3.States
             _window = window;
 
             CommonResources.Load();
-            PluginManager.AddPlugin(new FileSystemRaw(new DirectoryInfo(Path.Combine("Plugins", "System"))));
+            PluginManager.AddPlugin(new FileSystemRaw(new DirectoryInfo(Path.Combine(GamePaths.PluginsDir, "System"))));
             ResourceReader.ClearCache();
             ClientResources.Load(window);
             BoundingBoxRenderer.Load();
@@ -77,7 +77,7 @@ namespace MinecraftClone3.States
             if (!reload)
             {
                 //Add plugins in "Plugins" dir
-                var pluginsDir = new DirectoryInfo("Plugins");
+                var pluginsDir = new DirectoryInfo(GamePaths.PluginsDir);
                 foreach (var dir in pluginsDir.EnumerateDirectories())
                     PluginManager.AddPlugin(new FileSystemRaw(dir));
                 foreach (var file in pluginsDir.EnumerateFiles())
