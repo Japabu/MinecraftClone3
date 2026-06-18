@@ -1,14 +1,14 @@
 ﻿using System.IO;
-using System.Threading;
 using MinecraftClone3API.Client;
 using MinecraftClone3API.Client.Graphics;
 using MinecraftClone3API.Client.GUI;
+using MinecraftClone3API.Client.StateSystem;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Plugins;
 using MinecraftClone3API.Util;
-using OpenTK;
-using OpenTK.Graphics;
+using OpenTK.Mathematics;
+using OpenTK.Windowing.Desktop;
 
 namespace MinecraftClone3.States
 {
@@ -18,14 +18,18 @@ namespace MinecraftClone3.States
         private static Texture _progressBar;
         private static Texture _progressBarFull;
 
-        private Thread _thread;
+        private bool _done;
         private int _progress;
         private string _text;
 
+        private readonly GameWindow _window;
+
         public GuiResourceLoading(GameWindow window)
         {
+            _window = window;
+
             CommonResources.Load();
-            PluginManager.AddPlugin(new FileSystemRaw(new DirectoryInfo("Plugins\\System")));
+            PluginManager.AddPlugin(new FileSystemRaw(new DirectoryInfo(Path.Combine("Plugins", "System"))));
             ResourceReader.ClearCache();
             ClientResources.Load(window);
             BoundingBoxRenderer.Load();
@@ -44,9 +48,9 @@ namespace MinecraftClone3.States
 
         public override void Update()
         {
-            if (_thread.IsAlive) return;
-            //IsDead = true;
-            //StateEngine.AddState(new StateMainMenu());
+            if (!_done) return;
+            IsDead = true;
+            StateEngine.AddState(new StateWorld(_window));
         }
 
         public override void Render()
@@ -60,26 +64,12 @@ namespace MinecraftClone3.States
 
         private void Start(bool reload)
         {
-            ClientResources.Window.Context.MakeCurrent(null);
-            var contextReady = new EventWaitHandle(false, EventResetMode.AutoReset);
-            _thread = new Thread(() =>
-                {
-                    var window = new NativeWindow();
-                    var context = new GraphicsContext(GraphicsMode.Default, window.WindowInfo);
-                    context.MakeCurrent(window.WindowInfo);
-                    contextReady.Set();
-
-                    Work(reload);
-
-                    context.MakeCurrent(null);
-                    context.Dispose();
-                    window.Dispose();
-                })
-                {IsBackground = true};
-            _thread.Start();
-
-            contextReady.WaitOne();
-            ClientResources.Window.MakeCurrent();
+            // The OpenTK 2 build loaded resources on a second thread with its own shared GL
+            // context. macOS/NSGL does not support creating a second shared context this way
+            // (GLFW also requires windows on the main thread), so resources are uploaded
+            // synchronously on the main thread, which already owns the GL context.
+            Work(reload);
+            _done = true;
         }
 
         private void Work(bool reload)
@@ -103,11 +93,6 @@ namespace MinecraftClone3.States
                     Logger.Debug($"{I18N.GetOrdinal(state)} {plugin} ({_progress}%)");
                 });
 
-            _progress = 50;
-            _text = $"{I18N.Get("system.loading.resources.uploadTextures")} ({_progress}%)";
-            Logger.Debug($"{I18N.GetOrdinal("system.loading.resources.uploadTextures")} ({_progress}%)");
-            BlockTextureManager.Upload();
-
             if (!reload)
             {
                 //Load plugins
@@ -119,6 +104,14 @@ namespace MinecraftClone3.States
                         Logger.Debug($"{I18N.GetOrdinal(state)} {plugin} ({_progress}%)");
                     });
             }
+
+            // Blocks load their models/textures in their constructors, which run while plugins
+            // register them in LoadPlugins (Load). The GPU texture arrays must therefore be built
+            // afterwards, otherwise they would be uploaded empty and every block samples as black.
+            _progress = 100;
+            _text = $"{I18N.Get("system.loading.resources.uploadTextures")} ({_progress}%)";
+            Logger.Debug($"{I18N.GetOrdinal("system.loading.resources.uploadTextures")} ({_progress}%)");
+            BlockTextureManager.Upload();
         }
     }
 }

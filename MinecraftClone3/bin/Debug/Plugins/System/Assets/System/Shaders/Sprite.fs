@@ -1,12 +1,12 @@
-#version 430
+#version 410 core
 
-layout(location = 0) in vec2 inTexCoord;
+in vec2 outTexCoord;
 
-layout(location = 0) out vec4 outColor;
+out vec4 outColor;
 
-layout(binding = 0) uniform sampler2D uTexture;
+uniform sampler2D uTexture;
 
-void main()		
+void main()
 {
-	outColor = texture(uTexture, inTexCoord);
+	outColor = texture(uTexture, outTexCoord);
 }

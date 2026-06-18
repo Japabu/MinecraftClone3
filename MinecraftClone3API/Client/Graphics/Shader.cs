@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Runtime.Remoting.Messaging;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
 using OpenTK.Graphics.OpenGL4;
@@ -48,6 +47,8 @@ namespace MinecraftClone3API.Graphics
         }
 
         public void Bind() => GL.UseProgram(_programId);
+
+        public int GetUniformLocation(string name) => GL.GetUniformLocation(_programId, name);
 
 
         private void AttachShader(ShaderType type, string source)

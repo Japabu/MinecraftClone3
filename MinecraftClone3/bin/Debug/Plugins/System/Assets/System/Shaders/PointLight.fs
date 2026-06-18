@@ -1,16 +1,16 @@
-#version 430
+#version 410 core
 
-layout(location = 0) in vec2 inTexCoord;
+in vec2 vTexCoord;
 
 layout(location = 0) out vec4 outColor;
 
-layout(location = 0) uniform mat4 uViewProjectionInv;
-layout(location = 4) uniform vec3 uLightPosition;
-layout(location = 5) uniform vec3 uLightColor;
-layout(location = 6) uniform float uLightRange;
+uniform mat4 uViewProjectionInv;
+uniform vec3 uLightPosition;
+uniform vec3 uLightColor;
+uniform float uLightRange;
 
-layout(binding = 1) uniform sampler2D uNormal;
-layout(binding = 2) uniform sampler2D uDepth;
+uniform sampler2D uNormal;
+uniform sampler2D uDepth;
 
 vec4 DecodeNormal(vec4 normal)
 {
@@ -19,15 +19,15 @@ vec4 DecodeNormal(vec4 normal)
 
 vec3 PositionFromDepth(float depth)
 {
-	vec4 clipSpace = vec4(inTexCoord*2 - 1, depth, 1);
+	vec4 clipSpace = vec4(vTexCoord*2 - 1, depth, 1);
 	vec4 homogenousCoord = uViewProjectionInv*clipSpace;
 	return homogenousCoord.xyz/homogenousCoord.w;
 }
 
-void main()		
+void main()
 {
-	vec4 normal = DecodeNormal(texture(uNormal, inTexCoord));
-	float depth = texture(uDepth, inTexCoord).x * 2 - 1;
+	vec4 normal = DecodeNormal(texture(uNormal, vTexCoord));
+	float depth = texture(uDepth, vTexCoord).x * 2 - 1;
 	vec3 position = PositionFromDepth(depth);
 
 	vec3 pixelToLight = uLightPosition - position;

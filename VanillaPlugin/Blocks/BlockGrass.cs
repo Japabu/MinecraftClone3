@@ -1,7 +1,7 @@
 ﻿using System;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Util;
-using OpenTK.Graphics;
+using OpenTK.Mathematics;
 
 namespace VanillaPlugin.Blocks
 {

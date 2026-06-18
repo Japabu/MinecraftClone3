@@ -1,5 +1,5 @@
 ﻿using MinecraftClone3API.Util;
-using OpenTK;
+using OpenTK.Mathematics;
 using OpenTK.Graphics.OpenGL;
 
 namespace MinecraftClone3API.Entities

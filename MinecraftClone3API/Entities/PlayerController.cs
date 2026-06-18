@@ -1,11 +1,12 @@
-﻿using System;
+using System;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Client;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
-using OpenTK;
-using OpenTK.Input;
+using OpenTK.Mathematics;
+using OpenTK.Windowing.Desktop;
+using OpenTK.Windowing.GraphicsLibraryFramework;
 
 namespace MinecraftClone3API.Entities
 {
@@ -14,9 +15,8 @@ namespace MinecraftClone3API.Entities
         public static EntityPlayer PlayerEntity;
         public static Camera Camera = new Camera();
 
-        private static MouseState? _oldMouseState;
         private static BlockRaytraceResult _blockRaytrace;
-        private static string _currentBlock = "Vanilla:Torch";
+        private static string _currentBlock = "Vanilla:Stone";
 
         public static void SetEntity(EntityPlayer playerEntity)
         {
@@ -27,22 +27,22 @@ namespace MinecraftClone3API.Entities
         public static void Update(GameWindow window, WorldServer world)
         {
             _blockRaytrace = world.BlockRaytrace(PlayerEntity.Position, PlayerEntity.Forward, 8);
-            
-            if (!window.Focused) return;
 
-            var ks = Keyboard.GetState();
+            if (!window.IsFocused) return;
+
+            var ks = window.KeyboardState;
             var a = Vector3.Zero;
-            if (ks.IsKeyDown(Key.A))
+            if (ks.IsKeyDown(Keys.A))
                 a.X -= 1;
-            if (ks.IsKeyDown(Key.D))
+            if (ks.IsKeyDown(Keys.D))
                 a.X += 1;
-            if (ks.IsKeyDown(Key.ShiftLeft))
+            if (ks.IsKeyDown(Keys.LeftShift))
                 a.Y -= 1;
-            if (ks.IsKeyDown(Key.Space))
+            if (ks.IsKeyDown(Keys.Space))
                 a.Y += 1;
-            if (ks.IsKeyDown(Key.S))
+            if (ks.IsKeyDown(Keys.S))
                 a.Z -= 1;
-            if (ks.IsKeyDown(Key.W))
+            if (ks.IsKeyDown(Keys.W))
                 a.Z += 1;
             if (Math.Abs(a.LengthSquared) > 0.0001f)
                 PlayerEntity.Move(a.Normalized() * 0.08f);
@@ -52,20 +52,16 @@ namespace MinecraftClone3API.Entities
                 if (ks.IsKeyDown(keybinding.Key)) _currentBlock = keybinding.Value;
             }
 
-            var ms = Mouse.GetState();
-            if (_oldMouseState != null)
-            {
-                var pitch = _oldMouseState.Value.Y - ms.Y;
-                var yaw = _oldMouseState.Value.X - ms.X;
-                PlayerEntity.Rotate(pitch * 0.008f, yaw * 0.008f);
+            var ms = window.MouseState;
+            // MouseState.Delta is the movement since the previous frame; the cursor is kept
+            // grabbed/centered by the window so there is no need to reposition it manually.
+            var delta = ms.Delta;
+            PlayerEntity.Rotate(-delta.Y * 0.008f, -delta.X * 0.008f);
 
-                if (_oldMouseState.Value.LeftButton == ButtonState.Released && ms.LeftButton == ButtonState.Pressed)
-                    BreakBlock(world);
-                if (_oldMouseState.Value.RightButton == ButtonState.Released && ms.RightButton == ButtonState.Pressed)
-                    PlaceBlock(world);
-            }
-            _oldMouseState = ms;
-            Mouse.SetPosition(window.X + window.Width / 2, window.Y + window.Height / 2);
+            if (ms.IsButtonDown(MouseButton.Left) && !ms.WasButtonDown(MouseButton.Left))
+                BreakBlock(world);
+            if (ms.IsButtonDown(MouseButton.Right) && !ms.WasButtonDown(MouseButton.Right))
+                PlaceBlock(world);
 
             Camera.Update();
         }
@@ -86,7 +82,7 @@ namespace MinecraftClone3API.Entities
 
         public static void ResetMouse()
         {
-            _oldMouseState = Mouse.GetState();
+            // Mouse-look uses per-frame deltas now; nothing to reset.
         }
 
         public static void Render(Camera camera, Matrix4 projection)

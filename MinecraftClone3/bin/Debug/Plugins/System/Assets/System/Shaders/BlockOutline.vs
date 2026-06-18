@@ -1,10 +1,10 @@
-#version 430
+#version 410 core
 
 layout(location = 0) in vec3 inPosition;
 
-layout(location = 0) uniform mat4 uTransform;
+uniform mat4 uTransform;
 
-void main()		
+void main()
 {
 	gl_Position = uTransform*vec4(inPosition, 1);
-} 
+}

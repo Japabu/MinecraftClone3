@@ -1,7 +1,7 @@
 ﻿using System;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using OpenTK;
+using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.IO
 {

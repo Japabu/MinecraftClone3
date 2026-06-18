@@ -4,8 +4,7 @@ using MinecraftClone3API.Client;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
-using OpenTK;
-using OpenTK.Graphics;
+using OpenTK.Mathematics;
 using OpenTK.Graphics.OpenGL4;
 
 namespace MinecraftClone3API.Graphics
@@ -85,33 +84,42 @@ namespace MinecraftClone3API.Graphics
             ClientResources.GeometryFramebuffer.Clear(Color4.DarkBlue);
             //ClientResources.GeometryFramebuffer.Clear(Color4.Transparent);    Breaks transparency
 
-            ClientResources.WorldGeometryShader.Bind();
-            GL.UniformMatrix4(4, false, ref camera.View);
-            GL.UniformMatrix4(8, false, ref projection);
-            GL.Uniform1(12, 1);
+            var shader = ClientResources.WorldGeometryShader;
+            shader.Bind();
+            // Uniform/sampler locations are queried by name (GLSL 4.10 has no explicit
+            // layout(location=)/layout(binding=) for uniforms; macOS caps OpenGL at 4.1).
+            var uWorld = shader.GetUniformLocation("uWorld");
+            var uCutoff = shader.GetUniformLocation("uCutoff");
+            GL.UniformMatrix4(shader.GetUniformLocation("uView"), false, ref camera.View);
+            GL.UniformMatrix4(shader.GetUniformLocation("uProjection"), false, ref projection);
+            GL.Uniform1(uCutoff, 1);
+            GL.Uniform1(shader.GetUniformLocation("uTextures16"), 0);
+            GL.Uniform1(shader.GetUniformLocation("uTextures64"), 1);
+            GL.Uniform1(shader.GetUniformLocation("uTextures256"), 2);
+            GL.Uniform1(shader.GetUniformLocation("uTextures1024"), 3);
 
             BlockTextureManager.Bind();
             Samplers.BindBlockTextureSampler();
-            
+
             //Draw opaque blocks front to back
             foreach (var chunk in chunksToDraw)
             {
                 var worldMat = Matrix4.CreateTranslation(chunk.Position.X * Chunk.Size, chunk.Position.Y * Chunk.Size,
                     chunk.Position.Z * Chunk.Size);
-                GL.UniformMatrix4(0, false, ref worldMat);
+                GL.UniformMatrix4(uWorld, false, ref worldMat);
                 chunk.Draw();
             }
 
             GL.Enable(EnableCap.Blend);
-            GL.BlendFunc(BlendingFactorSrc.SrcAlpha, BlendingFactorDest.OneMinusSrcAlpha);
-            GL.Uniform1(12, 0);
+            GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+            GL.Uniform1(uCutoff, 0);
 
             //Draw transparent blocks back to front
             foreach (var chunk in transparentChunks)
             {
                 var worldMat = Matrix4.CreateTranslation(chunk.Position.X * Chunk.Size, chunk.Position.Y * Chunk.Size,
                     chunk.Position.Z * Chunk.Size);
-                GL.UniformMatrix4(0, false, ref worldMat);
+                GL.UniformMatrix4(uWorld, false, ref worldMat);
                 chunk.DrawTransparent();
             }
 
@@ -120,7 +128,7 @@ namespace MinecraftClone3API.Graphics
             //TODO: Entities
             PlayerController.Render(camera, projection);
 
-            ClientResources.GeometryFramebuffer.Unbind(ClientResources.Window.Width, ClientResources.Window.Height);
+            ClientResources.GeometryFramebuffer.Unbind(ClientResources.Window.FramebufferSize.X, ClientResources.Window.FramebufferSize.Y);
         }
 
         private static void DrawLightFramebuffer(WorldServer world, Matrix4 viewProjectionInv, Frustum viewFrustum)
@@ -149,7 +157,7 @@ namespace MinecraftClone3API.Graphics
                 ClientResources.ScreenRectVao.Draw();
             }
             
-            ClientResources.LightFramebuffer.Unbind(Program.Window.Width, Program.Window.Height);
+            ClientResources.LightFramebuffer.Unbind(Program.Window.FramebufferSize.X, Program.Window.FramebufferSize.Y);
 
             GL.Disable(EnableCap.Blend);
             */
@@ -162,9 +170,15 @@ namespace MinecraftClone3API.Graphics
 
             //GL.Enable(EnableCap.Blend);
 
+            // BindTexturesAndSamplers binds the geometry light buffer (baked block lighting) to
+            // unit 3, so the separate deferred LightFramebuffer is no longer bound here.
             ClientResources.GeometryFramebuffer.BindTexturesAndSamplers();
-            ClientResources.LightFramebuffer.Texture.Bind(TextureUnit.Texture3);
-            ClientResources.CompositionShader.Bind();
+            var comp = ClientResources.CompositionShader;
+            comp.Bind();
+            GL.Uniform1(comp.GetUniformLocation("uDiffuse"), 0);
+            GL.Uniform1(comp.GetUniformLocation("uNormal"), 1);
+            GL.Uniform1(comp.GetUniformLocation("uDepth"), 2);
+            GL.Uniform1(comp.GetUniformLocation("uLight"), 3);
             ClientResources.ScreenRectVao.Draw();
 
             //GL.Disable(EnableCap.Blend);

@@ -1,16 +1,17 @@
 ﻿using MinecraftClone3API.Blocks;
+using MinecraftClone3API.Client;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
-using OpenTK.Input;
+using OpenTK.Windowing.GraphicsLibraryFramework;
 using VanillaPlugin.BlockDatas;
 
 namespace VanillaPlugin.Blocks
 {
     public class BlockTintedGlass : Block
     {
-        private static readonly Key[] Keys = {Key.U, Key.I, Key.O, Key.P};
+        private static readonly Keys[] BindKeys = {Keys.U, Keys.I, Keys.O, Keys.P};
         private static readonly string[] TextureNames =
         {
             "Vanilla/Textures/Blocks/glass_black.png",
@@ -54,10 +55,10 @@ namespace VanillaPlugin.Blocks
         public override void OnPlaced(WorldBase world, Vector3i blockPos, EntityPlayer player)
         {
             var m = 0;
-            var ks = Keyboard.GetState();
-            for (var i = 0; i < Keys.Length; i++)
+            var ks = ClientResources.Window.KeyboardState;
+            for (var i = 0; i < BindKeys.Length; i++)
             {
-                if (!ks.IsKeyDown(Keys[i])) continue;
+                if (!ks.IsKeyDown(BindKeys[i])) continue;
 
                 m = i;
                 break;

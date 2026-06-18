@@ -119,6 +119,11 @@ namespace MinecraftClone3API.Util
             lock (IndexLockObject)
             {
                 var chunkIndexData = GetIndexData(region, indexFile);
+                // A region whose index file was truncated (e.g. the process was killed mid-save)
+                // decompresses to fewer bytes than expected; treat it as unsaved rather than
+                // reading past the end of the buffer and crashing the load thread.
+                if (chunkIndexData.Length < chunkIndexPosition + sizeof(int) * 2)
+                    return null;
                 chunkDataPosition = BitConverter.ToInt32(chunkIndexData, chunkIndexPosition);
                 chunkDataLength = BitConverter.ToInt32(chunkIndexData, chunkIndexPosition + sizeof(int));
             }

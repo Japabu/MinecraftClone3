@@ -21,7 +21,7 @@ namespace MinecraftClone3API.IO
 
         public override byte[] ReadFile(string path)
         {
-            var fullPath = Path.Combine(_dir.FullName, path.Replace("/", "\\"));
+            var fullPath = Path.Combine(_dir.FullName, path.Replace('/', Path.DirectorySeparatorChar));
             if (!File.Exists(fullPath))
                 throw new FileNotFoundException("File could not be found in the raw file system!", fullPath);
             return File.ReadAllBytes(fullPath);
@@ -32,7 +32,7 @@ namespace MinecraftClone3API.IO
         {
             foreach (var file in currentDir.EnumerateFiles())
             {
-                var relativePath = file.FullName.Substring(rootDir.FullName.Length + 1).Replace("\\", "/");
+                var relativePath = file.FullName.Substring(rootDir.FullName.Length + 1).Replace(Path.DirectorySeparatorChar, '/');
                 list.Add(relativePath);
             }
 

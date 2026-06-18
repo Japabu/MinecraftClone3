@@ -2,7 +2,7 @@
 using System.Linq;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Graphics;
-using OpenTK;
+using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Util
 {
@@ -169,7 +169,12 @@ namespace MinecraftClone3API.Util
             var pos = blockPos + normal;
             var offset = (vertexPosition * 2).ToVector3i();
 
-            if ((offset - normal * normal).LengthSquared != 2)
+            // Strip the vertex offset's component along the face normal, leaving the two tangential
+            // components. For a real face corner those are both +-1, so length squared == 2.
+            // Note: subtract (offset * normal*normal), not (normal*normal): normal*normal is always a
+            // positive axis mask, so on negative-normal faces (left/bottom/back) it left a -2 on the
+            // normal axis and every vertex was wrongly treated as a non-corner, leaving those faces unlit.
+            if ((offset - offset * (normal * normal)).LengthSquared != 2)
             {
                 //If vertex is not a corner do not apply ambient occlusion but apply the blocks own brightness
                 return LightLevelToBrightness(world.GetBlockLightLevel(blockPos).Vector3);
@@ -214,11 +219,9 @@ namespace MinecraftClone3API.Util
             return lightValue / 4;
         }
 
-#if false
+        // Falloff per light level: brightness = Base^(15 - level). Base must be < 1 for darker
+        // areas to actually look darker; Base = 1 flattens every level to full brightness.
         private const float Base = 0.8f;
-#else
-        private const float Base = 1f;
-#endif
         //private const float CustomBase = 0.897499991f;
 
         private static Vector3 LightLevelToBrightness(Vector3 lightLevel)

@@ -1,7 +1,5 @@
-﻿using System.Runtime.Remoting.Messaging;
-using OpenTK.Graphics.OpenGL4;
+﻿using OpenTK.Graphics.OpenGL4;
 using GLPixelFormat = OpenTK.Graphics.OpenGL4.PixelFormat;
-using ExtTextureFilterAnisotropic = OpenTK.Graphics.OpenGL.ExtTextureFilterAnisotropic;
 
 namespace MinecraftClone3API.Graphics
 {
@@ -27,8 +25,8 @@ namespace MinecraftClone3API.Graphics
             Height = data.Height;
 
             Bind(TextureUnit.Texture0);
-            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba, Width, Height, 0, GLPixelFormat.Bgra,
-                PixelType.UnsignedByte, data.DataPtr);
+            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba, Width, Height, 0, GLPixelFormat.Rgba,
+                PixelType.UnsignedByte, data.Pixels);
             GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
 
             data.Dispose();

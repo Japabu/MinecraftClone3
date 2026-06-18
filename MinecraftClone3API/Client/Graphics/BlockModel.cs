@@ -6,7 +6,7 @@ using MinecraftClone3API.Client;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
 using Newtonsoft.Json;
-using OpenTK;
+using OpenTK.Mathematics;
 // ReSharper disable InconsistentNaming
 
 namespace MinecraftClone3API.Graphics

@@ -3,8 +3,7 @@ using MinecraftClone3API.Entities;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
-using OpenTK;
-using OpenTK.Graphics;
+using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Blocks
 {

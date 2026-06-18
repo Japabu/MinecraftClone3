@@ -1,8 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using OpenTK;
-using OpenTK.Graphics;
+using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Util
 {

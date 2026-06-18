@@ -1,6 +1,7 @@
-https://developer.xamarin.com/api/type/OpenTK.Input.Key/
-Number1=Vanilla:Dirt
-Number2=Vanilla:Grass
-Number3=Vanilla:Stone
-Number4=Vanilla:DirtStairs
-Number5=Vanilla:BrewingStand
+https://opentk.net/api/OpenTK.Windowing.GraphicsLibraryFramework.Keys.html
+D1=Vanilla:Dirt
+D2=Vanilla:Grass
+D3=Vanilla:Stone
+D4=Vanilla:DirtStairs
+D5=Vanilla:BrewingStand
+D6=Vanilla:Torch

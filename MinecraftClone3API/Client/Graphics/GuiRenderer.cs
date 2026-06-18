@@ -1,6 +1,6 @@
 ﻿using MinecraftClone3API.Graphics;
 using MinecraftClone3API.Util;
-using OpenTK;
+using OpenTK.Mathematics;
 using OpenTK.Graphics.OpenGL4;
 
 namespace MinecraftClone3API.Client.Graphics
@@ -33,10 +33,13 @@ namespace MinecraftClone3API.Client.Graphics
             //Convert to clip space (-1)-(+1)
             rect = rect * 2 + new Vector4(-1);
 
-            ClientResources.SpriteShader.Bind();
+            var shader = ClientResources.SpriteShader;
+            shader.Bind();
 
-            GL.Uniform4(0, rect);
-            GL.Uniform4(1, uvRect);
+            // Uniform locations are queried by name rather than declared with explicit
+            // layout(location=) qualifiers, which require GLSL 4.30 (macOS caps at 4.10).
+            GL.Uniform4(shader.GetUniformLocation("uRect"), rect);
+            GL.Uniform4(shader.GetUniformLocation("uUVRect"), uvRect);
 
             texture.Bind(TextureUnit.Texture0);
             ClientResources.ScreenRectVao.Draw();

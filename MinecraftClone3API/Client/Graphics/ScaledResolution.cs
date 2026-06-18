@@ -1,4 +1,4 @@
-﻿using OpenTK;
+﻿using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Client.Graphics
 {
@@ -17,8 +17,8 @@ namespace MinecraftClone3API.Client.Graphics
 
         public static void Update()
         {
-            var width = ClientResources.Window.Width;
-            var height = ClientResources.Window.Height;
+            var width = ClientResources.Window.FramebufferSize.X;
+            var height = ClientResources.Window.FramebufferSize.Y;
 
             PixelSize = new Vector2(1f / width, 1f / height);
             Resolution = new Vector2(width, height);

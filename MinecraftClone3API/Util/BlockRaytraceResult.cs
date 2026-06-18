@@ -1,5 +1,5 @@
 ﻿using MinecraftClone3API.Blocks;
-using OpenTK;
+using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Util
 {

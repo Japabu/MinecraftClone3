@@ -15,8 +15,11 @@ namespace MinecraftClone3API.Graphics
             GL.SamplerParameter(_blockTexture, SamplerParameterName.TextureMaxAnisotropyExt, 16);
 
             _framebufferTexture = GL.GenSampler();
-            GL.SamplerParameter(_blockTexture, SamplerParameterName.TextureMinFilter, (float)TextureMinFilter.Nearest);
-            GL.SamplerParameter(_blockTexture, SamplerParameterName.TextureMagFilter, (float)TextureMinFilter.Nearest);
+            // The G-buffer attachments have no mipmaps; leaving this sampler at the GL default
+            // (NEAREST_MIPMAP_LINEAR) makes them texture-incomplete when sampled in the
+            // composition pass, so it reads zero and the whole screen renders black.
+            GL.SamplerParameter(_framebufferTexture, SamplerParameterName.TextureMinFilter, (float)TextureMinFilter.Nearest);
+            GL.SamplerParameter(_framebufferTexture, SamplerParameterName.TextureMagFilter, (float)TextureMinFilter.Nearest);
         }
 
         public static void BindBlockTextureSampler()

@@ -1,32 +1,24 @@
-﻿using System;
-using System.Drawing;
-using System.Drawing.Imaging;
+using System;
 
 namespace MinecraftClone3API.Graphics
 {
     public class TextureData : IDisposable
     {
-        private readonly Bitmap _bmp;
-        private readonly bool _ownsBmp;
+        // RGBA8 pixel data, top-left origin (matches the legacy System.Drawing behaviour).
+        public readonly byte[] Pixels;
+        public readonly int Width;
+        public readonly int Height;
 
-        public readonly BitmapData Data;
-        public int Width => Data.Width;
-        public int Height => Data.Height;
-        public IntPtr DataPtr => Data.Scan0;
-
-        public TextureData(Bitmap bitmap)
+        public TextureData(byte[] pixels, int width, int height)
         {
-            _bmp = bitmap;
-            _ownsBmp = false;
-
-            Data = bitmap.LockBits(new Rectangle(new Point(0, 0), bitmap.Size), ImageLockMode.ReadOnly,
-                PixelFormat.Format32bppArgb);
+            Pixels = pixels;
+            Width = width;
+            Height = height;
         }
 
         public void Dispose()
         {
-            _bmp.UnlockBits(Data);
-            if(_ownsBmp) _bmp.Dispose();
+            // Pixel data is a managed array; nothing unmanaged to release.
         }
     }
 }

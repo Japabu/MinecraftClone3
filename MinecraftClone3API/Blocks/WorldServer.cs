@@ -1,11 +1,12 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Util;
-using OpenTK;
+using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Blocks
 {
@@ -20,7 +21,9 @@ namespace MinecraftClone3API.Blocks
         private readonly Queue<Chunk> _chunksReadyToUploadHp = new Queue<Chunk>();
         private readonly Queue<Chunk> _chunksReadyToUploadLp = new Queue<Chunk>();
 
-        private readonly HashSet<Vector3i> _populatedChunks = new HashSet<Vector3i>();
+        // Thread-safe set: read/written by both the main thread (Update) and the load thread.
+        // ConcurrentDictionary used as a set (the value is ignored).
+        private readonly ConcurrentDictionary<Vector3i, byte> _populatedChunks = new ConcurrentDictionary<Vector3i, byte>();
 
         private readonly Queue<Chunk> _queuedChunkUpdatesHp = new Queue<Chunk>();
         private readonly Queue<Chunk> _queuedChunkUpdatesLp = new Queue<Chunk>();
@@ -65,10 +68,7 @@ namespace MinecraftClone3API.Blocks
             {
                 chunk = new Chunk(this, chunkInWorld);
                 chunk.SetBlock(blockInChunk, block.Id);
-                lock (LoadedChunks)
-                {
-                    LoadedChunks.Add(chunkInWorld, chunk);
-                }
+                LoadedChunks[chunkInWorld] = chunk;
             }
 
             if (!update) return;
@@ -215,13 +215,9 @@ namespace MinecraftClone3API.Blocks
                 {
                     var chunkPos = _chunksReadyToRemove.First();
 
-                    if (LoadedChunks.TryGetValue(chunkPos, out var chunk))
+                    if (LoadedChunks.TryRemove(chunkPos, out var chunk))
                     {
-                        lock (LoadedChunks)
-                        {
-                            LoadedChunks.Remove(chunkPos);
-                        }
-                        _populatedChunks.Remove(chunkPos);
+                        _populatedChunks.TryRemove(chunkPos, out _);
                         chunk.Dispose();
                     }
 
@@ -234,13 +230,11 @@ namespace MinecraftClone3API.Blocks
                 while (_chunksReadyToAdd.Count > 0)
                 {
                     var entry = _chunksReadyToAdd.First();
-                    lock (LoadedChunks)
-                    {
-                        if(!LoadedChunks.ContainsKey(entry.Key))
-                            LoadedChunks.Add(entry.Key, new Chunk(entry.Value));
-                        else Logger.Error("Chunk has already been loaded! " + entry.Key);
-                    }
-                    _populatedChunks.Add(entry.Key);
+                    if (LoadedChunks.ContainsKey(entry.Key))
+                        Logger.Error("Chunk has already been loaded! " + entry.Key);
+                    else
+                        LoadedChunks[entry.Key] = new Chunk(entry.Value);
+                    _populatedChunks[entry.Key] = 0;
                     _chunksReadyToAdd.Remove(entry.Key);
                 }
             }
@@ -358,8 +352,8 @@ namespace MinecraftClone3API.Blocks
                 var chunksToRemove =
                     chunksWaitingForNeighbours.Where(
                         chunkPos =>
-                            !_populatedChunks.Contains(chunkPos) && !_chunksReadyToAdd.ContainsKey(chunkPos) ||
-                            _populatedChunks.Contains(chunkPos) && !LoadedChunks.ContainsKey(chunkPos)).ToList();
+                            !_populatedChunks.ContainsKey(chunkPos) && !_chunksReadyToAdd.ContainsKey(chunkPos) ||
+                            _populatedChunks.ContainsKey(chunkPos) && !LoadedChunks.ContainsKey(chunkPos)).ToList();
                 chunksToRemove.ForEach(chunkPos => chunksWaitingForNeighbours.Remove(chunkPos));
 
                 //Update chunks waiting for neighbours
@@ -367,7 +361,7 @@ namespace MinecraftClone3API.Blocks
                     chunksWaitingForNeighbours.Where(
                             chunkPos =>
                                 BlockFaceHelper.Faces.All(
-                                    face => _populatedChunks.Contains(chunkPos + face.GetNormali())))
+                                    face => _populatedChunks.ContainsKey(chunkPos + face.GetNormali())))
                         .ToList();
                 foreach (var chunkPos in chunksToUpdate)
                 {
@@ -388,7 +382,7 @@ namespace MinecraftClone3API.Blocks
                             {
                                 var chunkPos = playerChunk + new Vector3i(x, y, z);
                                 if (playerChunksToLoad.Contains(chunkPos)) continue;
-                                if (_populatedChunks.Contains(chunkPos) || _chunksReadyToAdd.ContainsKey(chunkPos))
+                                if (_populatedChunks.ContainsKey(chunkPos) || _chunksReadyToAdd.ContainsKey(chunkPos))
                                 {
                                     //Reset chunk time so it will not be unloaded
                                     if (LoadedChunks.TryGetValue(chunkPos, out var chunk)) chunk.Time = DateTime.Now;
@@ -412,7 +406,7 @@ namespace MinecraftClone3API.Blocks
 
                                 var chunkPos = new Vector3i(playerChunk.X + x, heightMapChunkY + y, playerChunk.Z + z);
                                 
-                                if (_populatedChunks.Contains(chunkPos) || _chunksReadyToAdd.ContainsKey(chunkPos))
+                                if (_populatedChunks.ContainsKey(chunkPos) || _chunksReadyToAdd.ContainsKey(chunkPos))
                                 {
                                     //Reset chunk time so it will not be unloaded
                                     if (LoadedChunks.TryGetValue(chunkPos, out var chunk)) chunk.Time = DateTime.Now;
@@ -444,10 +438,7 @@ namespace MinecraftClone3API.Blocks
                     if (cachedChunk.IsEmpty)
                     {
                         //Empty chunks dont need to be added to LoadedChunks
-                        lock (_populatedChunks)
-                        {
-                            _populatedChunks.Add(chunkPos);
-                        }
+                        _populatedChunks[chunkPos] = 0;
                     }
                     else
                     {
@@ -633,7 +624,6 @@ namespace MinecraftClone3API.Blocks
                 var height = OpenSimplexNoise.Generate((worldMin.X + x)*0.06f, (worldMin.Z + z)*0.06f)*5;
                 height += OpenSimplexNoise.Generate((worldMin.X + x) * 0.1f, (worldMin.Z + z) * 0.1f)*2;
                 //height += OpenSimplexNoise.Generate((worldMin.X + x) * 0.005f, (worldMin.Z + z) * 0.005f) * 10;
-                height = 0;
                 
                     
                     for (var y = 0; y < Chunk.Size; y++)

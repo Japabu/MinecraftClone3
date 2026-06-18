@@ -1,8 +1,7 @@
 ﻿using MinecraftClone3API.Client;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
-using OpenTK;
-using OpenTK.Graphics;
+using OpenTK.Mathematics;
 using OpenTK.Graphics.OpenGL4;
 
 namespace MinecraftClone3API.Graphics
@@ -42,9 +41,10 @@ namespace MinecraftClone3API.Graphics
             var transform = Matrix4.CreateScale(boundingBox.Scale * scale) * Matrix4.CreateTranslation(boundingBox.Translation + translation) *
                         camera.View * projection;
 
-            ClientResources.BlockOutlineShader.Bind();
-            GL.UniformMatrix4(0, false, ref transform);
-            GL.Uniform4(4, Color4.Black);
+            var shader = ClientResources.BlockOutlineShader;
+            shader.Bind();
+            GL.UniformMatrix4(shader.GetUniformLocation("uTransform"), false, ref transform);
+            GL.Uniform4(shader.GetUniformLocation("uColor"), Color4.Black);
 
             _vbo.Draw(BeginMode.Lines);
         }

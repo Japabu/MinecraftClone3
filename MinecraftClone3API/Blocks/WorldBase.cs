@@ -1,14 +1,17 @@
 ﻿using MinecraftClone3API.Entities;
 using MinecraftClone3API.Util;
-using OpenTK;
+using OpenTK.Mathematics;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 
 namespace MinecraftClone3API.Blocks
 {
     public abstract class WorldBase
     {
-        public readonly Dictionary<Vector3i, Chunk> LoadedChunks = new Dictionary<Vector3i, Chunk>();
+        // Concurrent: the main thread mutates it (Update/SetBlock) and renders from it while the
+        // load/unload threads read it. A plain Dictionary corrupts under that concurrent access.
+        public readonly ConcurrentDictionary<Vector3i, Chunk> LoadedChunks = new ConcurrentDictionary<Vector3i, Chunk>();
 
         public static Vector3i ChunkInWorld(Vector3i v) => ChunkInWorld(v.X, v.Y, v.Z);
 

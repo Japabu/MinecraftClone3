@@ -1,8 +1,8 @@
 ﻿using MinecraftClone3API.Blocks;
+using MinecraftClone3API.Client;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
-using OpenTK;
-using OpenTK.Input;
+using OpenTK.Windowing.GraphicsLibraryFramework;
 
 namespace VanillaPlugin.Blocks
 {
@@ -19,9 +19,9 @@ namespace VanillaPlugin.Blocks
         public override LightLevel GetLightLevel(WorldBase world, Vector3i blockPos)
         {
             var l = new LightLevel(15, 11, 11);
-            var ks = Keyboard.GetState();
-            if (ks.IsKeyDown(Key.G)) l = new LightLevel(11, 15, 11);
-            if (ks.IsKeyDown(Key.B)) l = new LightLevel(11, 11, 15);
+            var ks = ClientResources.Window.KeyboardState;
+            if (ks.IsKeyDown(Keys.G)) l = new LightLevel(11, 15, 11);
+            if (ks.IsKeyDown(Keys.B)) l = new LightLevel(11, 11, 15);
             return l;
         }
     }

@@ -1,5 +1,5 @@
 ﻿using System.Linq;
-using OpenTK;
+using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Util
 {

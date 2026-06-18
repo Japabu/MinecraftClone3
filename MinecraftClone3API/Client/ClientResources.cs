@@ -4,8 +4,9 @@ using System.IO;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
-using OpenTK;
-using OpenTK.Input;
+using OpenTK.Mathematics;
+using OpenTK.Windowing.Desktop;
+using OpenTK.Windowing.GraphicsLibraryFramework;
 
 namespace MinecraftClone3API.Client
 {
@@ -31,14 +32,14 @@ namespace MinecraftClone3API.Client
         public static BlockModel MissingModel;
         public static BlockTexture MissingTexture;
 
-        public static readonly Dictionary<Key, string> Keybindings = new Dictionary<Key, string>();
+        public static readonly Dictionary<Keys, string> Keybindings = new Dictionary<Keys, string>();
 
         public static void Load(GameWindow window)
         {
             Window = window;
 
             ResizeFrameBuffers();
-            Window.Resize += (sender, args) => ResizeFrameBuffers();
+            Window.Resize += args => ResizeFrameBuffers();
 
             WorldGeometryShader = ResourceReader.ReadShader(PluginDir + "Shaders/WorldGeometry");
             CompositionShader = ResourceReader.ReadShader(PluginDir + "Shaders/Composition");
@@ -68,7 +69,7 @@ namespace MinecraftClone3API.Client
 
                 if (splits.Length != 2) continue;
 
-                if (Enum.TryParse(splits[0], true, out Key key))
+                if (Enum.TryParse(splits[0], true, out Keys key))
                 {
                     Keybindings.Add(key, splits[1]);
                 }
@@ -78,10 +79,10 @@ namespace MinecraftClone3API.Client
         private static void ResizeFrameBuffers()
         {
             GeometryFramebuffer?.Dispose();
-            GeometryFramebuffer = new GeometryFramebuffer(Window.Width, Window.Height);
+            GeometryFramebuffer = new GeometryFramebuffer(Window.FramebufferSize.X, Window.FramebufferSize.Y);
 
             LightFramebuffer?.Dispose();
-            LightFramebuffer = new TextureFramebuffer(Window.Width, Window.Height, false);
+            LightFramebuffer = new TextureFramebuffer(Window.FramebufferSize.X, Window.FramebufferSize.Y, false);
         }
     }
 }

@@ -1,4 +1,5 @@
-﻿using OpenTK.Graphics.OpenGL4;
+﻿using System;
+using OpenTK.Graphics.OpenGL4;
 
 namespace MinecraftClone3API.Graphics
 {
@@ -16,13 +17,16 @@ namespace MinecraftClone3API.Graphics
 
             _id = GL.GenTexture();
             Bind(TextureUnit.Texture0);
-            GL.TexStorage3D(TextureTarget3d.Texture2DArray, 1, SizedInternalFormat.Rgba8, width, height, count);
+            // Mutable TexImage3D (GL 4.1) instead of TexStorage3D (GL 4.2); GenerateMipmaps()
+            // builds the mip chain afterwards. macOS caps OpenGL at 4.1.
+            GL.TexImage3D(TextureTarget.Texture2DArray, 0, PixelInternalFormat.Rgba8, width, height, count, 0,
+                PixelFormat.Rgba, PixelType.UnsignedByte, IntPtr.Zero);
         }
 
         public void SetTexture(int index, TextureData data)
         {
-            GL.TexSubImage3D(TextureTarget.Texture2DArray, 0, 0, 0, index, data.Width, data.Height, 1, PixelFormat.Bgra,
-                PixelType.UnsignedByte, data.DataPtr);
+            GL.TexSubImage3D(TextureTarget.Texture2DArray, 0, 0, 0, index, data.Width, data.Height, 1, PixelFormat.Rgba,
+                PixelType.UnsignedByte, data.Pixels);
             data.Dispose();
         }
 

@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.Util;
-using OpenTK;
+using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Blocks
 {

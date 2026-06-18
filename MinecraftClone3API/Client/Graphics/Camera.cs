@@ -1,6 +1,6 @@
 ﻿using System;
 using MinecraftClone3API.Entities;
-using OpenTK;
+using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Graphics
 {

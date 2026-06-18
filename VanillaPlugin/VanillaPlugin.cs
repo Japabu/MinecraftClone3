@@ -24,7 +24,7 @@ namespace VanillaPlugin
             context.Register(new BlockBasic("BrewingStand", "Vanilla/Models/BrewingStand.json", false));
 
             context.Register(new BlockGrass());
-            //context.Register(new BlockTorch());
+            context.Register(new BlockTorch());
             //context.Register(new BlockGlass());
             //context.Register(new BlockTintedGlass());
 

@@ -1,10 +1,9 @@
 ﻿using System.Collections.Generic;
-using System.Drawing;
-using System.IO;
 using System.Text;
 using MinecraftClone3API.Client;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.Util;
+using StbImageSharp;
 
 namespace MinecraftClone3API.IO
 {
@@ -26,7 +25,10 @@ namespace MinecraftClone3API.IO
         public static string ReadString(string path) => Encoding.Default.GetString(ReadBytes(path));
 
         public static TextureData ReadTextureData(string path)
-            => new TextureData((Bitmap) Image.FromStream(new MemoryStream(ReadBytes(path))));
+        {
+            var image = ImageResult.FromMemory(ReadBytes(path), ColorComponents.RedGreenBlueAlpha);
+            return new TextureData(image.Data, image.Width, image.Height);
+        }
 
         public static Texture ReadTexture(string path)
             => new Texture(ReadTextureData(path));
