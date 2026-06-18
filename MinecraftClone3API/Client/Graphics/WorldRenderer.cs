@@ -1,6 +1,7 @@
 ﻿using System.Collections.Generic;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Client;
+using MinecraftClone3API.Client.Blocks;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
@@ -19,7 +20,7 @@ namespace MinecraftClone3API.Graphics
         public const float SortDistance = 128;
         public const float SortDistanceSq = SortDistance * SortDistance;
 
-        public static void RenderWorld(WorldServer world, Matrix4 projection)
+        public static void RenderWorld(WorldClient world, Matrix4 projection)
         {
             var viewProjection = PlayerController.Camera.View * projection;
             var viewFrustum = Frustum.FromViewProjection(viewProjection);
@@ -28,20 +29,19 @@ namespace MinecraftClone3API.Graphics
             if (wireframe) GL.PolygonMode(TriangleFace.Front, PolygonMode.Line);
 
             DrawGeometryFramebuffer(world, PlayerController.Camera, projection, viewFrustum);
-            //DrawLightFramebuffer(world, viewProjection.Inverted(), viewFrustum);
 
             if (wireframe) GL.PolygonMode(TriangleFace.Front, PolygonMode.Fill);
 
             DrawComposition();
         }
 
-        private static void DrawGeometryFramebuffer(WorldServer world, Camera camera, Matrix4 projection, Frustum viewFrustum)
+        private static void DrawGeometryFramebuffer(WorldClient world, Camera camera, Matrix4 projection, Frustum viewFrustum)
         {
-            var chunksToDraw = new List<Chunk>(1024);
-            var transparentSortedChunks = new List<Chunk>(1024);
-            var transparentChunks = new List<Chunk>(1024);
+            var chunksToDraw = new List<ChunkRenderData>(1024);
+            var transparentSortedChunks = new List<ChunkRenderData>(1024);
+            var transparentChunks = new List<ChunkRenderData>(1024);
 
-            foreach (var entry in world.LoadedChunks)
+            foreach (var entry in world.RenderData)
             {
                 //Check if chunk is in player view frustum
                 var chunkMiddle = (entry.Key * Chunk.Size + new Vector3i(Chunk.Size / 2)).ToVector3();
@@ -102,8 +102,8 @@ namespace MinecraftClone3API.Graphics
             //Draw opaque blocks front to back
             foreach (var chunk in chunksToDraw)
             {
-                var worldMat = Matrix4.CreateTranslation(chunk.Position.X * Chunk.Size, chunk.Position.Y * Chunk.Size,
-                    chunk.Position.Z * Chunk.Size);
+                var worldMat = Matrix4.CreateTranslation(chunk.Chunk.Position.X * Chunk.Size, chunk.Chunk.Position.Y * Chunk.Size,
+                    chunk.Chunk.Position.Z * Chunk.Size);
                 GL.UniformMatrix4(uWorld, false, ref worldMat);
                 chunk.Draw();
             }
@@ -118,16 +118,17 @@ namespace MinecraftClone3API.Graphics
             //Draw transparent blocks back to front
             foreach (var chunk in transparentChunks)
             {
-                var worldMat = Matrix4.CreateTranslation(chunk.Position.X * Chunk.Size, chunk.Position.Y * Chunk.Size,
-                    chunk.Position.Z * Chunk.Size);
+                var worldMat = Matrix4.CreateTranslation(chunk.Chunk.Position.X * Chunk.Size, chunk.Chunk.Position.Y * Chunk.Size,
+                    chunk.Chunk.Position.Z * Chunk.Size);
                 GL.UniformMatrix4(uWorld, false, ref worldMat);
                 chunk.DrawTransparent();
             }
 
             RenderState.Set(new GlState {CullFace = true, DepthTest = true, DepthFunc = DepthFunction.Lequal});
 
-            //TODO: Entities
+            EntityRenderer.Render(world, camera, projection);
             PlayerController.Render(camera, projection);
+            ChunkBorderRenderer.Render(camera, projection);
 
             ClientResources.GeometryFramebuffer.Unbind(ClientResources.Window.FramebufferSize.X, ClientResources.Window.FramebufferSize.Y);
         }

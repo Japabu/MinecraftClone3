@@ -27,7 +27,12 @@ namespace MinecraftClone3API.Util
         private const int IndexFileLength = ChunksInRegionCubed * sizeof(int) * 2;
         private const int IndexFileNull = -1;
 
-        private const int MaxCachedIndexDatas = 6;
+        // Each decompressed region index is IndexFileLength (16 MB). A player's interest volume can
+        // straddle up to 8 region files at once (the octants around a region corner); caching fewer
+        // than that makes the load thread re-decompress 16 MB indices every pass it touches them,
+        // which dominates allocation and starves the GC. Keep enough resident to cover the working
+        // set plus roaming headroom.
+        private const int MaxCachedIndexDatas = 16;
 
         private const string RegionsFolder = "Regions";
 
@@ -103,7 +108,7 @@ namespace MinecraftClone3API.Util
             chunk.NeedsSaving = false;
         }
 
-        public static CachedChunk LoadChunk(WorldServer world, Vector3i chunkPos)
+        public static CachedChunk LoadChunk(WorldBase world, Vector3i chunkPos)
         {
             var region = ChunkToRegion(chunkPos);
             var regionFilename = Path.Combine(GamePaths.WorldDir, RegionsFolder, GetRegionFilename(region));
@@ -151,15 +156,24 @@ namespace MinecraftClone3API.Util
 
         private static byte[] GetIndexData(Vector3i region, FileInfo indexFile)
         {
-            foreach (var cachedIndexData in CachedIndexDatas)
-                if (cachedIndexData.Item1 == region) return cachedIndexData.Item2;
-            
+            for (var i = 0; i < CachedIndexDatas.Count; i++)
+            {
+                if (CachedIndexDatas[i].Item1 != region) continue;
+
+                // Move the hit to the end so eviction below stays least-recently-used: a player
+                // cycling over its 8 in-range regions must never evict one of them for a stray access.
+                var hit = CachedIndexDatas[i];
+                CachedIndexDatas.RemoveAt(i);
+                CachedIndexDatas.Add(hit);
+                return hit.Item2;
+            }
+
             var data = CompressionHelper.DecompressBytes(File.ReadAllBytes(indexFile.FullName));
             CachedIndexDatas.Add(new Tuple<Vector3i, byte[]>(region, data));
-            
+
             if (CachedIndexDatas.Count > MaxCachedIndexDatas)
                 CachedIndexDatas.RemoveAt(0);
-            
+
             return data;
         }
 

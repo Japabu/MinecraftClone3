@@ -1,40 +1,41 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
-using MinecraftClone3API.Graphics;
 using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Blocks
 {
-    public class Chunk : IDisposable
+    public class Chunk
     {
         public const int Size = 16;
         public const float Radius = Size * 0.8660254F;      //a*sqrt(3)/2
 
-        public Vector3 Middle => (Position * Size + new Vector3i(Size / 2)).ToVector3();
-        public bool HasTransparency => _transparentVao.UploadedCount > 0;
-
-        public readonly WorldServer World;
+        public readonly WorldBase World;
         public readonly Vector3i Position;
 
-        public bool Updated;
-        public bool Uploaded;
+        public Vector3i Min => _min;
+        public Vector3i Max => _max;
+
         public bool NeedsSaving;
         public DateTime Time;
 
-        private readonly ushort[,,] _blockIds = new ushort[Size, Size, Size];
-        private readonly LightLevel[,,] _lightLevels = new LightLevel[Size, Size, Size];
+        private readonly ushort[] _blockIds = new ushort[Size * Size * Size];
+        private readonly LightLevel[] _lightLevels = new LightLevel[Size * Size * Size];
         private readonly Dictionary<Vector3iChunk, BlockData> _blockDatas = new Dictionary<Vector3iChunk, BlockData>();
+
+        /// <summary>Flattens a block coordinate into the 1-D storage arrays. Flat <c>ushort[]</c>/
+        /// <c>LightLevel[]</c> avoid the runtime's slow multidimensional-array allocator
+        /// (<c>Array.CreateInstanceMDArray</c>), which dominated chunk construction. Disk/wire format
+        /// is unaffected as long as <see cref="Write"/> and <see cref="CachedChunk"/> iterate x/y/z
+        /// in this same order.</summary>
+        internal static int Index(int x, int y, int z) => (x * Size + y) * Size + z;
 
         private Vector3i _min = new Vector3i(Size);
         private Vector3i _max = new Vector3i(-1);
 
-        private readonly VertexArrayObject _vao = new VertexArrayObject();
-        private readonly SortedVertexArrayObject _transparentVao = new SortedVertexArrayObject();
 
-
-        public Chunk(WorldServer world, Vector3i position)
+        public Chunk(WorldBase world, Vector3i position)
         {
             World = world;
             Position = position;
@@ -53,11 +54,11 @@ namespace MinecraftClone3API.Blocks
 
         public void SetBlock(Vector3i blockPos, ushort id)
         {
-            if (_blockIds[blockPos.X, blockPos.Y, blockPos.Z] == id) return;
+            if (_blockIds[Index(blockPos.X, blockPos.Y, blockPos.Z)] == id) return;
 
             NeedsSaving = true;
 
-            _blockIds[blockPos.X, blockPos.Y, blockPos.Z] = id;
+            _blockIds[Index(blockPos.X, blockPos.Y, blockPos.Z)] = id;
             _blockDatas.Remove(blockPos);
 
             if (blockPos.X < _min.X) _min.X = blockPos.X;
@@ -73,7 +74,7 @@ namespace MinecraftClone3API.Blocks
             if (_blockIds == null || blockPos.X < 0 || blockPos.X >= Size || blockPos.Y < 0 || blockPos.Y >= Size || blockPos.Z < 0 || blockPos.Z >= Size)
                 return 0;
 
-            return _blockIds[blockPos.X, blockPos.Y, blockPos.Z];
+            return _blockIds[Index(blockPos.X, blockPos.Y, blockPos.Z)];
         }
 
         public void SetBlockData(Vector3i blockPos, BlockData data)
@@ -90,7 +91,7 @@ namespace MinecraftClone3API.Blocks
         public void SetLightLevel(Vector3i blockPos, LightLevel lightLevel)
         {
             NeedsSaving = true;
-            _lightLevels[blockPos.X, blockPos.Y, blockPos.Z] = lightLevel;
+            _lightLevels[Index(blockPos.X, blockPos.Y, blockPos.Z)] = lightLevel;
 
             if (blockPos.X < _min.X) _min.X = blockPos.X;
             if (blockPos.Y < _min.Y) _min.Y = blockPos.Y;
@@ -100,45 +101,7 @@ namespace MinecraftClone3API.Blocks
             if (blockPos.Z > _max.Z) _max.Z = blockPos.Z;
         }
         
-        public LightLevel GetLightLevel(Vector3i blockPos) => _lightLevels[blockPos.X, blockPos.Y, blockPos.Z];
-
-        public void Update()
-        {
-            lock (_vao)
-            lock (_transparentVao)
-                AddBlocksToVao();
-
-            Updated = true;
-        }
-
-        public void Upload()
-        {
-            lock (_vao)
-            lock (_transparentVao)
-            {
-                _vao.Upload();
-                _vao.Clear();
-
-                _transparentVao.Upload();
-                _transparentVao.Clear();
-            }
-            Uploaded = true;
-        }
-
-        public void Draw() => _vao.Draw();
-        public void DrawTransparent() => _transparentVao.Draw();
-
-        public void SortTransparentFaces() => _transparentVao.Sort();
-
-        public void Dispose()
-        {
-            lock (_vao)
-            lock (_transparentVao)
-            {
-                _vao.Dispose();
-                _transparentVao.Dispose();
-            }
-        }
+        public LightLevel GetLightLevel(Vector3i blockPos) => _lightLevels[Index(blockPos.X, blockPos.Y, blockPos.Z)];
 
         public void Write(BinaryWriter writer)
         {
@@ -154,8 +117,8 @@ namespace MinecraftClone3API.Blocks
             for (var y = _min.Y; y <= _max.Y; y++)
             for (var z = _min.Z; z <= _max.Z; z++)
             {
-                writer.Write(_blockIds[x, y, z]);
-                writer.Write(_lightLevels[x, y, z].Binary);
+                writer.Write(_blockIds[Index(x, y, z)]);
+                writer.Write(_lightLevels[Index(x, y, z)].Binary);
             }
 
             writer.Write(_blockDatas.Count);
@@ -164,16 +127,6 @@ namespace MinecraftClone3API.Blocks
                 writer.Write(data.Key.Binary);
                 BlockData.WriteToStream(data.Value, writer);
             }
-        }
-
-        private void AddBlocksToVao()
-        {
-            for (var x = _min.X; x <= _max.X; x++)
-            for (var y = _min.Y; y <= _max.Y; y++)
-            for (var z = _min.Z; z <= _max.Z; z++)
-                if (_blockIds[x, y, z] != 0) //Remove GetBlock overhead of Air
-                    ChunkMesher.AddBlockToVao(World, Position * Size + new Vector3i(x, y, z), x, y, z,
-                        GameRegistry.BlockRegistry[_blockIds[x, y, z]], _vao, _transparentVao);
         }
     }
 }

@@ -1,9 +1,11 @@
 using System;
+using System.Diagnostics;
 using System.Globalization;
 using MinecraftClone3.States;
 using MinecraftClone3API.Client.Graphics;
 using MinecraftClone3API.Client.StateSystem;
 using MinecraftClone3API.Entities;
+using MinecraftClone3API.Util;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
@@ -46,21 +48,38 @@ namespace MinecraftClone3
                 PlayerController.ResetMouse();
         }
 
+        private readonly Stopwatch _workTimer = new Stopwatch();
+        private double _lastUpdateMs;
+
         protected override void OnUpdateFrame(FrameEventArgs e)
         {
             base.OnUpdateFrame(e);
+
+            _workTimer.Restart();
             StateEngine.Update();
+            _lastUpdateMs = _workTimer.Elapsed.TotalMilliseconds;
         }
 
         protected override void OnRenderFrame(FrameEventArgs e)
         {
             base.OnRenderFrame(e);
+
+            var allocBefore = GC.GetAllocatedBytesForCurrentThread();
+            _workTimer.Restart();
             StateEngine.Render();
+            var renderMs = _workTimer.Elapsed.TotalMilliseconds;
+            var renderAlloc = GC.GetAllocatedBytesForCurrentThread() - allocBefore;
+
+            // e.Time is the wall-clock interval since the last render frame (so it captures real fps
+            // drops); renderMs/updateMs are the actual CPU work, excluding the vsync wait in SwapBuffers.
+            Profiler.Record(e.Time, _lastUpdateMs, renderMs, renderAlloc);
+
             SwapBuffers();
         }
 
         protected override void OnUnload()
         {
+            Profiler.Stop();
             StateEngine.Exit();
             base.OnUnload();
         }

@@ -25,7 +25,7 @@ namespace MinecraftClone3API.Entities
             Camera.ParentEntity = playerEntity;
         }
 
-        public static void Update(GameWindow window, WorldServer world)
+        public static void Update(GameWindow window, WorldBase world)
         {
             _blockRaytrace = world.BlockRaytrace(PlayerEntity.Position, PlayerEntity.Forward, 8);
 
@@ -53,6 +53,9 @@ namespace MinecraftClone3API.Entities
                 if (ks.IsKeyDown(keybinding.Key)) _currentBlock = keybinding.Value;
             }
 
+            if (ks.IsKeyPressed(Keys.F3)) Profiler.Toggle();
+            if (ks.IsKeyPressed(Keys.F4)) ChunkBorderRenderer.Enabled = !ChunkBorderRenderer.Enabled;
+
             var ms = window.MouseState;
             var delta = ms.Delta;
             if (_skipMouseDelta)
@@ -70,13 +73,13 @@ namespace MinecraftClone3API.Entities
             Camera.Update();
         }
 
-        private static void BreakBlock(WorldServer world)
+        private static void BreakBlock(WorldBase world)
         {
             if (_blockRaytrace == null) return;
             world.SetBlock(_blockRaytrace.BlockPos, BlockRegistry.BlockAir);
         }
 
-        private static void PlaceBlock(WorldServer world)
+        private static void PlaceBlock(WorldBase world)
         {
             if (_blockRaytrace == null) return;
             world.PlaceBlock(PlayerEntity, _blockRaytrace.BlockPos + _blockRaytrace.Face.GetNormali(), GameRegistry.GetBlock(_currentBlock));

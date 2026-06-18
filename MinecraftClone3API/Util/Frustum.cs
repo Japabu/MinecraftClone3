@@ -1,5 +1,4 @@
-﻿using System.Linq;
-using OpenTK.Mathematics;
+﻿using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Util
 {
@@ -33,6 +32,11 @@ namespace MinecraftClone3API.Util
         }
 
         public bool SpehereIntersection(Vector3 position, float radius)
-            => Planes.All(plane => !(Vector3.Dot(position, plane.Normal) + plane.D + radius <= 0));
+        {
+            foreach (var plane in Planes)
+                if (Vector3.Dot(position, plane.Normal) + plane.D + radius <= 0)
+                    return false;
+            return true;
+        }
     }
 }

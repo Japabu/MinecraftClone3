@@ -1,8 +1,14 @@
+using System;
+using System.Net.Sockets;
 using MinecraftClone3API.Blocks;
+using MinecraftClone3API.Client.Blocks;
+using MinecraftClone3API.Client.GUI;
 using MinecraftClone3API.Client.StateSystem;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Graphics;
+using MinecraftClone3API.Networking;
 using MinecraftClone3API.Util;
+using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
@@ -12,34 +18,76 @@ namespace MinecraftClone3.States
 {
     internal class StateWorld : StateBase
     {
-        // Terrain peaks at roughly y=7 (see WorldServer heightmap), so spawn well above it
-        // and float a torch a couple of blocks below the camera.
-        private static readonly Vector3i TorchPos = new Vector3i(0, 10, 0);
+        private const string ServerAddress = "127.0.0.1";
+
+        // Matches ServerNetwork.SpawnPosition; the server is authoritative but the client positions
+        // its camera here immediately so there's no first-frame jump before LoginAccept arrives.
         private static readonly Vector3 SpawnPos = new Vector3(0, 12, 0);
 
         private readonly GameWindow _window;
+        private readonly bool _multiplayer;
+
         private readonly EntityPlayer _player;
-        private readonly WorldServer _world;
-        private readonly bool _multiplayer = false;
+        private readonly WorldClient _world;
 
-        private bool _torchPlaced;
+        // Singleplayer only: the in-process server the loopback client talks to.
+        private readonly WorldServer _integratedServer;
+        private readonly ServerNetwork _network;
 
-        public StateWorld(GameWindow window)
+        private readonly bool _connectionFailed;
+
+        public StateWorld(GameWindow window, bool multiplayer = false)
         {
             _window = window;
+            _multiplayer = multiplayer;
+
             // Grab the cursor so relative mouse movement drives the camera (FPS-style).
             _window.CursorState = CursorState.Grabbed;
             PlayerController.ResetMouse();
 
-            _player = new EntityPlayer { Position = SpawnPos };
+            _player = new EntityPlayer {Position = SpawnPos};
             PlayerController.SetEntity(_player);
 
-            _world = new WorldServer();
-            _world.PlayerEntities.Add(_player);
+            IConnection connection;
+            if (multiplayer)
+            {
+                try
+                {
+                    var tcp = new TcpClient();
+                    tcp.Connect(ServerAddress, ServerNetwork.DefaultPort);
+                    connection = new TcpConnection(tcp);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error($"Could not connect to {ServerAddress}:{ServerNetwork.DefaultPort}");
+                    Logger.Exception(ex);
+                    _connectionFailed = true;
+                    return;
+                }
+            }
+            else
+            {
+                _integratedServer = new WorldServer();
+                _network = new ServerNetwork(_integratedServer);
+                var loopback = new LoopbackConnection();
+                _network.AddConnection(loopback.ServerSide);
+                connection = loopback.ClientSide;
+            }
+
+            _world = new WorldClient(connection);
+            _world.Login();
+
+            Profiler.World = _world;
         }
 
         public override void Update(bool focused)
         {
+            if (_connectionFailed)
+            {
+                StateEngine.ReplaceState(new GuiMainMenu(_window));
+                return;
+            }
+
             if (focused)
             {
                 if (_window.KeyboardState.IsKeyPressed(Keys.Escape))
@@ -48,27 +96,50 @@ namespace MinecraftClone3.States
                     PlayerController.Update(_window, _world);
             }
 
+            // Singleplayer freezes the world while paused; multiplayer can't pause a shared server.
             if (focused || _multiplayer)
             {
-                _world.Update();
+                var a = GC.GetAllocatedBytesForCurrentThread();
+                _integratedServer?.Update();
+                Profiler.AddServerAlloc(GC.GetAllocatedBytesForCurrentThread() - a);
 
-                // Place the torch only once its chunk has been generated and loaded; doing it in the
-                // constructor would race the terrain generator and discard the generated chunk.
-                if (!_torchPlaced && !_world.IsBlockInEmptyChunk(TorchPos))
-                {
-                    _world.SetBlock(TorchPos, GameRegistry.GetBlock("Vanilla:Torch"));
-                    _torchPlaced = true;
-                }
+                a = GC.GetAllocatedBytesForCurrentThread();
+                _network?.Pump();
+                Profiler.AddNetworkAlloc(GC.GetAllocatedBytesForCurrentThread() - a);
             }
+
+            var c = GC.GetAllocatedBytesForCurrentThread();
+            _world.SendMove(_player);
+            _world.Update();
+            Profiler.AddClientAlloc(GC.GetAllocatedBytesForCurrentThread() - c);
         }
 
         public override void Render()
         {
+            if (_connectionFailed) return;
+
             var aspect = (float)_window.FramebufferSize.X / _window.FramebufferSize.Y;
             var projection = Matrix4.CreatePerspectiveFieldOfView(MathHelper.DegreesToRadians(60), aspect, 0.01f, 512);
             WorldRenderer.RenderWorld(_world, projection);
+
+            if (Profiler.Recording)
+            {
+                RenderState.Set(new GlState
+                {
+                    Blend = true,
+                    BlendFunc = (BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha)
+                });
+                Font.DrawString("● REC", 4, 4, 2, new Color4(1f, 0.3f, 0.3f, 1f));
+            }
         }
 
-        public override void Exit() => _world.Unload();
+        public override void Exit()
+        {
+            Profiler.Stop();
+            Profiler.World = null;
+            _world?.Disconnect();
+            _network?.Stop();
+            _integratedServer?.Unload();
+        }
     }
 }

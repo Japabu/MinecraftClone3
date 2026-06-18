@@ -38,7 +38,7 @@ namespace MinecraftClone3API.Util
         private static readonly uint[] FaceIndices = {2, 1, 0, 2, 3, 1};
         private static readonly uint[] FlippedFaceIndices = { 0, 2, 3, 0, 3, 1 };
 
-        public static void AddBlockToVao(WorldServer world, Vector3i blockPos, int x, int y, int z, Block block,
+        public static void AddBlockToVao(WorldBase world, Vector3i blockPos, int x, int y, int z, Block block,
             VertexArrayObject vao, VertexArrayObject transparentVao)
         {
             //If block is invisible or does not have a model for some reason ignore it
@@ -78,7 +78,7 @@ namespace MinecraftClone3API.Util
             }
         }
 
-        public static void AddFaceToVao(WorldServer world, Vector3i blockPos, int x, int y, int z, Block block, BlockFace face, BlockModel.FaceData data, VertexArrayObject vao, Matrix4 transform)
+        public static void AddFaceToVao(WorldBase world, Vector3i blockPos, int x, int y, int z, Block block, BlockFace face, BlockModel.FaceData data, VertexArrayObject vao, Matrix4 transform)
         {
             var faceId = (int) face - 1;
             var indicesOffset = vao.VertexCount;
@@ -156,7 +156,7 @@ namespace MinecraftClone3API.Util
             vao.AddFace(newIndices, faceMiddle);
         }
 
-        private static Vector3 CalculateBrightness(WorldServer world, Block block, Vector3i blockPos, BlockFace face, Vector3 vertexPosition)
+        private static Vector3 CalculateBrightness(WorldBase world, Block block, Vector3i blockPos, BlockFace face, Vector3 vertexPosition)
         {
             //if its not a full opaque block return brightness of itself
             if (!block.IsOpaqueFullBlock(world, blockPos) || !block.Model.AmbientOcclusion)
@@ -199,7 +199,7 @@ namespace MinecraftClone3API.Util
             throw new Exception("Something is really broken if you can read this :S");
         }
 
-        private static Vector3 GetSmoothLightValue(WorldServer world, Vector3i p0, Vector3i p1, Vector3i p2, Vector3i p3)
+        private static Vector3 GetSmoothLightValue(WorldBase world, Vector3i p0, Vector3i p1, Vector3i p2, Vector3i p3)
         {
             var lightValue = Vector3.Zero;
 

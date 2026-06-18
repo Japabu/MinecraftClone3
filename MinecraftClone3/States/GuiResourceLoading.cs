@@ -33,6 +33,8 @@ namespace MinecraftClone3.States
             ResourceReader.ClearCache();
             ClientResources.Load(window);
             BoundingBoxRenderer.Load();
+            EntityRenderer.Load();
+            ChunkBorderRenderer.Load();
 
             _background = ResourceReader.ReadTexture("System/Textures/Gui/ResourceLoadingBackground.png");
             _progressBar = ResourceReader.ReadTexture("System/Textures/Gui/Progressbar.png");

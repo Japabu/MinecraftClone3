@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using OpenTK.Mathematics;
 using OpenTK.Graphics.OpenGL4;
 
@@ -65,31 +66,31 @@ namespace MinecraftClone3API.Graphics
             {
                 //0 positions
                 GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[0]);
-                GL.BufferData(BufferTarget.ArrayBuffer, Positions.Count * Vector3.SizeInBytes, Positions.ToArray(),
+                GL.BufferData(BufferTarget.ArrayBuffer, Positions.Count * Vector3.SizeInBytes, ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(Positions)),
                     BufferUsageHint.StaticDraw);
                 GL.EnableVertexAttribArray(0);
                 GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 0, 0);
                 //1 texCoords
                 GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[1]);
-                GL.BufferData(BufferTarget.ArrayBuffer, TexCoords.Count * Vector4.SizeInBytes, TexCoords.ToArray(),
+                GL.BufferData(BufferTarget.ArrayBuffer, TexCoords.Count * Vector4.SizeInBytes, ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(TexCoords)),
                     BufferUsageHint.StaticDraw);
                 GL.EnableVertexAttribArray(1);
                 GL.VertexAttribPointer(1, 4, VertexAttribPointerType.Float, false, 0, 0);
                 //2 normals
                 GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[2]);
-                GL.BufferData(BufferTarget.ArrayBuffer, Normals.Count * Vector4.SizeInBytes, Normals.ToArray(),
+                GL.BufferData(BufferTarget.ArrayBuffer, Normals.Count * Vector4.SizeInBytes, ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(Normals)),
                     BufferUsageHint.StaticDraw);
                 GL.EnableVertexAttribArray(2);
                 GL.VertexAttribPointer(2, 4, VertexAttribPointerType.Float, false, 0, 0);
                 //3 color
                 GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[3]);
-                GL.BufferData(BufferTarget.ArrayBuffer, Colors.Count * Vector3.SizeInBytes, Colors.ToArray(),
+                GL.BufferData(BufferTarget.ArrayBuffer, Colors.Count * Vector3.SizeInBytes, ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(Colors)),
                     BufferUsageHint.StaticDraw);
                 GL.EnableVertexAttribArray(3);
                 GL.VertexAttribPointer(3, 3, VertexAttribPointerType.Float, false, 0, 0);
                 //4 light
                 GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[4]);
-                GL.BufferData(BufferTarget.ArrayBuffer, Lights.Count * Vector3.SizeInBytes, Lights.ToArray(),
+                GL.BufferData(BufferTarget.ArrayBuffer, Lights.Count * Vector3.SizeInBytes, ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(Lights)),
                     BufferUsageHint.StaticDraw);
                 GL.EnableVertexAttribArray(4);
                 GL.VertexAttribPointer(4, 3, VertexAttribPointerType.Float, false, 0, 0);
@@ -98,28 +99,28 @@ namespace MinecraftClone3API.Graphics
             {
                 //0 positions
                 GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[0]);
-                GL.BufferData(BufferTarget.ArrayBuffer, Positions.Count * Vector3.SizeInBytes, Positions.ToArray(),
+                GL.BufferData(BufferTarget.ArrayBuffer, Positions.Count * Vector3.SizeInBytes, ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(Positions)),
                     BufferUsageHint.StaticDraw);
                 //1 texCoords
                 GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[1]);
-                GL.BufferData(BufferTarget.ArrayBuffer, TexCoords.Count * Vector4.SizeInBytes, TexCoords.ToArray(),
+                GL.BufferData(BufferTarget.ArrayBuffer, TexCoords.Count * Vector4.SizeInBytes, ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(TexCoords)),
                     BufferUsageHint.StaticDraw);
                 //2 normals
                 GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[2]);
-                GL.BufferData(BufferTarget.ArrayBuffer, Normals.Count * Vector4.SizeInBytes, Normals.ToArray(),
+                GL.BufferData(BufferTarget.ArrayBuffer, Normals.Count * Vector4.SizeInBytes, ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(Normals)),
                     BufferUsageHint.StaticDraw);
                 //3 color
                 GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[3]);
-                GL.BufferData(BufferTarget.ArrayBuffer, Colors.Count * Vector3.SizeInBytes, Colors.ToArray(),
+                GL.BufferData(BufferTarget.ArrayBuffer, Colors.Count * Vector3.SizeInBytes, ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(Colors)),
                     BufferUsageHint.StaticDraw);
                 //4 light
                 GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[4]);
-                GL.BufferData(BufferTarget.ArrayBuffer, Lights.Count * Vector3.SizeInBytes, Lights.ToArray(),
+                GL.BufferData(BufferTarget.ArrayBuffer, Lights.Count * Vector3.SizeInBytes, ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(Lights)),
                     BufferUsageHint.StaticDraw);
             }
 
             GL.BindBuffer(BufferTarget.ElementArrayBuffer, IndicesId);
-            GL.BufferData(BufferTarget.ElementArrayBuffer, Indices.Count * sizeof(uint), Indices.ToArray(),
+            GL.BufferData(BufferTarget.ElementArrayBuffer, Indices.Count * sizeof(uint), ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(Indices)),
                 BufferUsageHint.StaticDraw);
 
             UploadedCount = Indices.Count;
