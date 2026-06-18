@@ -6,6 +6,7 @@ using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
+using OpenTK.Windowing.GraphicsLibraryFramework;
 
 namespace MinecraftClone3.States
 {
@@ -19,6 +20,7 @@ namespace MinecraftClone3.States
         private readonly GameWindow _window;
         private readonly EntityPlayer _player;
         private readonly WorldServer _world;
+        private readonly bool _multiplayer = false;
 
         private bool _torchPlaced;
 
@@ -27,31 +29,42 @@ namespace MinecraftClone3.States
             _window = window;
             // Grab the cursor so relative mouse movement drives the camera (FPS-style).
             _window.CursorState = CursorState.Grabbed;
+            PlayerController.ResetMouse();
 
-            _player = new EntityPlayer {Position = SpawnPos};
+            _player = new EntityPlayer { Position = SpawnPos };
             PlayerController.SetEntity(_player);
 
             _world = new WorldServer();
             _world.PlayerEntities.Add(_player);
         }
 
-        public override void Update()
+        public override void Update(bool focused)
         {
-            PlayerController.Update(_window, _world);
-            _world.Update();
-
-            // Place the torch only once its chunk has been generated and loaded; doing it in the
-            // constructor would race the terrain generator and discard the generated chunk.
-            if (!_torchPlaced && !_world.IsBlockInEmptyChunk(TorchPos))
+            if (focused)
             {
-                _world.SetBlock(TorchPos, GameRegistry.GetBlock("Vanilla:Torch"));
-                _torchPlaced = true;
+                if (_window.KeyboardState.IsKeyPressed(Keys.Escape))
+                    StateEngine.AddOverlay(new GuiPauseMenu(_window));
+                else
+                    PlayerController.Update(_window, _world);
+            }
+
+            if (focused || _multiplayer)
+            {
+                _world.Update();
+
+                // Place the torch only once its chunk has been generated and loaded; doing it in the
+                // constructor would race the terrain generator and discard the generated chunk.
+                if (!_torchPlaced && !_world.IsBlockInEmptyChunk(TorchPos))
+                {
+                    _world.SetBlock(TorchPos, GameRegistry.GetBlock("Vanilla:Torch"));
+                    _torchPlaced = true;
+                }
             }
         }
 
         public override void Render()
         {
-            var aspect = (float) _window.FramebufferSize.X / _window.FramebufferSize.Y;
+            var aspect = (float)_window.FramebufferSize.X / _window.FramebufferSize.Y;
             var projection = Matrix4.CreatePerspectiveFieldOfView(MathHelper.DegreesToRadians(60), aspect, 0.01f, 512);
             WorldRenderer.RenderWorld(_world, projection);
         }

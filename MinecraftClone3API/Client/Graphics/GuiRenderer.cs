@@ -8,6 +8,9 @@ namespace MinecraftClone3API.Client.Graphics
     public static class GuiRenderer
     {
         public static void DrawTexture(Texture texture, Rectangle rect, Rectangle? uvRect, bool gui = true)
+            => DrawTexture(texture, rect, uvRect, Color4.White, gui);
+
+        public static void DrawTexture(Texture texture, Rectangle rect, Rectangle? uvRect, Color4 color, bool gui = true)
         {
             //Convert pixel space to normalized coords (0)-(1)
             var r = new Vector4(rect.MinX, rect.MinY, rect.MaxX, rect.MaxY);
@@ -23,12 +26,15 @@ namespace MinecraftClone3API.Client.Graphics
             if (gui)
                 DrawTexture(texture, (ScaledResolution.GuiScale * r + new Vector4(ScaledResolution.GuiOffset.X,
                                           ScaledResolution.GuiOffset.Y, ScaledResolution.GuiOffset.X,
-                                          ScaledResolution.GuiOffset.Y)) * pixelSize, uvrect);
+                                          ScaledResolution.GuiOffset.Y)) * pixelSize, uvrect, color);
             else
-                DrawTexture(texture, r * pixelSize, uvrect);
+                DrawTexture(texture, r * pixelSize, uvrect, color);
         }
 
         public static void DrawTexture(Texture texture, Vector4 rect, Vector4 uvRect)
+            => DrawTexture(texture, rect, uvRect, Color4.White);
+
+        public static void DrawTexture(Texture texture, Vector4 rect, Vector4 uvRect, Color4 color)
         {
             //Convert to clip space (-1)-(+1)
             rect = rect * 2 + new Vector4(-1);
@@ -40,8 +46,10 @@ namespace MinecraftClone3API.Client.Graphics
             // layout(location=) qualifiers, which require GLSL 4.30 (macOS caps at 4.10).
             GL.Uniform4(shader.GetUniformLocation("uRect"), rect);
             GL.Uniform4(shader.GetUniformLocation("uUVRect"), uvRect);
+            GL.Uniform4(shader.GetUniformLocation("uColor"), color);
 
             texture.Bind(TextureUnit.Texture0);
+            Samplers.BindGuiSampler(0);
             ClientResources.ScreenRectVao.Draw();
         }
     }

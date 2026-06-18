@@ -6,6 +6,7 @@ namespace MinecraftClone3API.Graphics
     {
         private static int _blockTexture;
         private static int _framebufferTexture;
+        private static int _gui;
 
         public static void Load()
         {
@@ -20,6 +21,10 @@ namespace MinecraftClone3API.Graphics
             // composition pass, so it reads zero and the whole screen renders black.
             GL.SamplerParameter(_framebufferTexture, SamplerParameterName.TextureMinFilter, (float)TextureMinFilter.Nearest);
             GL.SamplerParameter(_framebufferTexture, SamplerParameterName.TextureMagFilter, (float)TextureMinFilter.Nearest);
+
+            _gui = GL.GenSampler();
+            GL.SamplerParameter(_gui, SamplerParameterName.TextureMinFilter, (float)TextureMinFilter.Nearest);
+            GL.SamplerParameter(_gui, SamplerParameterName.TextureMagFilter, (float)TextureMinFilter.Nearest);
         }
 
         public static void BindBlockTextureSampler()
@@ -29,5 +34,7 @@ namespace MinecraftClone3API.Graphics
         }
 
         public static void BindFramebufferTextureSampler(int unit) => GL.BindSampler(unit, _framebufferTexture);
+
+        public static void BindGuiSampler(int unit) => GL.BindSampler(unit, _gui);
     }
 }

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using MinecraftClone3API.Client.GUI;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
@@ -28,6 +29,7 @@ namespace MinecraftClone3API.Client
         public static SpriteVertexArrayObject ScreenRectVao;
 
         public static Texture LoadingTexture;
+        public static Texture WhitePixel;
 
         public static BlockModel MissingModel;
         public static BlockTexture MissingTexture;
@@ -56,6 +58,9 @@ namespace MinecraftClone3API.Client
             ScreenRectVao.Upload();
 
             Samplers.Load();
+
+            WhitePixel = new Texture(new TextureData(new byte[] {255, 255, 255, 255}, 1, 1));
+            Font.Load();
 
             MissingModel = ResourceReader.ReadBlockModel("System/Models/MissingModel.json");
             MissingTexture = ResourceReader.ReadBlockTexture("System/Textures/Blocks/MissingTexture.png");

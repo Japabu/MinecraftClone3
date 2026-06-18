@@ -25,12 +25,12 @@ namespace MinecraftClone3API.Graphics
             var viewFrustum = Frustum.FromViewProjection(viewProjection);
 
             var wireframe = false;
-            if(wireframe) GL.PolygonMode(MaterialFace.Front, PolygonMode.Line);
+            if (wireframe) GL.PolygonMode(TriangleFace.Front, PolygonMode.Line);
 
             DrawGeometryFramebuffer(world, PlayerController.Camera, projection, viewFrustum);
             //DrawLightFramebuffer(world, viewProjection.Inverted(), viewFrustum);
 
-            if(wireframe) GL.PolygonMode(MaterialFace.Front, PolygonMode.Fill);
+            if (wireframe) GL.PolygonMode(TriangleFace.Front, PolygonMode.Fill);
 
             DrawComposition();
         }
@@ -70,15 +70,13 @@ namespace MinecraftClone3API.Graphics
             //Sort transparent chunks and append to draw list
             var cameraPos = camera.Position;
             transparentSortedChunks.Sort((chunk1, chunk2)
-                => (int) ((cameraPos - chunk2.Middle).LengthSquared * 1000 -
+                => (int)((cameraPos - chunk2.Middle).LengthSquared * 1000 -
                           (cameraPos - chunk1.Middle).LengthSquared * 1000));
 
             transparentChunks.AddRange(transparentSortedChunks);
             chunksToDraw.AddRange(transparentChunks);
 
-            GL.Enable(EnableCap.CullFace);
-            GL.Enable(EnableCap.DepthTest);
-            GL.DepthFunc(DepthFunction.Lequal); //Grass fix
+            RenderState.Set(new GlState {CullFace = true, DepthTest = true, DepthFunc = DepthFunction.Lequal});
 
             ClientResources.GeometryFramebuffer.Bind();
             ClientResources.GeometryFramebuffer.Clear(Color4.DarkBlue);
@@ -110,8 +108,11 @@ namespace MinecraftClone3API.Graphics
                 chunk.Draw();
             }
 
-            GL.Enable(EnableCap.Blend);
-            GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+            RenderState.Set(new GlState
+            {
+                CullFace = true, DepthTest = true, DepthFunc = DepthFunction.Lequal,
+                Blend = true, BlendFunc = (BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha)
+            });
             GL.Uniform1(uCutoff, 0);
 
             //Draw transparent blocks back to front
@@ -123,7 +124,7 @@ namespace MinecraftClone3API.Graphics
                 chunk.DrawTransparent();
             }
 
-            GL.Disable(EnableCap.Blend);
+            RenderState.Set(new GlState {CullFace = true, DepthTest = true, DepthFunc = DepthFunction.Lequal});
 
             //TODO: Entities
             PlayerController.Render(camera, projection);

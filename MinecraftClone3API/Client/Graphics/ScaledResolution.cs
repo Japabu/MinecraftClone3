@@ -38,5 +38,16 @@ namespace MinecraftClone3API.Client.Graphics
                 GuiOffset = new Vector2((xScale - yScale) * GuiResolution.X / 2, 0);
             }
         }
+
+        /// <summary>Inverse of GuiRenderer's GUI transform: maps a window-client position
+        /// (e.g. MouseState.Position) into the 960x540 GUI space.</summary>
+        public static Vector2 ToGuiCoords(Vector2 clientPos)
+        {
+            var window = ClientResources.Window;
+            var framebuffer = (Vector2)window.FramebufferSize;
+            var client = (Vector2)window.ClientSize;
+            var framebufferPos = clientPos * framebuffer / client;
+            return (framebufferPos - GuiOffset) / GuiScale;
+        }
     }
 }

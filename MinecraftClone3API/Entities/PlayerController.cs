@@ -17,6 +17,7 @@ namespace MinecraftClone3API.Entities
 
         private static BlockRaytraceResult _blockRaytrace;
         private static string _currentBlock = "Vanilla:Stone";
+        private static bool _skipMouseDelta;
 
         public static void SetEntity(EntityPlayer playerEntity)
         {
@@ -53,9 +54,12 @@ namespace MinecraftClone3API.Entities
             }
 
             var ms = window.MouseState;
-            // MouseState.Delta is the movement since the previous frame; the cursor is kept
-            // grabbed/centered by the window so there is no need to reposition it manually.
             var delta = ms.Delta;
+            if (_skipMouseDelta)
+            {
+                delta = Vector2.Zero;
+                _skipMouseDelta = false;
+            }
             PlayerEntity.Rotate(-delta.Y * 0.008f, -delta.X * 0.008f);
 
             if (ms.IsButtonDown(MouseButton.Left) && !ms.WasButtonDown(MouseButton.Left))
@@ -80,10 +84,9 @@ namespace MinecraftClone3API.Entities
             Logger.Debug(PlayerEntity.Position + ":" + _blockRaytrace.BlockPos);
         }
 
-        public static void ResetMouse()
-        {
-            // Mouse-look uses per-frame deltas now; nothing to reset.
-        }
+        /// <summary>Discards the next mouse delta so re-grabbing the cursor (window refocus,
+        /// closing a menu) doesn't snap the camera.</summary>
+        public static void ResetMouse() => _skipMouseDelta = true;
 
         public static void Render(Camera camera, Matrix4 projection)
         {

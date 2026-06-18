@@ -46,11 +46,10 @@ namespace MinecraftClone3.States
             Start(true);
         }
 
-        public override void Update()
+        public override void Update(bool focused)
         {
             if (!_done) return;
-            IsDead = true;
-            StateEngine.AddState(new StateWorld(_window));
+            StateEngine.ReplaceState(new GuiMainMenu(_window));
         }
 
         public override void Render()

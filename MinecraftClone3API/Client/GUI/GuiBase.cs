@@ -7,7 +7,7 @@ namespace MinecraftClone3API.Client.GUI
     {
         protected List<GuiElementBase> Elements = new List<GuiElementBase>();
 
-        public override void Update() => Elements.ForEach(e => e.Update());
+        public override void Update(bool focused) => Elements.ForEach(e => e.Update(focused));
 
         public override void Render() => Elements.ForEach(e => e.Render());
     }

@@ -2,7 +2,7 @@
 {
     public abstract class GuiElementBase
     {
-        public abstract void Update();
+        public abstract void Update(bool focused);
         public abstract void Render();
     }
 }
