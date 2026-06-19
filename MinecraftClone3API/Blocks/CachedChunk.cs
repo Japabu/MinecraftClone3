@@ -19,6 +19,7 @@ namespace MinecraftClone3API.Blocks
         // concurrent readers until it is adopted into a Chunk), so the copy-on-grow swaps are local.
         public PaletteStorage BlockStorage = new PaletteStorage(0);
         public PaletteStorage LightStorage = new PaletteStorage(0);
+        public PaletteStorage SkyStorage = new PaletteStorage(0);
         public readonly ConcurrentDictionary<Vector3iChunk, BlockData> BlockDatas = new ConcurrentDictionary<Vector3iChunk, BlockData>();
 
         public bool IsEmpty => Min.X == Chunk.Size;
@@ -39,6 +40,7 @@ namespace MinecraftClone3API.Blocks
 
             BlockStorage = PaletteStorage.Read(reader);
             LightStorage = PaletteStorage.Read(reader);
+            SkyStorage = PaletteStorage.Read(reader);
 
             var blockDataCount = reader.ReadInt32();
             for (var i = 0; i < blockDataCount; i++)
@@ -63,6 +65,17 @@ namespace MinecraftClone3API.Blocks
             if (x > Max.X) Max.X = x;
             if (y > Max.Y) Max.Y = y;
             if (z > Max.Z) Max.Z = z;
+        }
+
+        // Gen-time sky seeding. Does NOT touch Min/Max so an all-air chunk above terrain stays IsEmpty
+        // (single-value sky palette, never published/streamed — the client falls back to sky 15 for
+        // unloaded chunks). The surface chunk holds terrain too, so its seeded air cells do stream.
+        public void SetSkyLight(int x, int y, int z, int level)
+        {
+            var index = Chunk.Index(x, y, z);
+            if (SkyStorage.Get(index) == level) return;
+
+            SkyStorage = SkyStorage.Set(index, (ushort) level);
         }
 
         public Block GetBlock(int x, int y, int z)

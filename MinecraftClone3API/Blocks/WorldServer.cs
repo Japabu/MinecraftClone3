@@ -33,6 +33,18 @@ namespace MinecraftClone3API.Blocks
         private readonly Dictionary<Vector3i, Block> _lightBlockCache = new Dictionary<Vector3i, Block>(8192);
         private readonly HashSet<Vector3i> _lightChanged = new HashSet<Vector3i>(8192);
 
+        // Sky-light BFS scratch, parallel to the block-light caches above. UpdateSkyValues is the sole
+        // user and runs sequentially after UpdateLightValues on the same UpdateThread, so it reuses the
+        // _lightSpreadQueue/_lightRemoveQueue/_lightChunkCache and keeps only its own value cache + changed
+        // set (sky is a single 0..15 scalar, not a packed LightLevel).
+        private readonly Dictionary<Vector3i, int> _skyLevelCache = new Dictionary<Vector3i, int>(8192);
+        private readonly HashSet<Vector3i> _skyChanged = new HashSet<Vector3i>(8192);
+
+        // Highest a sky-exposure up-scan walks before assuming open sky, so a block placed far above
+        // terrain can't scan unboundedly. Terrain is shallow and the loaded vertical band is thin, so the
+        // scan almost always exits into an unloaded chunk within a few blocks.
+        private const int SkyScanMaxHeight = 256;
+
         // Memoises chunk lookups (chunk pos -> Chunk, null when absent) for the duration of one
         // UpdateLightValues flood: a torch flood probes LoadedChunks tens of thousands of times for
         // the per-neighbour empty-chunk test, almost all hitting the same few chunks.
@@ -124,7 +136,8 @@ namespace MinecraftClone3API.Blocks
 
             QueueLightUpdate(new Vector3i(x, y, z));
 
-            EnqueueBlockChange(chunkInWorld, blockInChunk, block.Id, chunk.GetLightLevel(blockInChunk).Binary);
+            EnqueueBlockChange(chunkInWorld, blockInChunk, block.Id, chunk.GetLightLevel(blockInChunk).Binary,
+                (ushort) chunk.GetSkyLight(blockInChunk));
         }
 
         public override Block GetBlock(int x, int y, int z)
@@ -158,7 +171,8 @@ namespace MinecraftClone3API.Blocks
             if (!LoadedChunks.TryGetValue(chunkInWorld, out var chunk)) return;
             chunk.SetLightLevel(blockInChunk, lightLevel);
 
-            EnqueueBlockChange(chunkInWorld, blockInChunk, chunk.GetBlock(blockInChunk), lightLevel.Binary);
+            EnqueueBlockChange(chunkInWorld, blockInChunk, chunk.GetBlock(blockInChunk), lightLevel.Binary,
+                (ushort) chunk.GetSkyLight(blockInChunk));
         }
 
         public override LightLevel GetBlockLightLevel(int x, int y, int z)
@@ -171,6 +185,28 @@ namespace MinecraftClone3API.Blocks
                 : LightLevel.Zero;
         }
 
+        public override void SetSkyLight(int x, int y, int z, int level)
+        {
+            var chunkInWorld = ChunkInWorld(x, y, z);
+            var blockInChunk = BlockInChunk(x, y, z);
+
+            if (!LoadedChunks.TryGetValue(chunkInWorld, out var chunk)) return;
+            chunk.SetSkyLight(blockInChunk, level);
+
+            EnqueueBlockChange(chunkInWorld, blockInChunk, chunk.GetBlock(blockInChunk),
+                chunk.GetLightLevel(blockInChunk).Binary, (ushort) level);
+        }
+
+        public override int GetSkyLight(int x, int y, int z)
+        {
+            var chunkInWorld = ChunkInWorld(x, y, z);
+            var blockInChunk = BlockInChunk(x, y, z);
+
+            return LoadedChunks.TryGetValue(chunkInWorld, out Chunk chunk)
+                ? chunk.GetSkyLight(blockInChunk)
+                : 0;
+        }
+
         public override BlockData GetBlockData(int x, int y, int z)
         {
             var chunkInWorld = ChunkInWorld(x, y, z);
@@ -179,10 +215,10 @@ namespace MinecraftClone3API.Blocks
             return LoadedChunks.TryGetValue(chunkInWorld, out Chunk chunk) ? chunk.GetBlockData(blockInChunk) : null;
         }
 
-        private void EnqueueBlockChange(Vector3i chunkInWorld, Vector3i blockInChunk, ushort blockId, ushort light)
+        private void EnqueueBlockChange(Vector3i chunkInWorld, Vector3i blockInChunk, ushort blockId, ushort light, ushort sky)
         {
             var localIndex = (ushort) Chunk.Index(blockInChunk.X, blockInChunk.Y, blockInChunk.Z);
-            BlockChanges[(chunkInWorld, localIndex)] = new BlockChange(chunkInWorld, localIndex, blockId, light);
+            BlockChanges[(chunkInWorld, localIndex)] = new BlockChange(chunkInWorld, localIndex, blockId, light, sky);
         }
 
         private void QueueLightUpdate(Vector3i pos)
@@ -308,6 +344,7 @@ namespace MinecraftClone3API.Blocks
                     }
 
                     UpdateLightValues(blockPos);
+                    UpdateSkyValues(blockPos);
                     didWork = true;
                 }
 
@@ -605,6 +642,131 @@ namespace MinecraftClone3API.Blocks
             }
         }
 
+        /// <summary>
+        /// Sky-light flood for one edited cell, run right after <see cref="UpdateLightValues"/> on the same
+        /// thread. Mirrors the block-light spread/remove BFS but the source is "open sky above"
+        /// (<see cref="SkyExposed"/> ⇒ 15) rather than a block emitter, attenuation is a plain -1 in every
+        /// direction (including down — deep open shafts dim with depth; see CLAUDE.md), and values are a
+        /// single 0..15 scalar so it keeps its own int cache. Reuses the block-light queues + chunk cache.
+        /// </summary>
+        private void UpdateSkyValues(Vector3i blockPos)
+        {
+            _lightChunkCache.Clear();
+
+            var occludingBlock = IsOpaqueFullBlock(blockPos);
+            var oldSky = GetSkyLight(blockPos);
+
+            var newSky = 0;
+            if (!occludingBlock)
+            {
+                if (SkyExposed(blockPos)) newSky = LightLevel.SkyMax;
+                foreach (var face in BlockFaceHelper.Faces)
+                {
+                    var neighbourSky = GetSkyLight(blockPos + face.GetNormali());
+                    if (neighbourSky - 1 > newSky) newSky = neighbourSky - 1;
+                }
+            }
+
+            var cachedSky = _skyLevelCache;
+            cachedSky.Clear();
+            cachedSky[blockPos] = newSky;
+
+            var changed = _skyChanged;
+            changed.Clear();
+            if (newSky != oldSky) changed.Add(blockPos);
+
+            var spreadQueue = _lightSpreadQueue;
+            var removeQueue = _lightRemoveQueue;
+            spreadQueue.Clear();
+            removeQueue.Clear();
+
+            if (newSky > oldSky)
+                spreadQueue.Enqueue(new LightNode(blockPos, newSky));
+            else if (newSky < oldSky)
+                removeQueue.Enqueue(new LightNode(blockPos, oldSky));
+
+            while (removeQueue.Count > 0)
+            {
+                var node = removeQueue.Dequeue();
+
+                foreach (var face in BlockFaceHelper.Faces)
+                {
+                    var nextNode = node.Position + face.GetNormali();
+
+                    if (LightChunkEmpty(nextNode)) continue;
+
+                    if (!cachedSky.TryGetValue(nextNode, out var nextSky))
+                    {
+                        nextSky = GetSkyLight(nextNode);
+                        cachedSky[nextNode] = nextSky;
+                    }
+
+                    //If the neighbour is at least as bright it belongs to a stronger source: re-spread
+                    //from its own level to refill the holes we open (matches the block-light removal).
+                    if (nextSky >= node.Value)
+                    {
+                        spreadQueue.Enqueue(new LightNode(nextNode, nextSky));
+                        continue;
+                    }
+                    if (nextSky == 0) continue;
+                    if (IsOpaqueFullBlock(nextNode)) continue;
+
+                    cachedSky[nextNode] = 0;
+                    changed.Add(nextNode);
+
+                    if (node.Value - 1 > 0)
+                        removeQueue.Enqueue(new LightNode(nextNode, node.Value - 1));
+                }
+            }
+
+            while (spreadQueue.Count > 0)
+            {
+                var node = spreadQueue.Dequeue();
+
+                foreach (var face in BlockFaceHelper.Faces)
+                {
+                    var nextNode = node.Position + face.GetNormali();
+
+                    if (LightChunkEmpty(nextNode)) continue;
+
+                    if (!cachedSky.TryGetValue(nextNode, out var nextSky))
+                    {
+                        nextSky = GetSkyLight(nextNode);
+                        cachedSky[nextNode] = nextSky;
+                    }
+
+                    var newValue = node.Value - 1;
+                    if (nextSky >= newValue) continue;
+                    if (IsOpaqueFullBlock(nextNode)) continue;
+
+                    cachedSky[nextNode] = newValue;
+                    changed.Add(nextNode);
+
+                    if (newValue > 0)
+                        spreadQueue.Enqueue(new LightNode(nextNode, newValue));
+                }
+            }
+
+            foreach (var pos in changed)
+                SetSkyLight(pos, cachedSky[pos]);
+        }
+
+        /// <summary>True if a straight upward scan from <paramref name="blockPos"/> reaches open sky (an
+        /// unloaded chunk above the loaded column) without hitting an opaque full block. Bounded by
+        /// <see cref="SkyScanMaxHeight"/>. Reuses the flood's <see cref="_lightChunkCache"/>.</summary>
+        private bool SkyExposed(Vector3i blockPos)
+        {
+            var pos = blockPos;
+            for (var i = 0; i < SkyScanMaxHeight; i++)
+            {
+                pos.Y++;
+                if (LightChunkEmpty(pos)) return true;
+                if (IsOpaqueFullBlock(pos)) return false;
+            }
+
+            return true;
+        }
+
         private bool LightChunkEmpty(Vector3i blockPos)
         {
             var chunkPos = ChunkInWorld(blockPos);
@@ -638,9 +800,16 @@ namespace MinecraftClone3API.Blocks
                 //height += OpenSimplexNoise.Generate((worldMin.X + x) * 0.005f, (worldMin.Z + z) * 0.005f) * 10;
 
 
-                    for (var y = 0; y < Chunk.Size; y++)
-                    if (worldMin.Y + y <= height)
-                        chunk.SetBlock(x, y, z, (worldMin.Y + y == (int)height) ? grass : dirt);
+                for (var y = 0; y < Chunk.Size; y++)
+                {
+                    var worldY = worldMin.Y + y;
+                    //Pure heightmap (no overhangs), so a column's air cells are exactly those above the
+                    //surface: seed them to full sky directly (exact, no BFS needed at gen).
+                    if (worldY <= height)
+                        chunk.SetBlock(x, y, z, (worldY == (int) height) ? grass : dirt);
+                    else
+                        chunk.SetSkyLight(x, y, z, LightLevel.SkyMax);
+                }
             }
 
 

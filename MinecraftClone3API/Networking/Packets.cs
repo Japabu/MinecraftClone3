@@ -96,8 +96,8 @@ namespace MinecraftClone3API.Networking
 
     /// <summary>Server announces a batch of authoritative block/light changes within a single chunk.
     /// This is the transport for edits and light propagation; whole-chunk <see cref="ChunkDataPacket"/>
-    /// is used only for initial streaming. Each entry packs its in-chunk index, block id and light, so
-    /// the client mutates the chunk in place and remeshes only it (plus face neighbours) instead of
+    /// is used only for initial streaming. Each entry packs its in-chunk index, block id, light and sky,
+    /// so the client mutates the chunk in place and remeshes only it (plus face neighbours) instead of
     /// decompressing + deserializing a whole resent chunk on the main thread.</summary>
     public class BlockChangesPacket : Packet
     {
@@ -115,6 +115,7 @@ namespace MinecraftClone3API.Networking
                 writer.Write(change.LocalIndex);
                 writer.Write(change.BlockId);
                 writer.Write(change.Light);
+                writer.Write(change.Sky);
             }
         }
 
@@ -124,7 +125,8 @@ namespace MinecraftClone3API.Networking
             var count = reader.ReadInt32();
             Changes = new List<BlockChange>(count);
             for (var i = 0; i < count; i++)
-                Changes.Add(new BlockChange(ChunkPos, reader.ReadUInt16(), reader.ReadUInt16(), reader.ReadUInt16()));
+                Changes.Add(new BlockChange(ChunkPos, reader.ReadUInt16(), reader.ReadUInt16(), reader.ReadUInt16(),
+                    reader.ReadUInt16()));
         }
     }
 

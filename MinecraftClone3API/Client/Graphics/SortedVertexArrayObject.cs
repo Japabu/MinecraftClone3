@@ -80,11 +80,11 @@ namespace MinecraftClone3API.Graphics
                 GL.VertexAttribPointer(3, 3, VertexAttribPointerType.Float, false, 0, 0);
             }
 
-            GlBuffer.UploadArray(BufferTarget.ArrayBuffer, BufferIds[4], Lights, Vector3.SizeInBytes, firstUpload);
+            GlBuffer.UploadArray(BufferTarget.ArrayBuffer, BufferIds[4], Lights, Vector4.SizeInBytes, firstUpload);
             if (firstUpload)
             {
                 GL.EnableVertexAttribArray(4);
-                GL.VertexAttribPointer(4, 3, VertexAttribPointerType.Float, false, 0, 0);
+                GL.VertexAttribPointer(4, 4, VertexAttribPointerType.Float, false, 0, 0);
             }
 
             UploadedCount = _faceInfos.Count * 6;

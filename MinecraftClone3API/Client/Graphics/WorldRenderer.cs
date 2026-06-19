@@ -39,6 +39,31 @@ namespace MinecraftClone3API.Graphics
         // Refilled in place each frame instead of allocating a fresh Plane[6] + 6 planes per call.
         private static readonly Frustum _viewFrustum = new Frustum();
 
+        // Client-side day/night clock. The sun colour drives the sky-light term in the composition shader,
+        // so the whole world brightens/dims over the cycle with no remesh. Real-time based (frame-rate
+        // independent); multiplayer clients are not yet time-synced (see CLAUDE.md). Starts at noon.
+        private const float DayLengthSeconds = 240f;
+        private static readonly System.Diagnostics.Stopwatch _dayClock = System.Diagnostics.Stopwatch.StartNew();
+
+        /// <summary>Sun colour/intensity for the current time of day: bright warm white at noon, orange at
+        /// the horizon (sunrise/sunset), a dim blue at night. Multiplied by the baked sky factor in the
+        /// composition shader.</summary>
+        private static Vector3 SunColor()
+        {
+            var t = 0.25f + (float) (_dayClock.Elapsed.TotalSeconds / DayLengthSeconds);
+            var sunHeight = MathF.Sin(t * MathHelper.TwoPi);
+
+            var day = MathHelper.Clamp((sunHeight + 0.2f) / 0.4f, 0f, 1f);
+            var highness = MathHelper.Clamp(sunHeight, 0f, 1f);
+
+            var horizon = new Vector3(1.0f, 0.5f, 0.25f);
+            var noon = new Vector3(1.0f, 0.98f, 0.92f);
+            var night = new Vector3(0.04f, 0.05f, 0.09f);
+
+            var dayColor = Vector3.Lerp(horizon, noon, highness);
+            return Vector3.Lerp(night, dayColor, day);
+        }
+
         public static void RenderWorld(WorldClient world, Matrix4 projection)
         {
             var viewProjection = PlayerController.Camera.View * projection;
@@ -208,6 +233,8 @@ namespace MinecraftClone3API.Graphics
             GL.Uniform1(comp.GetUniformLocation("uNormal"), 1);
             GL.Uniform1(comp.GetUniformLocation("uDepth"), 2);
             GL.Uniform1(comp.GetUniformLocation("uLight"), 3);
+            var sun = SunColor();
+            GL.Uniform3(comp.GetUniformLocation("uSunColor"), sun.X, sun.Y, sun.Z);
             ClientResources.ScreenRectVao.Draw();
 
             //GL.Disable(EnableCap.Blend);

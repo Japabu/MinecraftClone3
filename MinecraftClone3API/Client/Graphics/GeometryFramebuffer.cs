@@ -32,9 +32,11 @@ namespace MinecraftClone3API.Graphics
             SetNearest();
             GL.FramebufferTexture(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment1, _normal, 0);
 
+            // Rgba8: rgb = baked block light, a = baked sky-light factor (composition multiplies a by the
+            // sun colour for the dynamic day/night cycle).
             _light = GL.GenTexture();
             GL.BindTexture(TextureTarget.Texture2D, _light);
-            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgb8, width, height, 0, PixelFormat.Rgb, PixelType.UnsignedByte, IntPtr.Zero);
+            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba8, width, height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, IntPtr.Zero);
             SetNearest();
             GL.FramebufferTexture(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment2, _light, 0);
 

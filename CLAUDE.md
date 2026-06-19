@@ -9,8 +9,9 @@
 > Treat editing this file as part of "done," not an afterthought.
 
 A from-scratch Minecraft-like voxel engine in C# on OpenTK (OpenGL). Custom deferred renderer, plugin
-system, chunked world with RGB light propagation, and **client/server multiplayer** (singleplayer runs an
-in-process server over a loopback connection; multiplayer connects to a dedicated server over TCP).
+system, chunked world with RGB block-light + sky-light propagation and a dynamic day/night cycle, and
+**client/server multiplayer** (singleplayer runs an in-process server over a loopback connection;
+multiplayer connects to a dedicated server over TCP).
 
 ---
 
@@ -78,14 +79,14 @@ and talks to it over an in-memory loopback connection; multiplayer swaps the loo
  └────────────────────────┘                    └─────────────────────────┘
 ```
 
-- **`WorldServer`** (`Blocks/WorldServer.cs`): the authority. Block storage, terrain gen, RGB light
-  propagation, save/load, entity simulation. **No meshing, no GL** — it can run fully headless.
+- **`WorldServer`** (`Blocks/WorldServer.cs`): the authority. Block storage, terrain gen, RGB block-light +
+  sky-light propagation, save/load, entity simulation. **No meshing, no GL** — it can run fully headless.
 - **`WorldClient`** (`Client/Blocks/WorldClient.cs`): the client replica. Holds chunks streamed from the
   server, **caches them and owns their eviction** (drops a chunk past `CacheDistance`, then sends a
   `ChunkRelease`), meshes them, renders them, holds remote entities. **No terrain gen, no disk, no lighting.**
 - **`ServerNetwork`** (`Networking/ServerNetwork.cs`): per-client sessions, interest-based chunk streaming,
   dirty-chunk resends, entity relay, the TCP listener.
-- **Authority:** server owns blocks + light. Position is **client-authoritative** (there is no server-side
+- **Authority:** server owns blocks + light (block + sky). Position is **client-authoritative** (there is no server-side
   physics; `Entity.Move` is a direct position write). The client *requests* edits; the server applies and
   broadcasts the result.
 - **Chunk lifetime is client-owned (see below).** The server streams a chunk once and keeps it in the
@@ -110,18 +111,24 @@ separate client-only `ChunkRenderData`. This split is the backbone of the whole 
    Chunk  (Blocks/Chunk.cs)            ChunkRenderData  (Client/Graphics/ChunkRenderData.cs)
    - PaletteStorage block ids          - holds a Chunk + two VertexArrayObjects (opaque + transparent)
    - PaletteStorage light (RGB)        - Update() : CPU meshing (ChunkMesher) — safe off-thread
-   - block data, min/max bounds        - Upload()/Draw()/Dispose() : GL — main thread ONLY
-   - Write(BinaryWriter)               - Upload() gated on `Updated` (see invariants)
+   - PaletteStorage sky (0..15)        - Upload()/Draw()/Dispose() : GL — main thread ONLY
+   - block data, min/max bounds        - Upload() gated on `Updated` (see invariants)
+   - Write(BinaryWriter)
 ```
 
-**Storage is bit-packed paletted, not dense arrays** (`Blocks/PaletteStorage.cs`). A `Chunk` holds two
-`PaletteStorage` containers (block ids, packed light) plus the block-data dict and min/max. Each container
-is a small palette of the distinct values + a bit-packed index array (`bitsPerEntry = ceil(log2(count))`,
-or a single-value fast path with no index array for a uniform chunk). With no skylight the light container
-is single-value (~16 B) for nearly every chunk; terrain regions are near-uniform too. This shrinks the
-per-chunk clone **and** the resident chunk heap ~10–50× versus the old dense `ushort[4096]` pair (16 KB),
-which is what drove the allocation/GC stall that worsened the longer the player moved. The `Chunk.Index`
-x/y/z flattening order still defines the layout, so the (de)serializers must iterate in that order.
+**Storage is bit-packed paletted, not dense arrays** (`Blocks/PaletteStorage.cs`). A `Chunk` holds three
+`PaletteStorage` containers (block ids, packed RGB light, sky light) plus the block-data dict and min/max.
+Each container is a small palette of the distinct values + a bit-packed index array (`bitsPerEntry =
+ceil(log2(count))`, or a single-value fast path with no index array for a uniform chunk). The block-light
+container is single-value (~16 B, all-zero) away from torches; the **sky** container is single-value (all-zero)
+for underground chunks, and only the surface chunks (and dug caves) carry a small mixed `{0,15}` palette.
+(All-air chunks above terrain *are* seeded all-15, but they stay `IsEmpty` and are discarded, never streamed —
+the client falls back to sky 15 for any unloaded chunk; see "Known rough edges".) `SetSkyLight` deliberately
+does **not** expand min/max (sky fills air everywhere; doing so would defeat that fast path, blow up the
+mesher's `min..max` loop, and break `IsEmpty`).
+This shrinks the per-chunk clone **and** the resident chunk heap ~10–50× versus dense arrays. The
+`Chunk.Index` x/y/z flattening order still defines the layout, so the (de)serializers must iterate in that
+order.
 
 `ChunkMesher.AddBlockToVao(WorldBase, ...)` reads neighbour blocks through `WorldBase`, so it works for any
 world. Chunk serialization (`Chunk.Write` ↔ `new CachedChunk(world, pos, reader)`) is reused for both disk
@@ -132,9 +139,10 @@ saves (`WorldSerializer`) and the `ChunkData` network packet; both write each co
 class doc). A published storage's palette and bit-width are immutable; a `Set` reusing an existing value
 rewrites one packed entry in place (a benign single-entry torn read, exactly as the old dense `ushort[]`
 already tolerated), while a `Set` introducing a new value returns a NEW storage the chunk publishes through
-its `volatile` field. Each container has exactly one writer thread (server: block ids = tick thread, light =
-light thread; client: both = the apply thread), so concurrent readers (mesher, network serialize, raytrace)
-always see a structurally consistent snapshot. **Do not introduce a second writer to either container.**
+its `volatile` field. Each container has exactly one writer thread (server: block ids = tick thread, light
+and sky = light/Update thread — plus the LoadThread seeds sky at gen, before the chunk is published, so it
+is not yet shared; client: all three = the apply thread), so concurrent readers (mesher, network serialize,
+raytrace) always see a structurally consistent snapshot. **Do not introduce a second writer to any container.**
 
 ---
 
@@ -165,7 +173,7 @@ old server-side `Chunk.Write` already had, made safe by the palette copy-on-grow
   C→S  Login                 announce
   S→C  LoginAccept           assigns entity id + spawn
   S→C  ChunkData             Vector3i + Chunk (loopback: by ref; TCP: GZip of Chunk.Write)   (initial chunk streaming only)
-  S→C  BlockChanges          ChunkPos + (localIndex, blockId, light)[]   (edits + light, see below)
+  S→C  BlockChanges          ChunkPos + (localIndex, blockId, light, sky)[]   (edits + block-light + sky-light, see below)
   C→S  ChunkRelease          client dropped a chunk from its cache; clears its SentChunks entry
   C→S  PlaceBlockRequest     pos + block id (id 0 = break)
   C→S/S→C  EntityMove         own player up; relayed to others down
@@ -182,22 +190,24 @@ when the chunk is dirtied and resent. The server-side `UnloadThread` still evict
 `WorldServer.LoadedChunks` (its own memory) — that is unrelated to what the client holds.
 
 **Edits & light propagation reach clients via per-block deltas, not whole-chunk resends.** When the
-server applies an edit (`SetBlock`, tick thread) it records a `BlockChange(chunkPos, localIndex, id, light)`
-in `WorldServer.BlockChanges`; light propagation (`UpdateThread`) does the same for every node whose light
-**actually changed**. The light BFS marks only genuinely-changed nodes — not every chunk it *visits*:
-`UpdateLightValues` reads a frontier of unchanged neighbours for lookup but tracks the changed nodes in
-`_lightChanged` and only those become `BlockChange`s. `BlockChanges` is a **`ConcurrentDictionary` keyed by
+server applies an edit (`SetBlock`, tick thread) it records a `BlockChange(chunkPos, localIndex, id, light, sky)`
+in `WorldServer.BlockChanges`; block-light *and* sky-light propagation (`UpdateThread`, see the threading
+model) do the same for every node whose value **actually changed**. The light BFS marks only genuinely-changed
+nodes — not every chunk it *visits*: `UpdateLightValues`/`UpdateSkyValues` read a frontier of unchanged
+neighbours for lookup but track the changed nodes in `_lightChanged`/`_skyChanged` and only those become
+`BlockChange`s. Each `BlockChange` is a **full `(id, light, sky)` snapshot** read from the live chunk, so the
+block-light writeback and the sky writeback overwriting the same cell (last-write-wins) still converge. `BlockChanges` is a **`ConcurrentDictionary` keyed by
 absolute block (chunk pos + local index) with last-write-wins**, not a queue: rapid breaking near a torch
 re-lights the same cells across many overlapping floods, so a queue accumulated the same block over and over
 (O(floods × volume)) and `FlushBlockChanges`' unbounded drain + per-chunk `List.Add` storm (`AddWithResize`)
 trapped the flush thread, getting worse the longer you destroyed (a trace showed it at ~100% of the SP main
 thread). Deduping at the source bounds pending changes to O(distinct changed blocks); it's correct because
-each `BlockChange` is a full (id, light) snapshot the client applies idempotently (last wins = current state).
+each `BlockChange` is a full (id, light, sky) snapshot the client applies idempotently (last wins = current state).
 `ServerNetwork.FlushBlockChanges()` drains it each tick (enumerate + `TryRemove`, which terminates so a busy
 light thread can't trap it), groups changes by chunk, and sends one compact `BlockChanges` packet per chunk
 to every session whose `SentChunks` holds it. The client (`WorldClient.ApplyBlockChanges`) mutates the
-cached `Chunk` **in place** (`SetBlock` + `SetLightLevel`, no decompress/deserialize) and remeshes only that
-chunk plus any **face** neighbour a changed boundary block touches — replicating the old
+cached `Chunk` **in place** (`SetBlock` + `SetLightLevel` + `SetSkyLight`, no decompress/deserialize) and
+remeshes only that chunk plus any **face** neighbour a changed boundary block touches — replicating the old
 `MarkChunkAndBoundaryDirty` face logic on the mesh side. (Before this, a single edit near a torch resent
 dozens of whole GZip'd chunks; the client decompressed + deserialized each on its **main thread** in
 `ApplyChunk` and re-meshed it plus 6 neighbours — the trace showed `DecompressBytes`/`ApplyChunk` dominating
@@ -205,7 +215,7 @@ client `Update` and tanking FPS, even though the light maths is cheap and server
 AO seams across chunks are a pre-existing limitation unchanged by this (face culling — the only correctness
 concern — needs only the direct face neighbour, which is covered).
 
-**Block-data changes still ride whole-chunk resends.** `BlockChanges` carries only id + light, so a block
+**Block-data changes still ride whole-chunk resends.** `BlockChanges` carries only id + light + sky, so a block
 *data* change (`SetBlockData`, e.g. tinted glass metadata, which affects `ConnectsToBlock` meshing and
 `OnLightPassThrough`) still marks `WorldServer.DirtyChunks` and `ServerNetwork.ResendDirtyChunks()` resends
 the whole `ChunkData`. This is rare; deltas handle the common place/break/light path. (`BlockChangePacket`,
@@ -225,9 +235,10 @@ at `MaxChunksPerTick` per session per tick — no unload pass) → **flush block
  WorldServer (background, started in ctor):
    LoadThread    terrain gen + disk load around each player in PlayerEntities; fills _chunksReadyToAdd
    UnloadThread  saves + evicts chunks idle > 30s; fills _chunksReadyToRemove
-   UpdateThread  drains _queuedLightUpdates → UpdateLightValues (RGB BFS flood); blocks on
-                 _lightSignal (an AutoResetEvent set by SetBlock/SetBlockData) when idle instead of
-                 spinning Thread.Sleep(1), waking on a 100 ms timeout to observe _unloaded
+   UpdateThread  drains _queuedLightUpdates → UpdateLightValues (RGB BFS flood) then UpdateSkyValues
+                 (sky BFS flood, same edited cell) per edit; blocks on _lightSignal (an AutoResetEvent set
+                 by SetBlock/SetBlockData) when idle instead of spinning Thread.Sleep(1), waking on a 100 ms
+                 timeout to observe _unloaded. Sole writer of both the light and sky containers (post-publish)
    WorldServer.Update()  (caller's thread) drains add/remove into LoadedChunks; runs entity updates
 
  WorldClient:
@@ -297,16 +308,23 @@ needs hardening, ship `GameRegistry.Save/Load` (a `registry.bin` exchange) — i
 ```
   WorldRenderer.RenderWorld(WorldClient, projection)
     └─ DrawGeometryFramebuffer → GeometryFramebuffer (MRT G-buffer)
-         attachment 0: diffuse   1: normal (w=1 ⇒ "unlit, pass through")   2: baked RGB light   + depth
+         attachment 0: diffuse   1: normal (w=1 ⇒ "unlit, pass through")
+         2: RGBA8 light (rgb = baked block light, a = baked sky-light factor 0..1)   + depth
          · opaque chunks front-to-back, then transparent back-to-front (per-chunk sorted VAO)
          · EntityRenderer  : remote players as solid placeholder cubes (BlockOutline shader, unlit)
          · PlayerController : block-targeting outline
     └─ DrawComposition → screen
-         diffuse * max(light, Ambient); if normal.w==1, output diffuse unlit
+         light = max(blockLight.rgb, sky.a * uSunColor); diffuse * max(light, Ambient); normal.w==1 ⇒ diffuse unlit
 ```
 
-Shaders live in `MinecraftClone3/Content/System/Assets/System/Shaders/`. The world has **no skylight** —
-only block-emitted light (e.g. torches) plus a small ambient floor in the composition shader.
+Shaders live in `MinecraftClone3/Content/System/Assets/System/Shaders/`. Lighting is block-emitted RGB light
+(torches) **plus sky light** modulated by a **dynamic day/night cycle**: the per-vertex light is a `vec4`
+(rgb = smooth-lit block brightness, a = smooth-lit sky-occlusion factor); the composition shader multiplies
+the sky factor by `uSunColor` (a client-side real-time clock in `WorldRenderer.SunColor` — bright warm white
+at noon, orange at the horizon, dim blue at night), so the world brightens/dims over the day **with no
+remesh**. A small ambient floor keeps fully-shadowed surfaces faintly visible. (The sky channel is baked into
+the chunk mesh, so geometry/occlusion is static; only the sun *colour/intensity* animates. The clock is
+client-local — MP clients are not yet time-synced; see "Known rough edges".)
 
 OpenGL is capped at **4.1 Core / GLSL 4.10** (macOS limit). Consequences: **uniform and sampler locations
 are queried by name** (no `layout(location=)`/`layout(binding=)` on uniforms); vertex-attribute and
@@ -437,8 +455,9 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
   rationale + the copy-on-grow concurrency rule). It replaced dense `ushort[4096]` + `LightLevel[4096]`: a
   trace while moving showed the per-chunk dense clone (two 16 KB arrays) at ~86–92% of the render thread and
   the resident dense heap drove a worsening GC stall (single-heap ephemeral collections scan a growing live
-  set). Paletted storage shrinks both ~10–50× — uniform/near-uniform chunks and (no skylight) the all-zero
-  light container cost almost nothing. The flat `Chunk.Index(x,y,z) = (x*16+y)*16+z` ordering survives as the
+  set). Paletted storage shrinks both ~10–50× — uniform/near-uniform chunks and the single-value light/sky
+  containers (all-zero block light away from torches; all-zero or all-15 sky away from the surface) cost
+  almost nothing. The flat `Chunk.Index(x,y,z) = (x*16+y)*16+z` ordering survives as the
   linear index into the palette's packed array and still defines the (de)serialize iteration order. *(The
   earlier win — flat 1-D over `[16,16,16]` to dodge the `Array.CreateInstanceMDArray` allocator — is folded
   into this: the palette's index array is a single `long[]`, no multidimensional allocation.)*
@@ -610,7 +629,8 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
 - **Pathological all-distinct chunks store slightly more than dense.** A chunk with hundreds–thousands of
   distinct values grows `bitsPerEntry` toward 12 and the palette toward 4096 entries, so worst case (~14 KB)
   exceeds the old 8 KB-per-container dense — but this never occurs in practice (block types per chunk are few;
-  light is 0 across the no-skylight world except near the few torches). No fallback-to-dense is implemented.
+  block light is 0 except near torches; sky is uniform 0 or 15 except at the surface and dug caves). No
+  fallback-to-dense is implemented.
 - **`PaletteStorage.Read` doesn't validate entries are `< paletteCount`.** It checks count/bits/length, but a
   packed index whose value `≥ count` (only possible from corrupt or buggy-server bytes — a conforming writer
   never emits one, and torn reads only ever flip among valid indices) would index `_palette` out of range in
@@ -640,6 +660,24 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
   throws the moment tinted glass is placed (same class of bug as the old `BlockTorch` keyboard read). Works in
   singleplayer only because the integrated server shares the client process. Placement metadata should come
   from the place *request*, not a live keyboard read on the server.
+- **Sky light is "gen-seed + simple BFS" — known edit-time limitations (accepted scope).** At chunk-gen the
+  sky container is seeded exactly from the heightmap (open-air cells = 15), so untouched terrain is perfectly
+  lit. On edit, `UpdateSkyValues` floods sky like block light but with two simplifications: (1) **sky
+  attenuates −1 in every direction including down**, so a cell reached only by downward *spread* dims with
+  depth (note: a freshly-dug straight shaft does *not* dim — each dug cell re-seeds at 15 via `SkyExposed`'s
+  straight-up scan; the dimming shows in caves/tunnels reached sideways, which is the desired dark-cave look);
+  (2) **the equal-value removal ambiguity** — placing an opaque block to shadow a sky column won't cleanly go
+  dark straight down, because a side-adjacent sky-15 cell back-fills it (15 − distance) in the removal BFS.
+  Correct fix would be a persistent per-column heightmap + undimmed-vertical special-case (Minecraft's
+  approach) — deliberately not done. `SkyExposed` is capped at `SkyScanMaxHeight` (256).
+- **All-air chunks above terrain aren't streamed, so the client falls back to sky 15 for unloaded chunks.**
+  An all-air chunk is `IsEmpty` and never added to `LoadedChunks`/streamed; its seeded sky never reaches the
+  client. `WorldClient.GetSkyLight` returns `LightLevel.SkyMax` for any unloaded chunk (treat unloaded space
+  as open sky) so surface tops still light up. Side effect: the bottom face of a block whose neighbour chunk
+  is merely *not-yet-loaded* (not actually open sky) briefly samples 15 until that chunk streams in.
+- **Day/night sun time is client-local (MP desync).** `WorldRenderer`'s clock advances in real time per
+  client, so two MP clients see different times of day and the server has no authoritative time. SP is fine.
+  Fix later via a server time packet. `DayLengthSeconds` (240) sets the cycle length.
 - No movement interpolation for remote players (they snap to the last received position).
 - `StateWorld` connects synchronously on the main thread; a far/unreachable MP host briefly blocks.
 - `ClientSession.SentChunks` shrinks only on `ChunkRelease`/dirty resend, so a misbehaving or crashed client

@@ -373,6 +373,7 @@ namespace MinecraftClone3API.Client.Blocks
                 var local = Chunk.FromIndex(change.LocalIndex);
                 chunk.SetBlock(local, change.BlockId);
                 chunk.SetLightLevel(local, LightLevel.FromBinary(change.Light));
+                chunk.SetSkyLight(local, change.Sky);
 
                 if (local.X == 0) touchedNeighbours |= 1 << 0;
                 else if (local.X == Chunk.Size - 1) touchedNeighbours |= 1 << 1;
@@ -540,6 +541,24 @@ namespace MinecraftClone3API.Client.Blocks
         public override void SetBlockLightLevel(int x, int y, int z, LightLevel lightLevel)
         {
             // Lighting is computed server-side and arrives baked into chunk data.
+        }
+
+        public override int GetSkyLight(int x, int y, int z)
+        {
+            var chunkInWorld = ChunkInWorld(x, y, z);
+            var blockInChunk = BlockInChunk(x, y, z);
+
+            // Unloaded ⇒ open sky: all-air chunks above terrain are IsEmpty and never streamed, so a
+            // missing chunk means the position sees the sky. Without this the mesher would sample 0 for a
+            // surface block's air neighbour in the (empty, unsent) chunk above and render its top dark.
+            return LoadedChunks.TryGetValue(chunkInWorld, out var chunk)
+                ? chunk.GetSkyLight(blockInChunk)
+                : LightLevel.SkyMax;
+        }
+
+        public override void SetSkyLight(int x, int y, int z, int level)
+        {
+            // Sky light is computed server-side and arrives baked into chunk data.
         }
     }
 }

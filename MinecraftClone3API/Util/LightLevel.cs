@@ -9,6 +9,10 @@ namespace MinecraftClone3API.Util
 
         public const int Max = 31;
 
+        // Full sky-light level. Sky is stored in its own 0..15 container (not in this BGR struct); the
+        // mesher's brightness curve Base^(15-level) saturates at 15, so an open-sky cell is 15.
+        public const int SkyMax = 15;
+
         public static LightLevel Zero = new LightLevel();
 
         public static LightLevel FromBinary(ushort value) => new LightLevel(value);

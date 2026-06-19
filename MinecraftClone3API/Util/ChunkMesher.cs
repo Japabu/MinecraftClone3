@@ -85,9 +85,9 @@ namespace MinecraftClone3API.Util
             var faceMiddle = Vector3.Zero;
 
             //per vertex light value interpolation (smooth lighting + free ambient occlusion); the four
-            //corner brightnesses are kept to flip the quad for AO anisotropy
+            //corner brightnesses are kept to flip the quad for AO anisotropy. xyz = block light, w = sky.
             //https://0fps.net/2013/07/03/ambient-occlusion-for-minecraft-like-worlds/
-            Vector3 b0 = default, b1 = default, b2 = default, b3 = default;
+            Vector4 b0 = default, b1 = default, b2 = default, b3 = default;
 
             for (var j = 0; j < 4; j++)
             {
@@ -119,11 +119,20 @@ namespace MinecraftClone3API.Util
             vao.AddFace(baseVertex, flipped, faceMiddle);
         }
 
-        private static Vector3 CalculateBrightness(WorldBase world, Block block, Vector3i blockPos, BlockFace face, Vector3 vertexPosition)
+        // xyz = block-light brightness (per channel), w = sky-light brightness. Block and sky are sampled
+        // together at each position so the (expensive) neighbour smooth-lighting walk happens once.
+        private static Vector4 SampleBrightness(WorldBase world, Vector3i pos)
+        {
+            var rgb = LightLevelToBrightness(world.GetBlockLightLevel(pos).Vector3);
+            var sky = CustomLightLevelToBrightness(world.GetSkyLight(pos));
+            return new Vector4(rgb, sky);
+        }
+
+        private static Vector4 CalculateBrightness(WorldBase world, Block block, Vector3i blockPos, BlockFace face, Vector3 vertexPosition)
         {
             //if its not a full opaque block return brightness of itself
             if (!block.IsOpaqueFullBlock(world, blockPos) || !block.Model.AmbientOcclusion)
-                return LightLevelToBrightness(world.GetBlockLightLevel(blockPos).Vector3);
+                return SampleBrightness(world, blockPos);
 
             //TODO: smooth lighting setting
             //return LightLevelToBrightness(world.GetBlockLightLevel(blockPos + face.GetNormali()));
@@ -140,7 +149,7 @@ namespace MinecraftClone3API.Util
             if ((offset - offset * (normal * normal)).LengthSquared != 2)
             {
                 //If vertex is not a corner do not apply ambient occlusion but apply the blocks own brightness
-                return LightLevelToBrightness(world.GetBlockLightLevel(blockPos).Vector3);
+                return SampleBrightness(world, blockPos);
             }
 
             if (normal.X != 0)
@@ -162,23 +171,18 @@ namespace MinecraftClone3API.Util
             throw new Exception("Something is really broken if you can read this :S");
         }
 
-        private static Vector3 GetSmoothLightValue(WorldBase world, Vector3i p0, Vector3i p1, Vector3i p2, Vector3i p3)
+        private static Vector4 GetSmoothLightValue(WorldBase world, Vector3i p0, Vector3i p1, Vector3i p2, Vector3i p3)
         {
-            var lightValue = Vector3.Zero;
+            var lightValue = SampleBrightness(world, p0);
 
-            lightValue += LightLevelToBrightness(world.GetBlockLightLevel(p0).Vector3);
-
-            var l0 = LightLevelToBrightness(world.GetBlockLightLevel(p1).Vector3);
-            var l1 = LightLevelToBrightness(world.GetBlockLightLevel(p2).Vector3);
-
-            lightValue += l0;
-            lightValue += l1;
+            lightValue += SampleBrightness(world, p1);
+            lightValue += SampleBrightness(world, p2);
 
             //If two full blocks obstruct the corner ignore the it
             if (world.IsFullBlock(p1) && world.IsFullBlock(p2))
                 return lightValue / 3;
-            
-            lightValue += LightLevelToBrightness(world.GetBlockLightLevel(p3).Vector3);
+
+            lightValue += SampleBrightness(world, p3);
             return lightValue / 4;
         }
 

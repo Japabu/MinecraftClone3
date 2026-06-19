@@ -3,11 +3,12 @@
 in vec4 vTexCoord;
 in vec4 vNormal;
 in vec3 vColor;
-in vec3 vLight;
+in vec4 vLight;
 
 layout(location = 0) out vec4 outDiffuse;
 layout(location = 1) out vec4 outNormal;
-layout(location = 2) out vec3 outLight;
+// rgb = baked block light, a = baked sky-light factor (modulated by the sun in composition)
+layout(location = 2) out vec4 outLight;
 
 uniform sampler2DArray uTextures16;
 uniform sampler2DArray uTextures64;

@@ -18,7 +18,9 @@ namespace MinecraftClone3API.Graphics
         protected List<Vector4> TexCoords;
         protected List<Vector4> Normals;
         protected List<Vector3> Colors;
-        protected List<Vector3> Lights;
+        // xyz = baked block-light brightness (0..1 per channel), w = baked sky-light brightness (0..1).
+        // The composition shader multiplies w by the sun colour for the dynamic day/night cycle.
+        protected List<Vector4> Lights;
         protected List<uint> Indices;
 
         public int UploadedCount;
@@ -32,7 +34,7 @@ namespace MinecraftClone3API.Graphics
             IndicesId = GL.GenBuffer();
         }
 
-        public virtual void Add(Vector3 position, Vector4 texCoord, Vector4 normal, Vector3 color, Vector3 light)
+        public virtual void Add(Vector3 position, Vector4 texCoord, Vector4 normal, Vector3 color, Vector4 light)
         {
             if (Positions == null)
             {
@@ -40,7 +42,7 @@ namespace MinecraftClone3API.Graphics
                 TexCoords = VaoBufferPool.RentVector4();
                 Normals = VaoBufferPool.RentVector4();
                 Colors = VaoBufferPool.RentVector3();
-                Lights = VaoBufferPool.RentVector3();
+                Lights = VaoBufferPool.RentVector4();
 
                 Indices = VaoBufferPool.RentUint();
             }
@@ -105,11 +107,11 @@ namespace MinecraftClone3API.Graphics
                 GL.VertexAttribPointer(3, 3, VertexAttribPointerType.Float, false, 0, 0);
             }
 
-            GlBuffer.UploadArray(BufferTarget.ArrayBuffer, BufferIds[4], Lights, Vector3.SizeInBytes, firstUpload);
+            GlBuffer.UploadArray(BufferTarget.ArrayBuffer, BufferIds[4], Lights, Vector4.SizeInBytes, firstUpload);
             if (firstUpload)
             {
                 GL.EnableVertexAttribArray(4);
-                GL.VertexAttribPointer(4, 3, VertexAttribPointerType.Float, false, 0, 0);
+                GL.VertexAttribPointer(4, 4, VertexAttribPointerType.Float, false, 0, 0);
             }
 
             GlBuffer.UploadArray(BufferTarget.ElementArrayBuffer, IndicesId, Indices, sizeof(uint), firstUpload);

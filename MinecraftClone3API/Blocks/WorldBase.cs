@@ -33,6 +33,8 @@ namespace MinecraftClone3API.Blocks
         public void SetBlockLightLevel(Vector3i blockPos, LightLevel lightLevel)
             => SetBlockLightLevel(blockPos.X, blockPos.Y, blockPos.Z, lightLevel);
         public LightLevel GetBlockLightLevel(Vector3i blockPos) => GetBlockLightLevel(blockPos.X, blockPos.Y, blockPos.Z);
+        public void SetSkyLight(Vector3i blockPos, int level) => SetSkyLight(blockPos.X, blockPos.Y, blockPos.Z, level);
+        public int GetSkyLight(Vector3i blockPos) => GetSkyLight(blockPos.X, blockPos.Y, blockPos.Z);
 
         public void SetBlockLightLevelColor(Vector3i blockPos, int value, int color)
         {
@@ -113,6 +115,8 @@ namespace MinecraftClone3API.Blocks
         public abstract BlockData GetBlockData(int x, int y, int z);
         public abstract void SetBlockLightLevel(int x, int y, int z, LightLevel lightLevel);
         public abstract LightLevel GetBlockLightLevel(int x, int y, int z);
+        public abstract void SetSkyLight(int x, int y, int z, int level);
+        public abstract int GetSkyLight(int x, int y, int z);
         public abstract void PlaceBlock(EntityPlayer player, Vector3i blockPos, Block block);
         public abstract void Update();
 

@@ -38,7 +38,7 @@ namespace MinecraftClone3API.Graphics
         {
             _vao = new VertexArrayObject();
             foreach (var vertex in Vertices)
-                _vao.Add(vertex, Vector4.Zero, Vector4.Zero, Vector3.Zero, Vector3.Zero);
+                _vao.Add(vertex, Vector4.Zero, Vector4.Zero, Vector3.Zero, Vector4.Zero);
             _vao.AddFace(Indices, Vector3.Zero);
             _vao.Upload();
         }

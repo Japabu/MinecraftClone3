@@ -29,6 +29,10 @@ namespace MinecraftClone3API.Blocks
         // Each container has a single writer thread; see PaletteStorage.
         private volatile PaletteStorage _blockStorage;
         private volatile PaletteStorage _lightStorage;
+        // Sky light (sun) level 0..15 stored raw as a ushort, in its own container so the all-sky air
+        // regions stay a single palette value. Same single-writer rule as _lightStorage (server light
+        // thread / client apply thread post-publish; LoadThread pre-publish during gen seeding).
+        private volatile PaletteStorage _skyStorage;
         // Concurrent: the loopback clone (apply thread) copies a server chunk's block data while the
         // server tick thread may be mutating it via SetBlockData. Rare (block-data changes only), but a
         // plain Dictionary copy under concurrent mutation throws; ConcurrentDictionary enumerates safely.
@@ -53,6 +57,7 @@ namespace MinecraftClone3API.Blocks
 
             _blockStorage = new PaletteStorage(0);
             _lightStorage = new PaletteStorage(0);
+            _skyStorage = new PaletteStorage(0);
             _blockDatas = new ConcurrentDictionary<Vector3iChunk, BlockData>();
         }
 
@@ -67,6 +72,7 @@ namespace MinecraftClone3API.Blocks
 
             _blockStorage = cachedChunk.BlockStorage;
             _lightStorage = cachedChunk.LightStorage;
+            _skyStorage = cachedChunk.SkyStorage;
             _blockDatas = cachedChunk.BlockDatas;
             _min = cachedChunk.Min;
             _max = cachedChunk.Max;
@@ -86,6 +92,7 @@ namespace MinecraftClone3API.Blocks
 
             _blockStorage = source._blockStorage.Clone();
             _lightStorage = source._lightStorage.Clone();
+            _skyStorage = source._skyStorage.Clone();
             _blockDatas = new ConcurrentDictionary<Vector3iChunk, BlockData>(source._blockDatas);
             _min = source._min;
             _max = source._max;
@@ -148,6 +155,21 @@ namespace MinecraftClone3API.Blocks
 
         public LightLevel GetLightLevel(Vector3i blockPos) => LightLevel.FromBinary(_lightStorage.Get(Index(blockPos.X, blockPos.Y, blockPos.Z)));
 
+        // Unlike SetLightLevel, sky writes never expand _min/_max: sky fills air everywhere, so growing
+        // the bounding box would defeat the uniform-air fast path, blow up the mesher's min..max loop, and
+        // break IsEmpty. The mesher only ever samples sky at faces of existing blocks (already in bounds).
+        public void SetSkyLight(Vector3i blockPos, int level)
+        {
+            var index = Index(blockPos.X, blockPos.Y, blockPos.Z);
+            var storage = _skyStorage;
+            if (storage.Get(index) == level) return;
+
+            NeedsSaving = true;
+            _skyStorage = storage.Set(index, (ushort) level);
+        }
+
+        public int GetSkyLight(Vector3i blockPos) => _skyStorage.Get(Index(blockPos.X, blockPos.Y, blockPos.Z));
+
         public void Write(BinaryWriter writer)
         {
             writer.Write(_min.X);
@@ -160,6 +182,7 @@ namespace MinecraftClone3API.Blocks
 
             _blockStorage.Write(writer);
             _lightStorage.Write(writer);
+            _skyStorage.Write(writer);
 
             writer.Write(_blockDatas.Count);
             foreach (var data in _blockDatas)
