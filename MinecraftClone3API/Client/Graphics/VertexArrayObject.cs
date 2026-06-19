@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Runtime.InteropServices;
 using OpenTK.Mathematics;
 using OpenTK.Graphics.OpenGL4;
 
@@ -8,6 +7,9 @@ namespace MinecraftClone3API.Graphics
 {
     public class VertexArrayObject : IDisposable
     {
+        protected static readonly uint[] FaceIndices = {2, 1, 0, 2, 3, 1};
+        protected static readonly uint[] FlippedFaceIndices = {0, 2, 3, 0, 3, 1};
+
         protected readonly int VaoId;
         protected readonly int[] BufferIds = new int[5];
         protected readonly int IndicesId;
@@ -34,13 +36,13 @@ namespace MinecraftClone3API.Graphics
         {
             if (Positions == null)
             {
-                Positions = new List<Vector3>(1024);
-                TexCoords = new List<Vector4>(1024);
-                Normals = new List<Vector4>(1024);
-                Colors = new List<Vector3>(1024);
-                Lights = new List<Vector3>(1024);
+                Positions = VaoBufferPool.RentVector3();
+                TexCoords = VaoBufferPool.RentVector4();
+                Normals = VaoBufferPool.RentVector4();
+                Colors = VaoBufferPool.RentVector3();
+                Lights = VaoBufferPool.RentVector3();
 
-                Indices = new List<uint>(1024);
+                Indices = VaoBufferPool.RentUint();
             }
 
             Positions.Add(position);
@@ -49,8 +51,17 @@ namespace MinecraftClone3API.Graphics
             Colors.Add(color);
             Lights.Add(light);
         }
-        
+
         public virtual void AddFace(uint[] indices, Vector3 faceMiddle) => Indices.AddRange(indices);
+
+        /// <summary>Appends the six indices for the four vertices just <see cref="Add"/>ed, generated
+        /// in place from the shared winding pattern so the mesher allocates no per-face index array.</summary>
+        public virtual void AddFace(int baseVertex, bool flipped, Vector3 faceMiddle)
+        {
+            var pattern = flipped ? FlippedFaceIndices : FaceIndices;
+            for (var i = 0; i < pattern.Length; i++)
+                Indices.Add((uint) (pattern[i] + baseVertex));
+        }
 
         public virtual void Upload()
         {
@@ -60,68 +71,48 @@ namespace MinecraftClone3API.Graphics
                 return;
             }
 
+            // A re-upload (UploadedCount != 0) orphans each buffer so the GL call never stalls waiting for
+            // the GPU to finish drawing the in-flight mesh; the attribute pointers are wired up only on the
+            // first upload. See GlBuffer.UploadArray.
+            var firstUpload = UploadedCount == 0;
             GL.BindVertexArray(VaoId);
 
-            if (UploadedCount == 0)
+            GlBuffer.UploadArray(BufferTarget.ArrayBuffer, BufferIds[0], Positions, Vector3.SizeInBytes, firstUpload);
+            if (firstUpload)
             {
-                //0 positions
-                GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[0]);
-                GL.BufferData(BufferTarget.ArrayBuffer, Positions.Count * Vector3.SizeInBytes, ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(Positions)),
-                    BufferUsageHint.StaticDraw);
                 GL.EnableVertexAttribArray(0);
                 GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 0, 0);
-                //1 texCoords
-                GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[1]);
-                GL.BufferData(BufferTarget.ArrayBuffer, TexCoords.Count * Vector4.SizeInBytes, ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(TexCoords)),
-                    BufferUsageHint.StaticDraw);
+            }
+
+            GlBuffer.UploadArray(BufferTarget.ArrayBuffer, BufferIds[1], TexCoords, Vector4.SizeInBytes, firstUpload);
+            if (firstUpload)
+            {
                 GL.EnableVertexAttribArray(1);
                 GL.VertexAttribPointer(1, 4, VertexAttribPointerType.Float, false, 0, 0);
-                //2 normals
-                GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[2]);
-                GL.BufferData(BufferTarget.ArrayBuffer, Normals.Count * Vector4.SizeInBytes, ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(Normals)),
-                    BufferUsageHint.StaticDraw);
+            }
+
+            GlBuffer.UploadArray(BufferTarget.ArrayBuffer, BufferIds[2], Normals, Vector4.SizeInBytes, firstUpload);
+            if (firstUpload)
+            {
                 GL.EnableVertexAttribArray(2);
                 GL.VertexAttribPointer(2, 4, VertexAttribPointerType.Float, false, 0, 0);
-                //3 color
-                GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[3]);
-                GL.BufferData(BufferTarget.ArrayBuffer, Colors.Count * Vector3.SizeInBytes, ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(Colors)),
-                    BufferUsageHint.StaticDraw);
+            }
+
+            GlBuffer.UploadArray(BufferTarget.ArrayBuffer, BufferIds[3], Colors, Vector3.SizeInBytes, firstUpload);
+            if (firstUpload)
+            {
                 GL.EnableVertexAttribArray(3);
                 GL.VertexAttribPointer(3, 3, VertexAttribPointerType.Float, false, 0, 0);
-                //4 light
-                GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[4]);
-                GL.BufferData(BufferTarget.ArrayBuffer, Lights.Count * Vector3.SizeInBytes, ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(Lights)),
-                    BufferUsageHint.StaticDraw);
+            }
+
+            GlBuffer.UploadArray(BufferTarget.ArrayBuffer, BufferIds[4], Lights, Vector3.SizeInBytes, firstUpload);
+            if (firstUpload)
+            {
                 GL.EnableVertexAttribArray(4);
                 GL.VertexAttribPointer(4, 3, VertexAttribPointerType.Float, false, 0, 0);
             }
-            else
-            {
-                //0 positions
-                GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[0]);
-                GL.BufferData(BufferTarget.ArrayBuffer, Positions.Count * Vector3.SizeInBytes, ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(Positions)),
-                    BufferUsageHint.StaticDraw);
-                //1 texCoords
-                GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[1]);
-                GL.BufferData(BufferTarget.ArrayBuffer, TexCoords.Count * Vector4.SizeInBytes, ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(TexCoords)),
-                    BufferUsageHint.StaticDraw);
-                //2 normals
-                GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[2]);
-                GL.BufferData(BufferTarget.ArrayBuffer, Normals.Count * Vector4.SizeInBytes, ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(Normals)),
-                    BufferUsageHint.StaticDraw);
-                //3 color
-                GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[3]);
-                GL.BufferData(BufferTarget.ArrayBuffer, Colors.Count * Vector3.SizeInBytes, ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(Colors)),
-                    BufferUsageHint.StaticDraw);
-                //4 light
-                GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[4]);
-                GL.BufferData(BufferTarget.ArrayBuffer, Lights.Count * Vector3.SizeInBytes, ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(Lights)),
-                    BufferUsageHint.StaticDraw);
-            }
 
-            GL.BindBuffer(BufferTarget.ElementArrayBuffer, IndicesId);
-            GL.BufferData(BufferTarget.ElementArrayBuffer, Indices.Count * sizeof(uint), ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(Indices)),
-                BufferUsageHint.StaticDraw);
+            GlBuffer.UploadArray(BufferTarget.ElementArrayBuffer, IndicesId, Indices, sizeof(uint), firstUpload);
 
             UploadedCount = Indices.Count;
         }
@@ -137,6 +128,13 @@ namespace MinecraftClone3API.Graphics
 
         public virtual void Clear()
         {
+            VaoBufferPool.Return(Positions);
+            VaoBufferPool.Return(TexCoords);
+            VaoBufferPool.Return(Normals);
+            VaoBufferPool.Return(Colors);
+            VaoBufferPool.Return(Lights);
+            VaoBufferPool.Return(Indices);
+
             Positions = null;
             TexCoords = null;
             Normals = null;

@@ -21,6 +21,12 @@ namespace MinecraftClone3API.Util
             D = d;
         }
 
+        public void Set(Vector4 v)
+        {
+            Normal = v.Xyz;
+            D = v.W;
+        }
+
         public void Normalize()
         {
             var x = 1 / Normal.Length;

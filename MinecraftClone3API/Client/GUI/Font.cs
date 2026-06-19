@@ -96,8 +96,11 @@ namespace MinecraftClone3API.Client.GUI
             if (string.IsNullOrEmpty(text)) return 0;
 
             var width = 0;
-            foreach (var codepoint in Codepoints(text))
+            for (var i = 0; i < text.Length; i++)
+            {
+                var codepoint = NextCodepoint(text, ref i);
                 width += (Glyphs.TryGetValue(codepoint, out var glyph) ? glyph.Advance : SpaceAdvance) * scale;
+            }
             return width;
         }
 
@@ -114,8 +117,9 @@ namespace MinecraftClone3API.Client.GUI
         private static void DrawRun(string text, int x, int y, int scale, Color4 color)
         {
             var pen = x;
-            foreach (var codepoint in Codepoints(text))
+            for (var i = 0; i < text.Length; i++)
             {
+                var codepoint = NextCodepoint(text, ref i);
                 if (!Glyphs.TryGetValue(codepoint, out var glyph))
                 {
                     pen += SpaceAdvance * scale;
@@ -208,6 +212,22 @@ namespace MinecraftClone3API.Client.GUI
             var colon = file.IndexOf(':');
             if (colon >= 0) file = file.Substring(colon + 1);
             return "System/Textures/" + file;
+        }
+
+        /// <summary>
+        /// Decodes the codepoint at <paramref name="i"/>, advancing <paramref name="i"/> past the low
+        /// surrogate of a pair. Lets the hot measure/draw loops iterate codepoints without allocating an
+        /// enumerator (the per-frame <c>Codepoints</c> iterator was a top main-thread allocator).
+        /// </summary>
+        private static int NextCodepoint(string text, ref int i)
+        {
+            if (char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+            {
+                var codepoint = char.ConvertToUtf32(text[i], text[i + 1]);
+                i++;
+                return codepoint;
+            }
+            return text[i];
         }
 
         private static int CountCodepoints(string text)

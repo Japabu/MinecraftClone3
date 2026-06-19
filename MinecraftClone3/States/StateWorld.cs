@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Net.Sockets;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Client.Blocks;
@@ -35,6 +36,8 @@ namespace MinecraftClone3.States
         private readonly ServerNetwork _network;
 
         private readonly bool _connectionFailed;
+
+        private readonly Stopwatch _phaseTimer = new Stopwatch();
 
         public StateWorld(GameWindow window, bool multiplayer = false)
         {
@@ -78,6 +81,7 @@ namespace MinecraftClone3.States
             _world.Login();
 
             Profiler.World = _world;
+            Profiler.Network = _network;
         }
 
         public override void Update(bool focused)
@@ -100,17 +104,23 @@ namespace MinecraftClone3.States
             if (focused || _multiplayer)
             {
                 var a = GC.GetAllocatedBytesForCurrentThread();
+                _phaseTimer.Restart();
                 _integratedServer?.Update();
+                Profiler.AddServerTime(_phaseTimer.Elapsed.TotalMilliseconds);
                 Profiler.AddServerAlloc(GC.GetAllocatedBytesForCurrentThread() - a);
 
                 a = GC.GetAllocatedBytesForCurrentThread();
+                _phaseTimer.Restart();
                 _network?.Pump();
+                Profiler.AddNetworkTime(_phaseTimer.Elapsed.TotalMilliseconds);
                 Profiler.AddNetworkAlloc(GC.GetAllocatedBytesForCurrentThread() - a);
             }
 
             var c = GC.GetAllocatedBytesForCurrentThread();
+            _phaseTimer.Restart();
             _world.SendMove(_player);
             _world.Update();
+            Profiler.AddClientTime(_phaseTimer.Elapsed.TotalMilliseconds);
             Profiler.AddClientAlloc(GC.GetAllocatedBytesForCurrentThread() - c);
         }
 
@@ -137,6 +147,7 @@ namespace MinecraftClone3.States
         {
             Profiler.Stop();
             Profiler.World = null;
+            Profiler.Network = null;
             _world?.Disconnect();
             _network?.Stop();
             _integratedServer?.Unload();

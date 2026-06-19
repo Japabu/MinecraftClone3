@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Util;
@@ -34,9 +33,47 @@ namespace MinecraftClone3API.Blocks
         private readonly Dictionary<Vector3i, Block> _lightBlockCache = new Dictionary<Vector3i, Block>(8192);
         private readonly HashSet<Vector3i> _lightChanged = new HashSet<Vector3i>(8192);
 
-        // Chunks whose stored blocks/light changed since the last network flush. The network layer
-        // reads and clears this each tick to resend fresh chunk data to clients holding them.
-        // ConcurrentDictionary used as a set (the value is ignored).
+        // Memoises chunk lookups (chunk pos -> Chunk, null when absent) for the duration of one
+        // UpdateLightValues flood: a torch flood probes LoadedChunks tens of thousands of times for
+        // the per-neighbour empty-chunk test, almost all hitting the same few chunks.
+        private readonly Dictionary<Vector3i, Chunk> _lightChunkCache = new Dictionary<Vector3i, Chunk>();
+
+        // Signalled whenever a light update is queued so the UpdateThread sleeps instead of spinning
+        // Thread.Sleep(1) (1000 idle wakeups/s); the timed wait still lets it observe _unloaded.
+        private readonly AutoResetEvent _lightSignal = new AutoResetEvent(false);
+
+        // Reused across LoadThread ticks (the load thread is the sole user) so the per-tick interest
+        // scan allocates nothing steady-state: a player snapshot, the per-player candidate lists, a
+        // dedup set, the round-robin merge output, and a closure-free distance sort.
+        private readonly List<EntityPlayer> _loadPlayersScratch = new List<EntityPlayer>();
+        private readonly List<List<Vector3i>> _loadPlayerChunkLists = new List<List<Vector3i>>();
+        private readonly HashSet<Vector3i> _loadDedup = new HashSet<Vector3i>();
+        private readonly List<Vector3i> _loadMerged = new List<Vector3i>();
+        private Vector3i _loadSortOrigin;
+        private readonly Comparison<Vector3i> _loadSort;
+
+        // Reused by the unload scan (sole user) so the per-second sweep allocates no result list.
+        private readonly List<Chunk> _unloadScratch = new List<Chunk>();
+
+        // Terrain block ids resolved once (the registry is array/dict-backed but the keys are strings):
+        // LoadChunk used to do two GameRegistry.GetBlock(string) lookups per block in its inner loop.
+        private Block _terrainGrass;
+        private Block _terrainDirt;
+
+        // Per-block authoritative changes (edits + light propagation) queued for the network layer to
+        // flush as compact BlockChanges packets instead of resending whole GZip'd chunks. Fed by the
+        // tick thread (SetBlock) and the light Update thread (SetBlockLightLevel); drained each tick by
+        // ServerNetwork.FlushBlockChanges. Keyed by absolute block (chunk pos + local index) with
+        // last-write-wins: overlapping light floods (rapid breaking re-lights the same cells many times)
+        // would otherwise enqueue the same block over and over, so a plain queue grew O(floods × volume)
+        // and trapped the flush thread; deduping bounds pending changes to O(distinct changed blocks) and
+        // is correct because each BlockChange is a full (id, light) snapshot the client applies idempotently.
+        public readonly ConcurrentDictionary<(Vector3i Chunk, ushort Index), BlockChange> BlockChanges =
+            new ConcurrentDictionary<(Vector3i, ushort), BlockChange>();
+
+        // Chunks whose block *data* changed since the last network flush. Block data is not carried by
+        // BlockChanges deltas (only id + light are), so a data change still triggers a whole-chunk
+        // resend. The network layer reads and clears this each tick. ConcurrentDictionary used as a set.
         public readonly ConcurrentDictionary<Vector3i, byte> DirtyChunks = new ConcurrentDictionary<Vector3i, byte>();
 
         private readonly Thread _unloadThread;
@@ -51,6 +88,10 @@ namespace MinecraftClone3API.Blocks
 
         public WorldServer()
         {
+            _loadSort = (v0, v1) =>
+                (int) (v0.ToVector3() - _loadSortOrigin.ToVector3()).LengthSquared -
+                (int) (v1.ToVector3() - _loadSortOrigin.ToVector3()).LengthSquared;
+
             _unloadThread = new Thread(UnloadThread) {Name = "Unload Thread"};
             _loadThread = new Thread(LoadThread) {Name = "Load Thread"};
             _updateThread = new Thread(UpdateThread) {Name = "Update Thread"};
@@ -81,13 +122,9 @@ namespace MinecraftClone3API.Blocks
 
             if (!update) return;
 
-            var pos = new Vector3i(x, y, z);
-            lock (_queuedLightUpdates)
-            {
-                if (!_queuedLightUpdates.Contains(pos)) _queuedLightUpdates.Enqueue(pos);
-            }
+            QueueLightUpdate(new Vector3i(x, y, z));
 
-            MarkChunkAndBoundaryDirty(chunkInWorld, blockInChunk);
+            EnqueueBlockChange(chunkInWorld, blockInChunk, block.Id, chunk.GetLightLevel(blockInChunk).Binary);
         }
 
         public override Block GetBlock(int x, int y, int z)
@@ -108,11 +145,7 @@ namespace MinecraftClone3API.Blocks
             if (LoadedChunks.TryGetValue(chunkInWorld, out var chunk))
                 chunk.SetBlockData(blockInChunk, data);
 
-            var pos = new Vector3i(x, y, z);
-            lock (_queuedLightUpdates)
-            {
-                if (!_queuedLightUpdates.Contains(pos)) _queuedLightUpdates.Enqueue(pos);
-            }
+            QueueLightUpdate(new Vector3i(x, y, z));
 
             MarkChunkAndBoundaryDirty(chunkInWorld, blockInChunk);
         }
@@ -125,7 +158,7 @@ namespace MinecraftClone3API.Blocks
             if (!LoadedChunks.TryGetValue(chunkInWorld, out var chunk)) return;
             chunk.SetLightLevel(blockInChunk, lightLevel);
 
-            MarkChunkAndBoundaryDirty(chunkInWorld, blockInChunk);
+            EnqueueBlockChange(chunkInWorld, blockInChunk, chunk.GetBlock(blockInChunk), lightLevel.Binary);
         }
 
         public override LightLevel GetBlockLightLevel(int x, int y, int z)
@@ -146,9 +179,26 @@ namespace MinecraftClone3API.Blocks
             return LoadedChunks.TryGetValue(chunkInWorld, out Chunk chunk) ? chunk.GetBlockData(blockInChunk) : null;
         }
 
+        private void EnqueueBlockChange(Vector3i chunkInWorld, Vector3i blockInChunk, ushort blockId, ushort light)
+        {
+            var localIndex = (ushort) Chunk.Index(blockInChunk.X, blockInChunk.Y, blockInChunk.Z);
+            BlockChanges[(chunkInWorld, localIndex)] = new BlockChange(chunkInWorld, localIndex, blockId, light);
+        }
+
+        private void QueueLightUpdate(Vector3i pos)
+        {
+            lock (_queuedLightUpdates)
+            {
+                if (!_queuedLightUpdates.Contains(pos)) _queuedLightUpdates.Enqueue(pos);
+            }
+
+            _lightSignal.Set();
+        }
+
         /// <summary>
         /// Flags a chunk (and the neighbours sharing the touched block's faces) as needing a resend
-        /// to clients, so cross-chunk face culling and light stay consistent on the client.
+        /// to clients, so cross-chunk face culling and light stay consistent on the client. Used only
+        /// for block-data changes, which BlockChanges deltas do not carry.
         /// </summary>
         private void MarkChunkAndBoundaryDirty(Vector3i chunkInWorld, Vector3i blockInChunk)
         {
@@ -202,29 +252,27 @@ namespace MinecraftClone3API.Blocks
 
             lock (_chunksReadyToRemove)
             {
-                while (_chunksReadyToRemove.Count > 0)
+                foreach (var chunkPos in _chunksReadyToRemove)
                 {
-                    var chunkPos = _chunksReadyToRemove.First();
-
                     if (LoadedChunks.TryRemove(chunkPos, out _))
                         _populatedChunks.TryRemove(chunkPos, out _);
-
-                    _chunksReadyToRemove.Remove(chunkPos);
                 }
+
+                _chunksReadyToRemove.Clear();
             }
 
             lock (_chunksReadyToAdd)
             {
-                while (_chunksReadyToAdd.Count > 0)
+                foreach (var entry in _chunksReadyToAdd)
                 {
-                    var entry = _chunksReadyToAdd.First();
                     if (LoadedChunks.ContainsKey(entry.Key))
                         Logger.Error("Chunk has already been loaded! " + entry.Key);
                     else
                         LoadedChunks[entry.Key] = new Chunk(entry.Value);
                     _populatedChunks[entry.Key] = 0;
-                    _chunksReadyToAdd.Remove(entry.Key);
                 }
+
+                _chunksReadyToAdd.Clear();
             }
         }
 
@@ -245,24 +293,27 @@ namespace MinecraftClone3API.Blocks
 
         private void UpdateThread()
         {
-            Vector3i blockPos;
-
             while (!_unloaded)
             {
                 var allocStart = GC.GetAllocatedBytesForCurrentThread();
 
-                while (_queuedLightUpdates.Count > 0)
+                var didWork = false;
+                while (true)
                 {
+                    Vector3i blockPos;
                     lock (_queuedLightUpdates)
                     {
+                        if (_queuedLightUpdates.Count == 0) break;
                         blockPos = _queuedLightUpdates.Dequeue();
                     }
 
                     UpdateLightValues(blockPos);
+                    didWork = true;
                 }
 
                 Profiler.AddLightAlloc(GC.GetAllocatedBytesForCurrentThread() - allocStart);
-                Thread.Sleep(1);
+
+                if (!didWork) _lightSignal.WaitOne(100);
             }
         }
 
@@ -272,24 +323,18 @@ namespace MinecraftClone3API.Blocks
             {
                 var allocStart = GC.GetAllocatedBytesForCurrentThread();
 
-                List<Chunk> chunksToUnload;
+                var now = DateTime.Now;
+                _unloadScratch.Clear();
+                foreach (var pair in LoadedChunks)
+                    if (now - pair.Value.Time > ChunkLifetime)
+                        _unloadScratch.Add(pair.Value);
 
-                lock (LoadedChunks)
+                foreach (var chunk in _unloadScratch)
                 {
-                    chunksToUnload =
-                        LoadedChunks.Where(
-                            pair =>
-                                DateTime.Now - pair.Value.Time > ChunkLifetime &&
-                                !_chunksReadyToRemove.Contains(pair.Key)).Select(pair => pair.Value).ToList();
-                }
-
-                foreach (var chunk in chunksToUnload)
-                {
-                    WorldSerializer.SaveChunk(chunk);
                     lock (_chunksReadyToRemove)
-                    {
-                        _chunksReadyToRemove.Add(chunk.Position);
-                    }
+                        if (!_chunksReadyToRemove.Add(chunk.Position)) continue;
+
+                    WorldSerializer.SaveChunk(chunk);
                 }
 
                 Profiler.AddUnloadAlloc(GC.GetAllocatedBytesForCurrentThread() - allocStart);
@@ -303,14 +348,19 @@ namespace MinecraftClone3API.Blocks
             {
                 var allocStart = GC.GetAllocatedBytesForCurrentThread();
 
-                List<EntityPlayer> players;
-                lock (PlayerEntities) players = PlayerEntities.ToList();
+                _loadPlayersScratch.Clear();
+                lock (PlayerEntities)
+                    foreach (var player in PlayerEntities) _loadPlayersScratch.Add(player);
 
-                var playerChunksLists = new List<List<Vector3i>>();
-                foreach (var playerEntity in players)
+                foreach (var list in _loadPlayerChunkLists) list.Clear();
+
+                for (var i = 0; i < _loadPlayersScratch.Count; i++)
                 {
-                    var playerChunksToLoad = new List<Vector3i>();
-                    var playerChunk = ChunkInWorld(playerEntity.Position.ToVector3i());
+                    if (i >= _loadPlayerChunkLists.Count) _loadPlayerChunkLists.Add(new List<Vector3i>());
+                    var playerChunksToLoad = _loadPlayerChunkLists[i];
+                    var playerChunk = ChunkInWorld(_loadPlayersScratch[i].Position.ToVector3i());
+
+                    _loadDedup.Clear();
 
                     //Load 7x7x7 around player
                     for (var x = -3; x <= 3; x++)
@@ -318,7 +368,7 @@ namespace MinecraftClone3API.Blocks
                             for (var z = -3; z <= 3; z++)
                             {
                                 var chunkPos = playerChunk + new Vector3i(x, y, z);
-                                if (playerChunksToLoad.Contains(chunkPos)) continue;
+                                if (!_loadDedup.Add(chunkPos)) continue;
                                 if (_populatedChunks.ContainsKey(chunkPos) || _chunksReadyToAdd.ContainsKey(chunkPos))
                                 {
                                     //Reset chunk time so it will not be unloaded
@@ -342,6 +392,7 @@ namespace MinecraftClone3API.Blocks
                                 if (x <= 3 && x >= -3 && y <= 3 && y >= -3 && z <= 3 && z >= -3) continue;
 
                                 var chunkPos = new Vector3i(playerChunk.X + x, heightMapChunkY + y, playerChunk.Z + z);
+                                if (!_loadDedup.Add(chunkPos)) continue;
 
                                 if (_populatedChunks.ContainsKey(chunkPos) || _chunksReadyToAdd.ContainsKey(chunkPos))
                                 {
@@ -355,20 +406,16 @@ namespace MinecraftClone3API.Blocks
 
 
 
-                    playerChunksToLoad.Sort(
-                        (v0, v1) =>
-                            (int) (v0.ToVector3() - playerChunk.ToVector3()).LengthSquared -
-                            (int) (v1.ToVector3() - playerChunk.ToVector3()).LengthSquared);
+                    _loadSortOrigin = playerChunk;
+                    playerChunksToLoad.Sort(_loadSort);
 
                     //Cap player chunk load tasks to 16
                     if(playerChunksToLoad.Count > 16)
                         playerChunksToLoad.RemoveRange(16, playerChunksToLoad.Count - 16);
-
-                    playerChunksLists.Add(playerChunksToLoad);
                 }
 
-                var merged = ExtensionHelper.ZipMerge(playerChunksLists.ToArray());
-                foreach (var chunkPos in merged)
+                ExtensionHelper.ZipMerge(_loadPlayerChunkLists, _loadMerged);
+                foreach (var chunkPos in _loadMerged)
                 {
                     // Players with overlapping interest produce duplicate positions in the merged
                     // list; skip ones already queued or known so we don't load (or add) them twice.
@@ -443,6 +490,8 @@ namespace MinecraftClone3API.Blocks
             var cachedBlocks = _lightBlockCache;
             cachedBlocks.Clear();
 
+            _lightChunkCache.Clear();
+
             var changed = _lightChanged;
             changed.Clear();
             if (blockEmittingLightLevel.Binary != oldBlockLightLevel.Binary) changed.Add(blockPos);
@@ -473,7 +522,7 @@ namespace MinecraftClone3API.Blocks
                         var nextNode = node.Position + face.GetNormali();
 
                         //If chunk does not exist stop
-                        if (IsBlockInEmptyChunk(nextNode)) continue;
+                        if (LightChunkEmpty(nextNode)) continue;
 
                         //Cache light level if not already cached
                         if (!cachedLightLevels.TryGetValue(nextNode, out var nextNodeLightLevel))
@@ -482,10 +531,11 @@ namespace MinecraftClone3API.Blocks
                             cachedLightLevels[nextNode] = nextNodeLightLevel;
                         }
 
-                        //If the next nodes light level is higher or equal to our value spread light to fill the holes
+                        //If the next nodes light level is higher or equal to our value it belongs to a
+                        //stronger source: re-spread from its own level to refill the holes we open
                         if (nextNodeLightLevel[color] >= node.Value)
                         {
-                            spreadQueue.Enqueue(new LightNode(nextNode, node.Value));
+                            spreadQueue.Enqueue(new LightNode(nextNode, nextNodeLightLevel[color]));
                             continue;
                         }
                         //If the next nodes light level is zero stop
@@ -514,7 +564,7 @@ namespace MinecraftClone3API.Blocks
 
                         //If chunk does not exist stop
                         //TODO: Fix potential bugs
-                        if (IsBlockInEmptyChunk(nextNode)) continue;
+                        if (LightChunkEmpty(nextNode)) continue;
 
                         //Cache light level if not already cached
                         if (!cachedLightLevels.TryGetValue(nextNode, out var nextNodeLightLevel))
@@ -555,6 +605,18 @@ namespace MinecraftClone3API.Blocks
             }
         }
 
+        private bool LightChunkEmpty(Vector3i blockPos)
+        {
+            var chunkPos = ChunkInWorld(blockPos);
+            if (!_lightChunkCache.TryGetValue(chunkPos, out var chunk))
+            {
+                LoadedChunks.TryGetValue(chunkPos, out chunk);
+                _lightChunkCache[chunkPos] = chunk;
+            }
+
+            return chunk == null;
+        }
+
         private CachedChunk LoadChunk(Vector3i position)
         {
             var chunk = WorldSerializer.LoadChunk(this, position);
@@ -563,6 +625,9 @@ namespace MinecraftClone3API.Blocks
             //TODO: implement terrain gen
             chunk = new CachedChunk(this, position);
             var worldMin = position * Chunk.Size;
+
+            var grass = _terrainGrass ??= GameRegistry.GetBlock("Vanilla:Grass");
+            var dirt = _terrainDirt ??= GameRegistry.GetBlock("Vanilla:Dirt");
 
             for (var x = 0; x < Chunk.Size; x++)
             for (var z = 0; z < Chunk.Size; z++)
@@ -575,7 +640,7 @@ namespace MinecraftClone3API.Blocks
 
                     for (var y = 0; y < Chunk.Size; y++)
                     if (worldMin.Y + y <= height)
-                        chunk.SetBlock(x, y, z, (worldMin.Y + y == (int)height) ? GameRegistry.GetBlock("Vanilla:Grass") : GameRegistry.GetBlock("Vanilla:Dirt"));
+                        chunk.SetBlock(x, y, z, (worldMin.Y + y == (int)height) ? grass : dirt);
             }
 
 

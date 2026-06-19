@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Linq;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Graphics;
 using OpenTK.Mathematics;
@@ -28,15 +27,6 @@ namespace MinecraftClone3API.Util
             new Vector3(-0.5f, +0.5f, +0.5f), new Vector3(+0.5f, +0.5f, +0.5f),
             new Vector3(-0.5f, -0.5f, +0.5f), new Vector3(+0.5f, -0.5f, +0.5f)
         };
-
-        private static readonly Vector2[] FaceTexCoords =
-        {
-            new Vector2(0, 0), new Vector2(1, 0),
-            new Vector2(0, 1), new Vector2(1, 1),
-        };
-
-        private static readonly uint[] FaceIndices = {2, 1, 0, 2, 3, 1};
-        private static readonly uint[] FlippedFaceIndices = { 0, 2, 3, 0, 3, 1 };
 
         public static void AddBlockToVao(WorldBase world, Vector3i blockPos, int x, int y, int z, Block block,
             VertexArrayObject vao, VertexArrayObject transparentVao)
@@ -81,79 +71,52 @@ namespace MinecraftClone3API.Util
         public static void AddFaceToVao(WorldBase world, Vector3i blockPos, int x, int y, int z, Block block, BlockFace face, BlockModel.FaceData data, VertexArrayObject vao, Matrix4 transform)
         {
             var faceId = (int) face - 1;
-            var indicesOffset = vao.VertexCount;
+            var baseVertex = vao.VertexCount;
 
-            //var transform = Matrix4.CreateScale()//Matrix4.Identity;//block.GetTransform(world, blockPos, face);
-            var texture = data.LoadedTexture;//block.GetTexture(world, blockPos, face);
-            //var overlayTexture = block.GetOverlayTexture(world, blockPos, face);
-            var texCoords = data.GetTexCoords();//block.GetTexCoords(world, blockPos, face) ?? FaceTexCoords;
-            //var overlayTexCoords = block.GetOverlayTexCoords(world, blockPos, face) ?? FaceTexCoords;
+            var texture = data.LoadedTexture;
+            var texCoords = data.GetTexCoords();
             var color = data.TintIndex == -1 ? new Vector4(1) : block.GetTintColor(world, blockPos, data.TintIndex).ToVector4();
-            var normal = face.GetNormal();
+            var normal = new Vector4(face.GetNormal());
+            var colorXyz = color.Xyz;
 
-            if(texCoords.Length != 4) throw new Exception($"\"{block}\" invalid texture coords array length!");
+            if (texCoords.Length != 4) throw new Exception($"\"{block}\" invalid texture coords array length!");
 
+            var sorted = vao is SortedVertexArrayObject;
+            var faceMiddle = Vector3.Zero;
 
-            var vPositions = new Vector3[4];
-            var vTexCoords = new Vector4[4];
-            var vOverlayTexCoords = new Vector4[4]; //TODO: Remove
-            var vBrightness = new Vector3[4];
+            //per vertex light value interpolation (smooth lighting + free ambient occlusion); the four
+            //corner brightnesses are kept to flip the quad for AO anisotropy
+            //https://0fps.net/2013/07/03/ambient-occlusion-for-minecraft-like-worlds/
+            Vector3 b0 = default, b1 = default, b2 = default, b3 = default;
 
             for (var j = 0; j < 4; j++)
             {
                 var vertexPosition = FacePositions[faceId * 4 + j];
                 var position = (new Vector4(vertexPosition, 1) * transform).Xyz + new Vector3(x, y, z);
 
-                //tex coords are -1 if texture is null
-                var texCoord = texture == null ? new Vector4(-1) : new Vector4(texCoords[j])
-                {
-                    //texCoord z = texId, w = textureArrayId
-                    Z = texture.TextureId,
-                    W = texture.ArrayId
-                };
+                //tex coords are -1 if texture is null; texCoord z = texId, w = textureArrayId
+                var texCoord = texture == null ? new Vector4(-1) : new Vector4(texCoords[j]) {Z = texture.TextureId, W = texture.ArrayId};
 
-
-
-                //per vertex light value interpolation (smooth lighting + free ambient occlusion)
                 var brightness = CalculateBrightness(world, block, blockPos, face, vertexPosition);
 
-                //TODO: transform normals
+                vao.Add(position, texCoord, normal, colorXyz, brightness);
 
-                vPositions[j] = position;
-                vTexCoords[j] = texCoord;
-                vOverlayTexCoords[j] = new Vector4(-1);
-                vBrightness[j] = brightness;
+                if (sorted) faceMiddle += position;
+                switch (j)
+                {
+                    case 0: b0 = brightness; break;
+                    case 1: b1 = brightness; break;
+                    case 2: b2 = brightness; break;
+                    default: b3 = brightness; break;
+                }
             }
 
-            //Flip faces to fix ambient occlusion anisotrophy
-            //https://0fps.net/2013/07/03/ambient-occlusion-for-minecraft-like-worlds/
+            var flipped = (b0 + b3).LengthSquared > (b1 + b2).LengthSquared;
 
-            for (var j = 0; j < 4; j++)
-                vao.Add(vPositions[j], vTexCoords[j], new Vector4(normal), color.Xyz, vBrightness[j]);
+            if (sorted)
+                faceMiddle = faceMiddle / 4 + blockPos.ToVector3() - new Vector3(x, y, z);
 
-            var newIndices = new uint[FaceIndices.Length];
-
-            if ((vBrightness[0] + vBrightness[3]).LengthSquared > (vBrightness[1] + vBrightness[2]).LengthSquared)
-            {
-                for (var j = 0; j < newIndices.Length; j++)
-                    newIndices[j] = (uint)(FlippedFaceIndices[j] + indicesOffset);
-            }
-            else
-            {
-                for (var j = 0; j < newIndices.Length; j++)
-                    newIndices[j] = (uint)(FaceIndices[j] + indicesOffset);
-            }
-
-            //Calculate face middle for transparency sorting
-            var faceMiddle = Vector3.Zero;
-
-            if (vao is SortedVertexArrayObject)
-            {
-                faceMiddle = vPositions.Aggregate(faceMiddle, (current, pos) => current + pos);
-                faceMiddle = faceMiddle / vPositions.Length + blockPos.ToVector3() - new Vector3(x, y, z);
-            }
-
-            vao.AddFace(newIndices, faceMiddle);
+            vao.AddFace(baseVertex, flipped, faceMiddle);
         }
 
         private static Vector3 CalculateBrightness(WorldBase world, Block block, Vector3i blockPos, BlockFace face, Vector3 vertexPosition)

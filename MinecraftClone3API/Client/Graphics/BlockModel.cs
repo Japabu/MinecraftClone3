@@ -192,9 +192,14 @@ namespace MinecraftClone3API.Graphics
             [JsonIgnore]
             public BlockTexture LoadedTexture = ClientResources.MissingTexture;
 
+            [JsonIgnore]
+            private Vector2[] _texCoords;
+
+            /// <summary>The four corner UVs, built once and reused: UV is fixed after model parsing,
+            /// so re-deriving the array per face was pure per-remesh allocation on the mesh thread.</summary>
             public Vector2[] GetTexCoords()
             {
-                return new[]
+                return _texCoords ??= new[]
                 {
                     new Vector2(UV[0], UV[1])*OneOverSixteen, new Vector2(UV[2], UV[1])*OneOverSixteen,
                     new Vector2(UV[0], UV[3])*OneOverSixteen, new Vector2(UV[2], UV[3])*OneOverSixteen

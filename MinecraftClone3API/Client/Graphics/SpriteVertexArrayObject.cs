@@ -52,48 +52,33 @@ namespace MinecraftClone3API.Graphics
                 return;
             }
 
+            // A re-upload (e.g. GUI text whose string changed) orphans each buffer so the GL call never
+            // stalls on the in-flight draw; attribute pointers are wired up only on the first upload.
+            var firstUpload = UploadedCount == 0;
             GL.BindVertexArray(VaoId);
 
-            if (UploadedCount == 0)
+            GlBuffer.UploadArray(BufferTarget.ArrayBuffer, BufferIds[0], Positions, Vector2.SizeInBytes, firstUpload);
+            if (firstUpload)
             {
-                //0 positions
-                GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[0]);
-                GL.BufferData(BufferTarget.ArrayBuffer, Positions.Count * Vector2.SizeInBytes, Positions.ToArray(),
-                    BufferUsageHint.StaticDraw);
                 GL.EnableVertexAttribArray(0);
                 GL.VertexAttribPointer(0, 2, VertexAttribPointerType.Float, false, 0, 0);
-                //1 texCoords
-                GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[1]);
-                GL.BufferData(BufferTarget.ArrayBuffer, TexCoords.Count * Vector2.SizeInBytes, TexCoords.ToArray(),
-                    BufferUsageHint.StaticDraw);
+            }
+
+            GlBuffer.UploadArray(BufferTarget.ArrayBuffer, BufferIds[1], TexCoords, Vector2.SizeInBytes, firstUpload);
+            if (firstUpload)
+            {
                 GL.EnableVertexAttribArray(1);
                 GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, 0, 0);
-                //2 colors
-                GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[2]);
-                GL.BufferData(BufferTarget.ArrayBuffer, Colors.Count * Vector3.SizeInBytes, Colors.ToArray(),
-                    BufferUsageHint.StaticDraw);
+            }
+
+            GlBuffer.UploadArray(BufferTarget.ArrayBuffer, BufferIds[2], Colors, Vector3.SizeInBytes, firstUpload);
+            if (firstUpload)
+            {
                 GL.EnableVertexAttribArray(2);
                 GL.VertexAttribPointer(2, 3, VertexAttribPointerType.Float, false, 0, 0);
             }
-            else
-            {
-                //0 positions
-                GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[0]);
-                GL.BufferData(BufferTarget.ArrayBuffer, Positions.Count * Vector2.SizeInBytes, Positions.ToArray(),
-                    BufferUsageHint.StaticDraw);
-                //1 texCoords
-                GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[1]);
-                GL.BufferData(BufferTarget.ArrayBuffer, TexCoords.Count * Vector2.SizeInBytes, TexCoords.ToArray(),
-                    BufferUsageHint.StaticDraw);
-                //2 colors
-                GL.BindBuffer(BufferTarget.ArrayBuffer, BufferIds[2]);
-                GL.BufferData(BufferTarget.ArrayBuffer, Colors.Count * Vector3.SizeInBytes, Colors.ToArray(),
-                    BufferUsageHint.StaticDraw);
-            }
 
-            GL.BindBuffer(BufferTarget.ElementArrayBuffer, IndicesId);
-            GL.BufferData(BufferTarget.ElementArrayBuffer, Indices.Count * sizeof(uint), Indices.ToArray(),
-                BufferUsageHint.StaticDraw);
+            GlBuffer.UploadArray(BufferTarget.ElementArrayBuffer, IndicesId, Indices, sizeof(uint), firstUpload);
 
             UploadedCount = Indices.Count;
         }

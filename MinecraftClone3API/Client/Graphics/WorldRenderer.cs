@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Client;
 using MinecraftClone3API.Client.Blocks;
@@ -20,10 +21,29 @@ namespace MinecraftClone3API.Graphics
         public const float SortDistance = 128;
         public const float SortDistanceSq = SortDistance * SortDistance;
 
+        // Reused across frames so the per-frame visibility pass allocates nothing steady-state; cleared
+        // at the top of DrawGeometryFramebuffer and grown to the working set. These three capacity-1024
+        // reference-type lists, re-newed every frame, were the single largest main-thread allocator in a
+        // trace (~11s of List<ChunkRenderData>..ctor → constant Gen0 GC pauses on the render thread).
+        private static readonly List<ChunkRenderData> _chunksToDraw = new List<ChunkRenderData>(1024);
+        private static readonly List<ChunkRenderData> _transparentSortedChunks = new List<ChunkRenderData>(1024);
+        private static readonly List<ChunkRenderData> _transparentChunks = new List<ChunkRenderData>(1024);
+
+        // Read by the cached transparent-sort comparator so the delegate is allocated once instead of
+        // capturing a fresh closure (over camera position) every frame.
+        private static Vector3 _sortCameraPos;
+        private static readonly Comparison<ChunkRenderData> _transparentSort = (chunk1, chunk2)
+            => (int) ((_sortCameraPos - chunk2.Middle).LengthSquared * 1000 -
+                      (_sortCameraPos - chunk1.Middle).LengthSquared * 1000);
+
+        // Refilled in place each frame instead of allocating a fresh Plane[6] + 6 planes per call.
+        private static readonly Frustum _viewFrustum = new Frustum();
+
         public static void RenderWorld(WorldClient world, Matrix4 projection)
         {
             var viewProjection = PlayerController.Camera.View * projection;
-            var viewFrustum = Frustum.FromViewProjection(viewProjection);
+            _viewFrustum.Set(viewProjection);
+            var viewFrustum = _viewFrustum;
 
             var wireframe = false;
             if (wireframe) GL.PolygonMode(TriangleFace.Front, PolygonMode.Line);
@@ -37,14 +57,23 @@ namespace MinecraftClone3API.Graphics
 
         private static void DrawGeometryFramebuffer(WorldClient world, Camera camera, Matrix4 projection, Frustum viewFrustum)
         {
-            var chunksToDraw = new List<ChunkRenderData>(1024);
-            var transparentSortedChunks = new List<ChunkRenderData>(1024);
-            var transparentChunks = new List<ChunkRenderData>(1024);
+            var chunksToDraw = _chunksToDraw;
+            var transparentSortedChunks = _transparentSortedChunks;
+            var transparentChunks = _transparentChunks;
+            chunksToDraw.Clear();
+            transparentSortedChunks.Clear();
+            transparentChunks.Clear();
 
-            foreach (var entry in world.RenderData)
+            // Iterate the main-thread render list, not the RenderData ConcurrentDictionary: enumerating
+            // the dictionary every frame (an O(bucket) scan plus an enumerator allocation) was the single
+            // dominant render-thread cost in a trace. The list is kept in sync on add/evict.
+            var renderList = world.RenderList;
+            for (var i = 0; i < renderList.Count; i++)
             {
+                var renderData = renderList[i];
+
                 //Check if chunk is in player view frustum
-                var chunkMiddle = (entry.Key * Chunk.Size + new Vector3i(Chunk.Size / 2)).ToVector3();
+                var chunkMiddle = (renderData.Chunk.Position * Chunk.Size + new Vector3i(Chunk.Size / 2)).ToVector3();
 
                 if (!viewFrustum.SpehereIntersection(chunkMiddle, Chunk.Radius))
                     continue;
@@ -52,26 +81,24 @@ namespace MinecraftClone3API.Graphics
                 var lengthSq = (camera.Position - chunkMiddle).LengthSquared;
                 if (lengthSq > RenderDistanceSq) continue;
 
-                if (entry.Value.HasTransparency)
+                if (renderData.HasTransparency)
                 {
                     if (lengthSq < SortDistanceSq)
                     {
-                        entry.Value.SortTransparentFaces();
-                        transparentSortedChunks.Add(entry.Value);
+                        renderData.SortTransparentFaces();
+                        transparentSortedChunks.Add(renderData);
                     }
                     else
                     {
-                        transparentChunks.Add(entry.Value);
+                        transparentChunks.Add(renderData);
                     }
                 }
-                else chunksToDraw.Add(entry.Value);
+                else chunksToDraw.Add(renderData);
             }
 
             //Sort transparent chunks and append to draw list
-            var cameraPos = camera.Position;
-            transparentSortedChunks.Sort((chunk1, chunk2)
-                => (int)((cameraPos - chunk2.Middle).LengthSquared * 1000 -
-                          (cameraPos - chunk1.Middle).LengthSquared * 1000));
+            _sortCameraPos = camera.Position;
+            transparentSortedChunks.Sort(_transparentSort);
 
             transparentChunks.AddRange(transparentSortedChunks);
             chunksToDraw.AddRange(transparentChunks);

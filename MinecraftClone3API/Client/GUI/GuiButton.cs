@@ -11,6 +11,13 @@ namespace MinecraftClone3API.Client.GUI
         private const int TextScale = 2;
         private const int BorderThickness = 2;
 
+        private static readonly Color4 FillNormal = new Color4(0.5f, 0.5f, 0.5f, 1f);
+        private static readonly Color4 FillHovered = new Color4(0.7f, 0.7f, 0.7f, 1f);
+        private static readonly Color4 FillDisabled = new Color4(0.3f, 0.3f, 0.3f, 1f);
+        private static readonly Color4 BorderEnabled = new Color4(0.8f, 0.8f, 0.8f, 1f);
+        private static readonly Color4 BorderDisabled = new Color4(0.4f, 0.4f, 0.4f, 1f);
+        private static readonly Color4 TextDisabled = new Color4(0.6f, 0.6f, 0.6f, 1f);
+
         public Rectangle Bounds;
         public string Label;
         public Action OnClick;
@@ -45,21 +52,20 @@ namespace MinecraftClone3API.Client.GUI
 
         public override void Render()
         {
-            var fill = Enabled ? (_hovered ? 0.7f : 0.5f) : 0.3f;
-            GuiRenderer.DrawTexture(ClientResources.WhitePixel, Bounds, null, new Color4(fill, fill, fill, 1f));
-            DrawBorder(Enabled ? 0.8f : 0.4f);
+            var fill = Enabled ? (_hovered ? FillHovered : FillNormal) : FillDisabled;
+            GuiRenderer.DrawTexture(ClientResources.WhitePixel, Bounds, null, fill);
+            DrawBorder(Enabled ? BorderEnabled : BorderDisabled);
 
             if (string.IsNullOrEmpty(Label)) return;
 
             var textX = Bounds.MinX + (Bounds.Width - Font.MeasureWidth(Label, TextScale)) / 2;
             var textY = Bounds.MinY + (Bounds.Height - Font.LineHeight(TextScale)) / 2;
-            var textColor = Enabled ? Color4.White : new Color4(0.6f, 0.6f, 0.6f, 1f);
+            var textColor = Enabled ? Color4.White : TextDisabled;
             Font.DrawString(Label, textX, textY, TextScale, textColor);
         }
 
-        private void DrawBorder(float brightness)
+        private void DrawBorder(Color4 color)
         {
-            var color = new Color4(brightness, brightness, brightness, 1f);
             GuiRenderer.DrawTexture(ClientResources.WhitePixel,
                 new Rectangle(Bounds.MinX, Bounds.MinY, Bounds.MaxX, Bounds.MinY + BorderThickness), null, color);
             GuiRenderer.DrawTexture(ClientResources.WhitePixel,

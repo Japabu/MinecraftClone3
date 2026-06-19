@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.IO;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Util;
@@ -36,32 +37,42 @@ namespace MinecraftClone3API.Networking
         }
     }
 
-    /// <summary>Server streams a full chunk: its position and the GZip of <see cref="Chunk.Write"/>.</summary>
+    /// <summary>Server streams a full chunk. Over the loopback (singleplayer) the live
+    /// <see cref="Chunk"/> is carried by reference and the client clones it directly — no serialize,
+    /// compress, or decompress at all. Over TCP the chunk is serialized and GZip-compressed lazily in
+    /// <see cref="Write"/> (the transport boundary); <see cref="Read"/> only copies the still-compressed
+    /// bytes into <see cref="CompressedData"/> (a cheap memcpy on the receive/main thread), and the
+    /// client decompresses + deserializes them on its background apply thread, off the render thread.
+    /// The wire format is unchanged.</summary>
     public class ChunkDataPacket : Packet
     {
         public Vector3i Position;
+
+        /// <summary>The live server chunk, set on the loopback path; null after a TCP <see cref="Read"/>.</summary>
+        public Chunk Chunk;
+
+        /// <summary>Still-GZip'd chunk bytes from a TCP <see cref="Read"/>, decompressed + deserialized by
+        /// the client's apply thread; null on the loopback path (the client clones <see cref="Chunk"/>).</summary>
         public byte[] CompressedData;
 
         public override PacketId Id => PacketId.ChunkData;
 
-        public static ChunkDataPacket From(Chunk chunk)
+        public static ChunkDataPacket From(Chunk chunk) => new ChunkDataPacket {Position = chunk.Position, Chunk = chunk};
+
+        public override void Write(BinaryWriter writer)
         {
             byte[] raw;
             using (var stream = new MemoryStream())
             {
-                using (var writer = new BinaryWriter(stream))
-                    chunk.Write(writer);
+                using (var bw = new BinaryWriter(stream))
+                    Chunk.Write(bw);
                 raw = stream.ToArray();
             }
 
-            return new ChunkDataPacket {Position = chunk.Position, CompressedData = CompressionHelper.CompressBytes(raw)};
-        }
-
-        public override void Write(BinaryWriter writer)
-        {
+            var compressed = CompressionHelper.CompressBytes(raw);
             WriteVector3i(writer, Position);
-            writer.Write(CompressedData.Length);
-            writer.Write(CompressedData);
+            writer.Write(compressed.Length);
+            writer.Write(compressed);
         }
 
         public override void Read(BinaryReader reader)
@@ -83,27 +94,37 @@ namespace MinecraftClone3API.Networking
         public override void Read(BinaryReader reader) => Position = ReadVector3i(reader);
     }
 
-    /// <summary>Server announces an authoritative single-block change (light packed as a ushort).</summary>
-    public class BlockChangePacket : Packet
+    /// <summary>Server announces a batch of authoritative block/light changes within a single chunk.
+    /// This is the transport for edits and light propagation; whole-chunk <see cref="ChunkDataPacket"/>
+    /// is used only for initial streaming. Each entry packs its in-chunk index, block id and light, so
+    /// the client mutates the chunk in place and remeshes only it (plus face neighbours) instead of
+    /// decompressing + deserializing a whole resent chunk on the main thread.</summary>
+    public class BlockChangesPacket : Packet
     {
-        public Vector3i Position;
-        public ushort BlockId;
-        public ushort Light;
+        public Vector3i ChunkPos;
+        public List<BlockChange> Changes;
 
-        public override PacketId Id => PacketId.BlockChange;
+        public override PacketId Id => PacketId.BlockChanges;
 
         public override void Write(BinaryWriter writer)
         {
-            WriteVector3i(writer, Position);
-            writer.Write(BlockId);
-            writer.Write(Light);
+            WriteVector3i(writer, ChunkPos);
+            writer.Write(Changes.Count);
+            foreach (var change in Changes)
+            {
+                writer.Write(change.LocalIndex);
+                writer.Write(change.BlockId);
+                writer.Write(change.Light);
+            }
         }
 
         public override void Read(BinaryReader reader)
         {
-            Position = ReadVector3i(reader);
-            BlockId = reader.ReadUInt16();
-            Light = reader.ReadUInt16();
+            ChunkPos = ReadVector3i(reader);
+            var count = reader.ReadInt32();
+            Changes = new List<BlockChange>(count);
+            for (var i = 0; i < count; i++)
+                Changes.Add(new BlockChange(ChunkPos, reader.ReadUInt16(), reader.ReadUInt16(), reader.ReadUInt16()));
         }
     }
 

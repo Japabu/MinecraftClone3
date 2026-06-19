@@ -1,6 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
+﻿using System.Collections.Generic;
 using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Util
@@ -9,15 +7,19 @@ namespace MinecraftClone3API.Util
     {
         public static Vector4 ToVector4(this Color4 color) => new Vector4(color.R, color.G, color.B, color.A);
 
-        public static List<T> ZipMerge<T>(List<T>[] lists)
+        /// <summary>Round-robin interleaves the source lists into <paramref name="output"/> (cleared
+        /// first). LINQ-free and fills a caller-owned list so the hot load loop allocates nothing.</summary>
+        public static void ZipMerge<T>(List<List<T>> lists, List<T> output)
         {
-            var ret = new List<T>();
+            output.Clear();
 
-            var listMax = lists.Aggregate(0, (max, list) => Math.Max(max, list.Count));
-            for(var i = 0; i < listMax; i++)
-                ret.AddRange(lists.Where(list => list.Count > i).Select(list => list[i]));
+            var listMax = 0;
+            for (var i = 0; i < lists.Count; i++)
+                if (lists[i].Count > listMax) listMax = lists[i].Count;
 
-            return ret;
+            for (var i = 0; i < listMax; i++)
+                for (var j = 0; j < lists.Count; j++)
+                    if (lists[j].Count > i) output.Add(lists[j][i]);
         }
     }
 }

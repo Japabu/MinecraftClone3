@@ -1,6 +1,5 @@
 ﻿using MinecraftClone3API.Util;
 using System.Collections.Generic;
-using System.Linq;
 
 namespace MinecraftClone3API.Client.StateSystem
 {
@@ -8,22 +7,25 @@ namespace MinecraftClone3API.Client.StateSystem
     {
         private static List<StateBase> _states = new List<StateBase>();
         private static List<StateBase> _overlays = new List<StateBase>();
+        private static readonly List<StateBase> _overlaysToRemove = new List<StateBase>();
         private static StateBase _pendingState;
 
         public static void Update()
         {
             var stateFocused = _overlays.Count == 0;
-            var topOverlay = _overlays.LastOrDefault();
+            var topOverlay = _overlays.Count > 0 ? _overlays[_overlays.Count - 1] : null;
 
-            var overlaysToRemove = new List<StateBase>();
-            _overlays.ReverseForEach(o =>
+            _overlaysToRemove.Clear();
+            for (var i = _overlays.Count - 1; i >= 0; i--)
             {
+                var o = _overlays[i];
                 o.Update(o == topOverlay);
-                if (o.IsDead) overlaysToRemove.Add(o);
-            });
-            overlaysToRemove.ForEach(o => _overlays.Remove(o));
+                if (o.IsDead) _overlaysToRemove.Add(o);
+            }
+            for (var i = 0; i < _overlaysToRemove.Count; i++)
+                _overlays.Remove(_overlaysToRemove[i]);
 
-            var last = _states.LastOrDefault();
+            var last = _states.Count > 0 ? _states[_states.Count - 1] : null;
             if (last != null)
             {
                 if (last.IsDead)
@@ -47,7 +49,7 @@ namespace MinecraftClone3API.Client.StateSystem
 
         public static void Render()
         {
-            _states.LastOrDefault()?.Render();
+            if (_states.Count > 0) _states[_states.Count - 1].Render();
             _overlays.ForEach(s => s.Render());
         }
 

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -46,6 +47,17 @@ namespace MinecraftClone3API.Networking
         // Reused across StreamChunks ticks (server tick thread only) so per-player interest scanning
         // allocates nothing steady-state.
         private readonly List<Vector3i> _newChunksScratch = new List<Vector3i>();
+
+        // Reused per FlushBlockChanges tick: groups the drained per-block changes by chunk before
+        // sending one BlockChanges packet per chunk per interested session.
+        private readonly Dictionary<Vector3i, List<BlockChange>> _changesByChunk =
+            new Dictionary<Vector3i, List<BlockChange>>();
+
+        // Per-Pump timings + volumes, surfaced to the profiler (singleplayer: Pump runs on the main
+        // thread, so a frame spike inside Pump shows up here split into chunk streaming vs delta flushing).
+        public double LastStreamMs, LastFlushMs;
+        public int LastChunksStreamed, LastChangesDrained, LastChangesPackets;
+        private readonly Stopwatch _pumpTimer = new Stopwatch();
 
         public ServerNetwork(WorldServer world)
         {
@@ -100,7 +112,15 @@ namespace MinecraftClone3API.Networking
 
             RemoveDisconnected();
             PlaceTorch();
+
+            _pumpTimer.Restart();
             StreamChunks();
+            LastStreamMs = _pumpTimer.Elapsed.TotalMilliseconds;
+
+            _pumpTimer.Restart();
+            FlushBlockChanges();
+            LastFlushMs = _pumpTimer.Elapsed.TotalMilliseconds;
+
             ResendDirtyChunks();
         }
 
@@ -204,11 +224,22 @@ namespace MinecraftClone3API.Networking
 
         private void StreamChunks()
         {
+            var loadedCount = _world.LoadedChunks.Count;
+            LastChunksStreamed = 0;
+
             foreach (var session in _sessions)
             {
                 if (!session.LoggedIn) continue;
 
                 var playerPos = session.Player.Position;
+
+                // Skip the O(loaded) interest scan when nothing relevant changed since the last fully-drained
+                // scan — the player hasn't crossed into a new chunk and no chunk has been (un)loaded. This is
+                // the steady state while standing still in an already-streamed area, where the scan was the
+                // dominant CPU cost.
+                var playerChunk = WorldBase.ChunkInWorld(playerPos.ToVector3i());
+                if (playerChunk == session.StreamScanChunk && loadedCount == session.StreamScanLoadedCount)
+                    continue;
 
                 _newChunksScratch.Clear();
                 foreach (var entry in _world.LoadedChunks)
@@ -234,10 +265,61 @@ namespace MinecraftClone3API.Networking
                     sent++;
                 }
 
+                LastChunksStreamed += sent;
+
+                // Only mark this scan "clean" once the in-range backlog is fully drained; if it was capped at
+                // MaxChunksPerTick there is more to send, so leave the gate dirty to force a rescan next tick.
+                if (_newChunksScratch.Count <= MaxChunksPerTick)
+                {
+                    session.StreamScanChunk = playerChunk;
+                    session.StreamScanLoadedCount = loadedCount;
+                }
+
                 // The server never tells a client to drop a chunk: the client caches what it receives
                 // and owns its own eviction, sending a ChunkRelease to clear the SentChunks entry. A
                 // sent chunk therefore stays in SentChunks (so it is never resent) until either it is
                 // dirtied (ResendDirtyChunks) or the client releases it.
+            }
+        }
+
+        /// <summary>Drains the server's per-block change buffer and sends one compact BlockChanges
+        /// packet per chunk to every session holding that chunk. Edits and light propagation flow
+        /// through here; whole-chunk resends are reserved for block-data changes (see below) and
+        /// initial streaming.</summary>
+        private void FlushBlockChanges()
+        {
+            LastChangesDrained = 0;
+            LastChangesPackets = 0;
+            if (_world.BlockChanges.IsEmpty) return;
+
+            _changesByChunk.Clear();
+            // Enumerating + TryRemove drains the snapshot of entries present now; changes the worker
+            // threads add during the drain stay for the next tick (enumeration terminates, so a busy
+            // light thread can't trap this loop). Last-write-wins dedup already happened at enqueue.
+            foreach (var kvp in _world.BlockChanges)
+            {
+                if (!_world.BlockChanges.TryRemove(kvp.Key, out var change)) continue;
+
+                if (!_changesByChunk.TryGetValue(change.ChunkPos, out var list))
+                {
+                    list = new List<BlockChange>();
+                    _changesByChunk[change.ChunkPos] = list;
+                }
+
+                list.Add(change);
+                LastChangesDrained++;
+            }
+
+            foreach (var entry in _changesByChunk)
+            {
+                BlockChangesPacket packet = null;
+                foreach (var session in _sessions)
+                {
+                    if (!session.LoggedIn || !session.SentChunks.Contains(entry.Key)) continue;
+                    if (packet == null) packet = new BlockChangesPacket {ChunkPos = entry.Key, Changes = entry.Value};
+                    session.Connection.Send(packet);
+                    LastChangesPackets++;
+                }
             }
         }
 

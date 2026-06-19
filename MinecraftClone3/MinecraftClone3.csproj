@@ -8,6 +8,13 @@
     <StartupObject>MinecraftClone3.Program</StartupObject>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
+    <!-- Chunk streaming allocates MB/s of necessary chunk storage (the client clone + the integrated
+         server's terrain gen, both in this process for singleplayer). Workstation GC's single-heap
+         ephemeral collections grew more expensive as the resident-chunk heap grew, stalling the render
+         thread the longer the player moved. Server GC parallelizes ephemeral collection across cores and
+         keeps gen2 concurrent. Trades memory for pause time; revert these two lines to compare. -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
   </PropertyGroup>
 
   <ItemGroup>

@@ -1,4 +1,5 @@
-﻿using System;
+using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using MinecraftClone3API.Util;
@@ -17,19 +18,28 @@ namespace MinecraftClone3API.Blocks
         public Vector3i Min => _min;
         public Vector3i Max => _max;
 
+        public bool IsEmpty => _min.X == Size;
+
         public bool NeedsSaving;
         public DateTime Time;
 
-        private readonly ushort[] _blockIds = new ushort[Size * Size * Size];
-        private readonly LightLevel[] _lightLevels = new LightLevel[Size * Size * Size];
-        private readonly Dictionary<Vector3iChunk, BlockData> _blockDatas = new Dictionary<Vector3iChunk, BlockData>();
+        // Bit-packed paletted storage; volatile so a copy-on-grow swap (a new value entering the palette)
+        // publishes to the reader threads (mesher, network serialize) atomically. Same-value writes
+        // mutate in place — a benign single-entry torn read, as the old dense ushort[] already tolerated.
+        // Each container has a single writer thread; see PaletteStorage.
+        private volatile PaletteStorage _blockStorage;
+        private volatile PaletteStorage _lightStorage;
+        // Concurrent: the loopback clone (apply thread) copies a server chunk's block data while the
+        // server tick thread may be mutating it via SetBlockData. Rare (block-data changes only), but a
+        // plain Dictionary copy under concurrent mutation throws; ConcurrentDictionary enumerates safely.
+        private readonly ConcurrentDictionary<Vector3iChunk, BlockData> _blockDatas;
 
-        /// <summary>Flattens a block coordinate into the 1-D storage arrays. Flat <c>ushort[]</c>/
-        /// <c>LightLevel[]</c> avoid the runtime's slow multidimensional-array allocator
-        /// (<c>Array.CreateInstanceMDArray</c>), which dominated chunk construction. Disk/wire format
-        /// is unaffected as long as <see cref="Write"/> and <see cref="CachedChunk"/> iterate x/y/z
-        /// in this same order.</summary>
+        /// <summary>Flattens a block coordinate into the linear storage index. Disk/wire format is
+        /// unaffected as long as the (de)serializers iterate x/y/z in this same order.</summary>
         internal static int Index(int x, int y, int z) => (x * Size + y) * Size + z;
+
+        /// <summary>Inverse of <see cref="Index"/>: unpacks a storage index back to its block coordinate.</summary>
+        internal static Vector3i FromIndex(int index) => new Vector3i(index / (Size * Size), index / Size % Size, index % Size);
 
         private Vector3i _min = new Vector3i(Size);
         private Vector3i _max = new Vector3i(-1);
@@ -39,27 +49,58 @@ namespace MinecraftClone3API.Blocks
         {
             World = world;
             Position = position;
-
             Time = DateTime.Now;
+
+            _blockStorage = new PaletteStorage(0);
+            _lightStorage = new PaletteStorage(0);
+            _blockDatas = new ConcurrentDictionary<Vector3iChunk, BlockData>();
         }
 
-        internal Chunk(CachedChunk cachedChunk) : this(cachedChunk.World, cachedChunk.Position)
+        /// <summary>Wraps a deserialized or freshly generated <see cref="CachedChunk"/>, adopting its
+        /// paletted storage directly (a reference handoff, no per-block work) so the server's Update
+        /// drain — which runs on the render thread in singleplayer — does no chunk copying.</summary>
+        internal Chunk(CachedChunk cachedChunk)
         {
-            _blockIds = cachedChunk.BlockIds;
-            _lightLevels = cachedChunk.LightLevels;
+            World = cachedChunk.World;
+            Position = cachedChunk.Position;
+            Time = DateTime.Now;
+
+            _blockStorage = cachedChunk.BlockStorage;
+            _lightStorage = cachedChunk.LightStorage;
             _blockDatas = cachedChunk.BlockDatas;
             _min = cachedChunk.Min;
             _max = cachedChunk.Max;
         }
 
+        /// <summary>Clones <paramref name="source"/>'s storage into a fresh chunk bound to
+        /// <paramref name="world"/>. The singleplayer loopback apply path uses this to copy a streamed
+        /// server chunk without any serialize/compress round trip; the paletted copy is a small palette
+        /// array plus a packed index array (uniform chunks copy almost nothing). The copy tolerates the
+        /// server mutating <paramref name="source"/> concurrently — a torn entry self-corrects via the
+        /// next BlockChanges delta, matching the existing <see cref="Write"/> race.</summary>
+        internal Chunk(WorldBase world, Chunk source)
+        {
+            World = world;
+            Position = source.Position;
+            Time = DateTime.Now;
+
+            _blockStorage = source._blockStorage.Clone();
+            _lightStorage = source._lightStorage.Clone();
+            _blockDatas = new ConcurrentDictionary<Vector3iChunk, BlockData>(source._blockDatas);
+            _min = source._min;
+            _max = source._max;
+        }
+
         public void SetBlock(Vector3i blockPos, ushort id)
         {
-            if (_blockIds[Index(blockPos.X, blockPos.Y, blockPos.Z)] == id) return;
+            var index = Index(blockPos.X, blockPos.Y, blockPos.Z);
+            var storage = _blockStorage;
+            if (storage.Get(index) == id) return;
 
             NeedsSaving = true;
 
-            _blockIds[Index(blockPos.X, blockPos.Y, blockPos.Z)] = id;
-            _blockDatas.Remove(blockPos);
+            _blockStorage = storage.Set(index, id);
+            _blockDatas.TryRemove(blockPos, out _);
 
             if (blockPos.X < _min.X) _min.X = blockPos.X;
             if (blockPos.Y < _min.Y) _min.Y = blockPos.Y;
@@ -71,10 +112,10 @@ namespace MinecraftClone3API.Blocks
 
         public ushort GetBlock(Vector3i blockPos)
         {
-            if (_blockIds == null || blockPos.X < 0 || blockPos.X >= Size || blockPos.Y < 0 || blockPos.Y >= Size || blockPos.Z < 0 || blockPos.Z >= Size)
+            if (blockPos.X < 0 || blockPos.X >= Size || blockPos.Y < 0 || blockPos.Y >= Size || blockPos.Z < 0 || blockPos.Z >= Size)
                 return 0;
 
-            return _blockIds[Index(blockPos.X, blockPos.Y, blockPos.Z)];
+            return _blockStorage.Get(Index(blockPos.X, blockPos.Y, blockPos.Z));
         }
 
         public void SetBlockData(Vector3i blockPos, BlockData data)
@@ -90,8 +131,12 @@ namespace MinecraftClone3API.Blocks
 
         public void SetLightLevel(Vector3i blockPos, LightLevel lightLevel)
         {
+            var index = Index(blockPos.X, blockPos.Y, blockPos.Z);
+            var storage = _lightStorage;
+            if (storage.Get(index) == lightLevel.Binary) return;
+
             NeedsSaving = true;
-            _lightLevels[Index(blockPos.X, blockPos.Y, blockPos.Z)] = lightLevel;
+            _lightStorage = storage.Set(index, lightLevel.Binary);
 
             if (blockPos.X < _min.X) _min.X = blockPos.X;
             if (blockPos.Y < _min.Y) _min.Y = blockPos.Y;
@@ -100,8 +145,8 @@ namespace MinecraftClone3API.Blocks
             if (blockPos.Y > _max.Y) _max.Y = blockPos.Y;
             if (blockPos.Z > _max.Z) _max.Z = blockPos.Z;
         }
-        
-        public LightLevel GetLightLevel(Vector3i blockPos) => _lightLevels[Index(blockPos.X, blockPos.Y, blockPos.Z)];
+
+        public LightLevel GetLightLevel(Vector3i blockPos) => LightLevel.FromBinary(_lightStorage.Get(Index(blockPos.X, blockPos.Y, blockPos.Z)));
 
         public void Write(BinaryWriter writer)
         {
@@ -113,13 +158,8 @@ namespace MinecraftClone3API.Blocks
             writer.Write(_max.Y);
             writer.Write(_max.Z);
 
-            for (var x = _min.X; x <= _max.X; x++)
-            for (var y = _min.Y; y <= _max.Y; y++)
-            for (var z = _min.Z; z <= _max.Z; z++)
-            {
-                writer.Write(_blockIds[Index(x, y, z)]);
-                writer.Write(_lightLevels[Index(x, y, z)].Binary);
-            }
+            _blockStorage.Write(writer);
+            _lightStorage.Write(writer);
 
             writer.Write(_blockDatas.Count);
             foreach (var data in _blockDatas)

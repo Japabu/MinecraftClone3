@@ -19,7 +19,12 @@ namespace MinecraftClone3API.Util
          * Compressed chunk data
          */
 
-        private const int ChunksInRegion = 128;
+        // 32³ chunks per region → the flat index is 32³ × 8 B = 256 KB. It was 128 (16 MB), and
+        // SaveChunk rewrites the whole index per save while LoadChunk decompresses it per cache miss,
+        // so the 64× shrink is the real fix for the load-thread allocation that the LRU cache below
+        // only papered over. Changing this changes the on-disk region grid: existing World/ saves must
+        // be regenerated.
+        private const int ChunksInRegion = 32;
         private const int ChunksInRegionSquared = ChunksInRegion * ChunksInRegion;
         private const int ChunksInRegionCubed = ChunksInRegion * ChunksInRegion * ChunksInRegion;
         private const int RegionSize = ChunksInRegion * Chunk.Size;
@@ -27,11 +32,10 @@ namespace MinecraftClone3API.Util
         private const int IndexFileLength = ChunksInRegionCubed * sizeof(int) * 2;
         private const int IndexFileNull = -1;
 
-        // Each decompressed region index is IndexFileLength (16 MB). A player's interest volume can
-        // straddle up to 8 region files at once (the octants around a region corner); caching fewer
-        // than that makes the load thread re-decompress 16 MB indices every pass it touches them,
-        // which dominates allocation and starves the GC. Keep enough resident to cover the working
-        // set plus roaming headroom.
+        // Each decompressed region index is IndexFileLength (256 KB). A player's interest scan can
+        // straddle several region files at once (smaller regions ⇒ more of them under the load/terrain
+        // scan); keep enough resident to cover that working set plus roaming headroom so the load
+        // thread stops re-decompressing indices it just touched. At 256 KB each this is a few MB.
         private const int MaxCachedIndexDatas = 16;
 
         private const string RegionsFolder = "Regions";
@@ -69,27 +73,17 @@ namespace MinecraftClone3API.Util
                     }
             }
 
-            //Compress chunk data
-            byte[] compressedChunkData;
-            using (var memoryStream = new MemoryStream())
-            {
-                using (var writer = new BinaryWriter(memoryStream))
-                {
-                    chunk.Write(writer);
-                }
-
-                compressedChunkData = CompressionHelper.CompressBytes(memoryStream.ToArray());
-            }
-
-            var chunkDataPosition = dataFile.Exists ? (int) dataFile.Length : 0;
-            var chunkDataLength = compressedChunkData.Length;
-
-            //Append chunk to data file
+            //Append chunk to data file, streaming through GZip (no intermediate byte[])
+            int chunkDataPosition, chunkDataLength;
             lock (DataLockObject)
             {
-                using (var stream = dataFile.Open(FileMode.Append, FileAccess.Write))
+                using (var fileStream = dataFile.Open(FileMode.Append, FileAccess.Write))
                 {
-                    stream.Write(compressedChunkData, 0, compressedChunkData.Length);
+                    chunkDataPosition = (int) fileStream.Position;
+                    var gzipStream = new GZipStream(fileStream, CompressionMode.Compress, true);
+                    using (var writer = new BinaryWriter(gzipStream))
+                        chunk.Write(writer);
+                    chunkDataLength = (int) fileStream.Position - chunkDataPosition;
                 }
             }
 
@@ -102,7 +96,8 @@ namespace MinecraftClone3API.Util
                 Array.Copy(BitConverter.GetBytes(chunkDataPosition), 0, chunkIndexData, chunkIndexPosition, sizeof(int));
                 Array.Copy(BitConverter.GetBytes(chunkDataLength), 0, chunkIndexData, chunkIndexPosition + sizeof(int),
                     sizeof(int));
-                File.WriteAllBytes(indexFile.FullName, CompressionHelper.CompressBytes(chunkIndexData));
+                using (var stream = new GZipStream(indexFile.Create(), CompressionMode.Compress))
+                    stream.Write(chunkIndexData, 0, chunkIndexData.Length);
             }
 
             chunk.NeedsSaving = false;
@@ -146,9 +141,17 @@ namespace MinecraftClone3API.Util
                 }
             }
 
-            using (var reader = new BinaryReader(new MemoryStream(chunkData)))
+            try
             {
-                return new CachedChunk(world, chunkPos, reader);
+                using (var reader = new BinaryReader(new MemoryStream(chunkData)))
+                    return new CachedChunk(world, chunkPos, reader);
+            }
+            catch (Exception e)
+            {
+                // A chunk written by an older format version (or a truncated/corrupt entry) fails to
+                // deserialize; treat it as absent so the load thread regenerates it instead of crashing.
+                Logger.Error($"Failed to load chunk {chunkPos}, regenerating: {e.Message}");
+                return null;
             }
         }
 
