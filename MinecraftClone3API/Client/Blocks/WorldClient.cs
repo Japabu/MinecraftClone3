@@ -23,7 +23,13 @@ namespace MinecraftClone3API.Client.Blocks
     /// </summary>
     public class WorldClient : WorldBase
     {
-        private const int MaxUploadsPerTick = 8;
+        // Per-frame GL upload time budget. Uploads are cheap (~0.15 ms each — a glBufferData/SubData orphan),
+        // so a few ms drains tens of chunks per frame, comfortably above the mesh pool's output, while bounding
+        // the upload's contribution to frame time. Replaces a fixed count-per-frame (8) that throttled the
+        // world-fill below the pool's throughput (an F10 chunk-trace showed the upload queue ballooning to
+        // ~900 and chunks waiting seconds in it); a time budget self-scales to how cheap uploads actually are.
+        private const double UploadBudgetMs = 4.0;
+        private static readonly long UploadBudgetTicks = (long) (UploadBudgetMs * Stopwatch.Frequency / 1000.0);
 
         // Cap on packets handled per frame. Well above the steady-state inflow (the server streams at
         // most ServerNetwork.MaxChunksPerTick chunks per tick plus deltas), so it never throttles normal
@@ -34,13 +40,26 @@ namespace MinecraftClone3API.Client.Blocks
         // publish a burst; bounding the per-frame GL/VAO creation keeps a burst from stalling the frame.
         private const int MaxRenderReadyPerTick = 256;
 
-        // Distance (blocks, chunk-centre to player) past which the client drops a cached chunk and
-        // tells the server with a ChunkRelease. Must stay comfortably above the server's send range
-        // (ServerNetwork.ViewDistance, 256) so a chunk the server just streamed is never evicted —
-        // and thus re-requested — the same moment it arrives; the gap is the caching hysteresis that
-        // makes walking away and back cost zero bytes.
-        private const float CacheDistance = 384f;
-        private const float CacheDistanceSq = CacheDistance * CacheDistance;
+        // Distance (blocks, chunk-centre to player) past which the client drops a cached chunk and tells the
+        // server with a ChunkRelease. Must stay comfortably above the server's send range (so a chunk the
+        // server just streamed is never evicted-then-re-requested at the boundary — the gap is the caching
+        // hysteresis that makes walking away and back cost zero bytes). In SP it tracks the render-distance
+        // slider (StateWorld sets it = render distance + a hysteresis gap); in MP it stays at the safe default
+        // (the client can't know the remote server's view distance, so it keeps caching what's streamed).
+        public const float CacheHysteresis = 80f;
+        private float _cacheDistanceSq = 240f * 240f;
+
+        public float CacheDistance
+        {
+            get => MathF.Sqrt(_cacheDistanceSq);
+            set
+            {
+                _cacheDistanceSq = value * value;
+                // Force the next eviction scan (normally gated on a chunk-border crossing) so a *decrease*
+                // evicts the now-too-far chunks immediately instead of waiting for the player to move.
+                _lastEvictChunk = new Vector3i(int.MinValue);
+            }
+        }
 
         private static readonly Vector3i[] NeighbourOffsets =
         {
@@ -84,10 +103,21 @@ namespace MinecraftClone3API.Client.Blocks
         public int UploadQueueDepth => _uploadQueueDepth;
         public int LoadedChunkCount => _loadedChunkCount;
 
+        // The concurrent-queue backlogs upstream of meshing, mirrored as Interlocked-maintained counters
+        // (incremented at the producing enqueue, decremented at the consuming dequeue) so the profiler
+        // reads them lock-free instead of calling ConcurrentQueue.Count each frame. These are the decode
+        // backlog, the decoded→GL backlog, and the GL-dispose backlog respectively.
+        private int _applyQueueDepth;
+        private int _renderReadyDepth;
+        private int _disposeQueueDepth;
+        public int ApplyQueueDepth => _applyQueueDepth;
+        public int RenderReadyQueueDepth => _renderReadyDepth;
+        public int DisposeQueueDepth => _disposeQueueDepth;
+
         private readonly Stopwatch _phaseTimer = new Stopwatch();
 
         private readonly IConnection _connection;
-        private readonly Thread _meshThread;
+        private readonly Thread[] _meshThreads;
 
         // Decodes streamed chunks and applies block-change deltas off the render thread, in packet order
         // (the single writer of chunk contents). It publishes finished chunks to LoadedChunks and hands
@@ -119,7 +149,7 @@ namespace MinecraftClone3API.Client.Blocks
         // stationary. Gating on chunk-border crossings skips the per-frame O(loaded) scan when standing still.
         private Vector3i _lastEvictChunk = new Vector3i(int.MinValue);
         private readonly List<Vector3i> _evictScratch = new List<Vector3i>();
-        private readonly List<Vector3i> _toUploadScratch = new List<Vector3i>(MaxUploadsPerTick);
+        private readonly List<Vector3i> _uploadRequeueScratch = new List<Vector3i>(64);
 
         private volatile bool _stopped;
 
@@ -130,8 +160,20 @@ namespace MinecraftClone3API.Client.Blocks
             _applyThread = new Thread(ApplyThread) {Name = "Client Apply Thread", IsBackground = true};
             _applyThread.Start();
 
-            _meshThread = new Thread(MeshThread) {Name = "Client Mesh Thread", IsBackground = true};
-            _meshThread.Start();
+            // Meshing is the chunk-pipeline bottleneck (an F10 trace showed chunks spending ~99% of their
+            // load latency waiting in the mesh queue, the single mesh thread pegged at 100%). It is
+            // embarrassingly parallel: workers mesh distinct chunks (the _meshPending claim under _meshLock
+            // guarantees no two take the same one), read chunk storage without writing (copy-on-grow
+            // tolerates concurrent readers — Invariant 5), and only hand finished meshes to the main-thread
+            // GL upload (Invariant 1), so a pool scales throughput ~linearly with cores. Leave two cores for
+            // the main (render) and server load threads.
+            var meshWorkers = Math.Max(1, Environment.ProcessorCount - 2);
+            _meshThreads = new Thread[meshWorkers];
+            for (var i = 0; i < meshWorkers; i++)
+            {
+                _meshThreads[i] = new Thread(MeshThread) {Name = $"Client Mesh Thread {i}", IsBackground = true};
+                _meshThreads[i].Start();
+            }
         }
 
         public override void Update()
@@ -150,39 +192,54 @@ namespace MinecraftClone3API.Client.Blocks
             LastDrainMs = _phaseTimer.Elapsed.TotalMilliseconds;
 
             _phaseTimer.Restart();
-            //Cap GL uploads per frame so a meshing burst doesn't stall the frame; the rest stay queued.
-            var toUpload = _toUploadScratch;
-            toUpload.Clear();
-            lock (_uploadLock)
-            {
-                while (toUpload.Count < MaxUploadsPerTick && _uploadQueue.Count > 0)
-                {
-                    var pos = _uploadQueue.Dequeue();
-                    _uploadPending.Remove(pos);
-                    toUpload.Add(pos);
-                }
-
-                _uploadQueueDepth = _uploadQueue.Count;
-            }
-
-            // TryUpload never blocks: if the mesh thread is mid-remesh of this chunk (holding its VAO
-            // locks), it returns false and we requeue the chunk for a later frame rather than stalling
-            // the render thread for the whole remesh. That blocking wait — up to 7 chunk remeshes per
-            // edit, tens of ms each — was the per-edit frame-time spike. See ChunkRenderData.TryUpload.
+            // Upload meshed chunks until a per-frame time budget is spent, then leave the rest queued. The
+            // mesh pool produces chunks far faster than one frame can upload, so a fixed count-per-frame
+            // throttled the fill; the budget drains as many as fit in a few ms (uploads are cheap) and bounds
+            // the frame cost. Each queued position is dequeued at most once per frame.
+            var uploadDeadline = Stopwatch.GetTimestamp() + UploadBudgetTicks;
+            var requeue = _uploadRequeueScratch;
+            requeue.Clear();
             var uploadChunks = 0;
             var uploadIndices = 0;
-            foreach (var pos in toUpload)
+            while (true)
             {
-                if (!RenderData.TryGetValue(pos, out var renderData)) continue;
-                if (!renderData.TryUpload())
+                Vector3i pos;
+                lock (_uploadLock)
                 {
-                    RequeueUpload(pos);
-                    continue;
+                    if (_uploadQueue.Count == 0)
+                    {
+                        _uploadQueueDepth = 0;
+                        break;
+                    }
+
+                    pos = _uploadQueue.Dequeue();
+                    _uploadPending.Remove(pos);
+                    _uploadQueueDepth = _uploadQueue.Count;
                 }
 
-                uploadChunks++;
-                uploadIndices += renderData.UploadedIndexCount;
+                // TryUpload never blocks: if the mesh thread is mid-remesh of this chunk (holding its VAO
+                // locks) it returns false; collect it and requeue *after* the loop so it retries a later
+                // frame (never re-dequeued this frame) instead of the render thread stalling on the remesh
+                // lock. That blocking wait was the per-edit frame-time spike. See ChunkRenderData.TryUpload.
+                if (RenderData.TryGetValue(pos, out var renderData))
+                {
+                    if (renderData.TryUpload())
+                    {
+                        ChunkTracer.Uploaded(pos);
+                        uploadChunks++;
+                        uploadIndices += renderData.UploadedIndexCount;
+                    }
+                    else
+                    {
+                        requeue.Add(pos);
+                    }
+                }
+
+                if (Stopwatch.GetTimestamp() >= uploadDeadline) break;
             }
+
+            foreach (var pos in requeue) RequeueUpload(pos);
+
             LastUploadChunks = uploadChunks;
             LastUploadIndices = uploadIndices;
             LastUploadMs = _phaseTimer.Elapsed.TotalMilliseconds;
@@ -192,7 +249,10 @@ namespace MinecraftClone3API.Client.Blocks
             LastEvictMs = _phaseTimer.Elapsed.TotalMilliseconds;
 
             while (_disposeQueue.TryDequeue(out var disposed))
+            {
+                Interlocked.Decrement(ref _disposeQueueDepth);
                 disposed.Dispose();
+            }
         }
 
         /// <summary>Creates the GL render data (a GL call, hence main-thread only) for chunks the apply
@@ -204,6 +264,7 @@ namespace MinecraftClone3API.Client.Blocks
             while (processed < MaxRenderReadyPerTick && _renderReady.TryDequeue(out var ready))
             {
                 processed++;
+                Interlocked.Decrement(ref _renderReadyDepth);
 
                 if (!LoadedChunks.TryGetValue(ready.Position, out var chunk)) continue;
 
@@ -231,7 +292,7 @@ namespace MinecraftClone3API.Client.Blocks
             foreach (var entry in LoadedChunks)
             {
                 var center = (entry.Key * Chunk.Size + new Vector3i(Chunk.Size / 2)).ToVector3();
-                if ((center - _playerPosition).LengthSquared > CacheDistanceSq)
+                if ((center - _playerPosition).LengthSquared > _cacheDistanceSq)
                     _evictScratch.Add(entry.Key);
             }
 
@@ -280,9 +341,15 @@ namespace MinecraftClone3API.Client.Blocks
                 case PlayerReadyPacket _:
                     Ready = true;
                     break;
-                case ChunkDataPacket _:
+                case ChunkDataPacket chunkData:
+                    ChunkTracer.ApplyEnq(chunkData.Position);
+                    _applyQueue.Enqueue(packet);
+                    Interlocked.Increment(ref _applyQueueDepth);
+                    _applySignal.Set();
+                    break;
                 case BlockChangesPacket _:
                     _applyQueue.Enqueue(packet);
+                    Interlocked.Increment(ref _applyQueueDepth);
                     _applySignal.Set();
                     break;
                 case EntitySpawnPacket spawn when spawn.EntityId != LocalEntityId:
@@ -316,7 +383,10 @@ namespace MinecraftClone3API.Client.Blocks
                     continue;
                 }
 
+                Interlocked.Decrement(ref _applyQueueDepth);
+
                 var allocStart = GC.GetAllocatedBytesForCurrentThread();
+                var applyStart = Stopwatch.GetTimestamp();
                 try
                 {
                     switch (packet)
@@ -336,6 +406,7 @@ namespace MinecraftClone3API.Client.Blocks
                     Logger.Error("Error applying chunk packet");
                     Logger.Exception(e);
                 }
+                Profiler.AddApplyTicks(Stopwatch.GetTimestamp() - applyStart);
                 Profiler.AddApplyAlloc(GC.GetAllocatedBytesForCurrentThread() - allocStart);
             }
         }
@@ -346,6 +417,7 @@ namespace MinecraftClone3API.Client.Blocks
         private void ApplyChunk(ChunkDataPacket packet)
         {
             var position = packet.Position;
+            ChunkTracer.ApplyStart(position);
 
             // Loopback carries the live server chunk by reference (clone it, no serialization); a TCP
             // receive carries the still-compressed bytes to decompress and deserialize here. See ChunkDataPacket.
@@ -362,10 +434,21 @@ namespace MinecraftClone3API.Client.Blocks
             LoadedChunks[position] = chunk;
             if (!isUpdate) Interlocked.Increment(ref _loadedChunkCount);
 
-            _renderReady.Enqueue((position, isUpdate));
+            ChunkTracer.Applied(position);
+            Profiler.IncApplied();
+
+            EnqueueRenderReady(position, isUpdate);
             foreach (var offset in NeighbourOffsets)
                 if (LoadedChunks.ContainsKey(position + offset))
-                    _renderReady.Enqueue((position + offset, isUpdate));
+                    EnqueueRenderReady(position + offset, isUpdate);
+        }
+
+        /// <summary>Enqueues a position for the main-thread GL render-data step, keeping the lock-free
+        /// <see cref="RenderReadyQueueDepth"/> mirror in sync. Apply-thread only (the sole producer).</summary>
+        private void EnqueueRenderReady(Vector3i position, bool highPriority)
+        {
+            _renderReady.Enqueue((position, highPriority));
+            Interlocked.Increment(ref _renderReadyDepth);
         }
 
         /// <summary>Apply-thread: applies a batch of per-block deltas (edits + light) into an
@@ -392,24 +475,27 @@ namespace MinecraftClone3API.Client.Blocks
                 else if (local.Z == Chunk.Size - 1) touchedNeighbours |= 1 << 5;
             }
 
-            _renderReady.Enqueue((packet.ChunkPos, true));
+            ChunkTracer.EditApplied(packet.ChunkPos);
+            EnqueueRenderReady(packet.ChunkPos, true);
 
             for (var i = 0; i < NeighbourOffsets.Length; i++)
             {
                 if ((touchedNeighbours & (1 << i)) == 0) continue;
 
                 var neighbour = packet.ChunkPos + NeighbourOffsets[i];
-                if (LoadedChunks.ContainsKey(neighbour)) _renderReady.Enqueue((neighbour, true));
+                if (LoadedChunks.ContainsKey(neighbour)) EnqueueRenderReady(neighbour, true);
             }
         }
 
         private void UnloadChunk(Vector3i position)
         {
+            ChunkTracer.Abandon(position);
             if (LoadedChunks.TryRemove(position, out _)) Interlocked.Decrement(ref _loadedChunkCount);
             if (RenderData.TryRemove(position, out var renderData))
             {
                 RemoveFromRenderList(renderData);
                 _disposeQueue.Enqueue(renderData);
+                Interlocked.Increment(ref _disposeQueueDepth);
             }
 
             foreach (var offset in NeighbourOffsets)
@@ -495,9 +581,14 @@ namespace MinecraftClone3API.Client.Blocks
                 if (!LoadedChunks.TryGetValue(position, out var chunk)) continue;
 
                 var allocStart = GC.GetAllocatedBytesForCurrentThread();
+                var meshStart = Stopwatch.GetTimestamp();
+                ChunkTracer.MeshStart(position);
                 renderData.Chunk = chunk;
                 renderData.Update();
+                ChunkTracer.MeshDone(position);
+                Profiler.AddMeshTicks(Stopwatch.GetTimestamp() - meshStart);
                 Profiler.AddMeshAlloc(GC.GetAllocatedBytesForCurrentThread() - allocStart);
+                Profiler.IncMeshed();
 
                 lock (_uploadLock)
                 {

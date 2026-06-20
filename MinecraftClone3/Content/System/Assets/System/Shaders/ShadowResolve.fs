@@ -23,9 +23,9 @@ uniform float uShadowDistance;
 uniform float uSunFade;
 uniform float uShadowsEnabled;
 uniform float uShadowSoftness;
+// UV size of one shadow-map texel (1.0 / current map size); driven by the Shadow Quality preset.
+uniform float uShadowMapTexel;
 
-// Must match ShadowFramebuffer.ShadowMapSize.
-const float ShadowTexel = 1.0 / 1024.0;
 const float NormalBias = 2.0;
 const float DepthBias = 0.0005;
 
@@ -59,7 +59,7 @@ float SampleShadow(vec3 worldPos, vec3 normal, mat2 rot)
 	float sum = 0.0;
 	for (int i = 0; i < 12; i++)
 	{
-		vec2 off = rot*Poisson[i]*(uShadowSoftness*ShadowTexel);
+		vec2 off = rot*Poisson[i]*(uShadowSoftness*uShadowMapTexel);
 		sum += texture(uShadowMap, vec3(p.xy + off, refDepth));
 	}
 	return sum/12.0;

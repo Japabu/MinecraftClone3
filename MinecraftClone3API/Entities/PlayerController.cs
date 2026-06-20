@@ -54,7 +54,8 @@ namespace MinecraftClone3API.Entities
                 delta = Vector2.Zero;
                 _skipMouseDelta = false;
             }
-            PlayerEntity.Rotate(-delta.Y * 0.008f, -delta.X * 0.008f);
+            var sensitivity = GraphicsSettings.MouseSensitivity;
+            PlayerEntity.Rotate(-delta.Y * sensitivity, -delta.X * sensitivity);
 
             if (ks.IsKeyPressed(Keys.Space))
             {

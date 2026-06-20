@@ -13,9 +13,12 @@ namespace MinecraftClone3API.Graphics
 {
     public static class WorldRenderer
     {
-        //Changable in settings
-        public const float RenderDistance = 256;
-        public const float RenderDistanceSq = RenderDistance * RenderDistance;
+        // User render distance (GuiGraphicsOptions slider → GraphicsSettings.RenderDistanceChunks). Computed
+        // live each frame so the slider takes effect next frame with no reload; in SP the server's view/load
+        // radius and the client cache distance are driven from the same setting (see StateWorld), in MP it
+        // only shrinks/grows what the client DRAWS (it can't pull more than the server streams).
+        public static float RenderDistance => GraphicsSettings.RenderDistanceChunks * Chunk.Size;
+        public static float RenderDistanceSq => RenderDistance * RenderDistance;
 
         //Changeable in settings
         public const float SortDistance = 128;
@@ -46,7 +49,27 @@ namespace MinecraftClone3API.Graphics
         // ShadowMapSize the resolution knob; the map is deliberately low-res for a soft, blurry look (the PCF
         // penumbra grows with the coarse world-per-texel) -- see CLAUDE.md.
         public const float ShadowNear = 0.5f;
-        public const float ShadowDistance = 160f;
+
+        // Shadow coverage distance + map resolution, driven by the Shadow Quality preset (GraphicsSettings.
+        // ShadowQuality): Low 96/512, Medium 160/1024 (default), High 256/2048. Computed live so the preset
+        // applies next frame; the map FBO is recreated by EnsureShadowMap when the size changes.
+        public static float ShadowDistance => GraphicsSettings.ShadowQuality switch
+        {
+            ShadowQuality.Low => 96f,
+            ShadowQuality.High => 256f,
+            _ => 160f
+        };
+
+        public static int ShadowMapSize => GraphicsSettings.ShadowQuality switch
+        {
+            ShadowQuality.Low => 512,
+            ShadowQuality.High => 2048,
+            _ => 1024
+        };
+
+        // Tracks the size the live ShadowFramebuffer was built at; EnsureShadowMap recreates the FBO when the
+        // quality preset changes ShadowMapSize. Initialized to the size ClientResources builds it at.
+        private static int _shadowMapSize = ShadowFramebuffer.ShadowMapSize;
         // Pull the light eye this far past the bounding sphere toward the sun so casters just outside the slice
         // (e.g. a tall block) still shadow into it.
         private const float ShadowCasterExtent = 64f;
@@ -78,7 +101,7 @@ namespace MinecraftClone3API.Graphics
 
         // Distance past which a sky-exposed chunk no longer forces the shadow passes (matches the shadow-resolve
         // shader, which early-outs shadow sampling past the shadow distance).
-        public const float ShadowDistanceSq = ShadowDistance * ShadowDistance;
+        public static float ShadowDistanceSq => ShadowDistance * ShadowDistance;
 
         // Client-side day/night clock. The sun colour drives the sky-light term in the composition shader,
         // so the whole world brightens/dims over the cycle with no remesh. Real-time based (frame-rate
@@ -162,7 +185,7 @@ namespace MinecraftClone3API.Graphics
             // any visible chunk is sky-exposed, so the shadow passes can be skipped when none is (deep cave).
             BuildVisibleSet(world, PlayerController.Camera, viewFrustum);
 
-            RenderDebug.ShadowPass = sunUp && _anyShadowReceiver && GraphicsSettings.Shadows;
+            RenderDebug.ShadowPass = sunUp && _anyShadowReceiver && GraphicsSettings.ShadowsEnabled;
             if (RenderDebug.ShadowPass)
             {
                 GpuTimers.Begin(GpuTimers.Pass.Shadow);
@@ -190,6 +213,17 @@ namespace MinecraftClone3API.Graphics
             GpuTimers.EndFrame();
         }
 
+        /// <summary>Recreates the shadow framebuffer when the Shadow Quality preset changes its resolution
+        /// (GL, main-thread — called inside the shadow pass). A no-op when the size already matches.</summary>
+        private static void EnsureShadowMap()
+        {
+            if (_shadowMapSize == ShadowMapSize) return;
+
+            _shadowMapSize = ShadowMapSize;
+            ClientResources.ShadowFramebuffer?.Dispose();
+            ClientResources.ShadowFramebuffer = new ShadowFramebuffer(_shadowMapSize);
+        }
+
         /// <summary>Renders opaque chunk depth from the sun's orthographic point of view into the shadow
         /// framebuffer. Re-draws the already-uploaded chunk VAOs (no remesh, main-thread GL only); the
         /// shadow-resolve pass samples it to attenuate the sky/sun term. The map is fit to the bounding sphere
@@ -211,6 +245,8 @@ namespace MinecraftClone3API.Graphics
             var up = MathF.Abs(toSun.Y) > 0.99f ? Vector3.UnitZ : Vector3.UnitY;
 
             GraphicsDebug.PushGroup("Shadow");
+
+            EnsureShadowMap();
 
             // Cull disabled: the voxel mesher only emits exposed (single-sided) faces, so there are no back
             // faces — culling would drop the sun-facing surfaces. Polygon offset pushes shadow depth back to
@@ -236,7 +272,7 @@ namespace MinecraftClone3API.Graphics
             else radius = MathF.Sqrt(n * n * k2 + (n - zc) * (n - zc));
 
             var center = camera.Position + camera.Forward * zc;
-            _shadowTexelWorld = 2f * radius / ShadowFramebuffer.ShadowMapSize;
+            _shadowTexelWorld = 2f * radius / _shadowMapSize;
 
             var distBack = radius + ShadowCasterExtent;
             var lightEye = center + toSun * distBack;
@@ -284,6 +320,11 @@ namespace MinecraftClone3API.Graphics
             _transparentChunks.Clear();
             _anyShadowReceiver = false;
 
+            // Snapshot the live (settings-driven) distances once so the per-chunk loop reads locals, not the
+            // property getters, each iteration.
+            var renderDistanceSq = RenderDistanceSq;
+            var shadowDistanceSq = ShadowDistanceSq;
+
             var renderList = world.RenderList;
             for (var i = 0; i < renderList.Count; i++)
             {
@@ -291,7 +332,7 @@ namespace MinecraftClone3API.Graphics
                 var chunkMiddle = (renderData.Chunk.Position * Chunk.Size + new Vector3i(Chunk.Size / 2)).ToVector3();
                 if (!viewFrustum.SpehereIntersection(chunkMiddle, Chunk.Radius)) continue;
                 var lengthSq = (camera.Position - chunkMiddle).LengthSquared;
-                if (lengthSq > RenderDistanceSq) continue;
+                if (lengthSq > renderDistanceSq) continue;
 
                 if (renderData.HasTransparency)
                 {
@@ -304,7 +345,7 @@ namespace MinecraftClone3API.Graphics
                 }
                 else _chunksToDraw.Add(renderData);
 
-                if (renderData.SkyExposed && lengthSq <= ShadowDistanceSq) _anyShadowReceiver = true;
+                if (renderData.SkyExposed && lengthSq <= shadowDistanceSq) _anyShadowReceiver = true;
             }
 
             // Sort the near transparent chunks back-to-front, then build the final opaque draw list as
@@ -441,10 +482,11 @@ namespace MinecraftClone3API.Graphics
             GL.UniformMatrix4(sh.GetUniformLocation("uView"), false, ref camera.View);
             GL.UniformMatrix4(sh.GetUniformLocation("uLightViewProj"), false, ref _lightViewProj);
             GL.Uniform1(sh.GetUniformLocation("uShadowTexel"), _shadowTexelWorld);
+            GL.Uniform1(sh.GetUniformLocation("uShadowMapTexel"), 1f / _shadowMapSize);
             GL.Uniform1(sh.GetUniformLocation("uShadowDistance"), ShadowDistance);
             GL.Uniform1(sh.GetUniformLocation("uSunFade"), sunFade);
             GL.Uniform1(sh.GetUniformLocation("uShadowSoftness"), ShadowSoftness);
-            GL.Uniform1(sh.GetUniformLocation("uShadowsEnabled"), GraphicsSettings.Shadows ? 1f : 0f);
+            GL.Uniform1(sh.GetUniformLocation("uShadowsEnabled"), GraphicsSettings.ShadowsEnabled ? 1f : 0f);
             ClientResources.ScreenRectVao.Draw();
 
             fb.Unbind(ClientResources.Window.FramebufferSize.X, ClientResources.Window.FramebufferSize.Y);
@@ -483,8 +525,10 @@ namespace MinecraftClone3API.Graphics
             GL.Uniform1(comp.GetUniformLocation("uShadowStrength"), ShadowStrength);
             // When shadows are disabled the resolve pass is skipped, leaving a stale buffer bound; this tells
             // the shader to treat every sky-lit surface as fully lit instead of sampling that stale buffer.
-            GL.Uniform1(comp.GetUniformLocation("uShadowsEnabled"), GraphicsSettings.Shadows ? 1f : 0f);
+            GL.Uniform1(comp.GetUniformLocation("uShadowsEnabled"), GraphicsSettings.ShadowsEnabled ? 1f : 0f);
             GL.Uniform1(comp.GetUniformLocation("uDebugShadow"), RenderDebug.ShadowFactor ? 1f : 0f);
+            GL.Uniform3(comp.GetUniformLocation("uMinLight"), GraphicsSettings.Brightness,
+                GraphicsSettings.Brightness, GraphicsSettings.Brightness);
             var sun = SunColor();
             GL.Uniform3(comp.GetUniformLocation("uSunColor"), sun.X, sun.Y, sun.Z);
             var skyAmbient = SkyAmbient();
