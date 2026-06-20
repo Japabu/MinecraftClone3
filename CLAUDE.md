@@ -553,6 +553,20 @@ bind+uniform+draw triples per pass) but **does NOT reduce GPU time** on Mesa, be
 (helps the CPU-bound streaming case) + future GL 4.3 indirect-draw + cleaner architecture; see the performance
 findings below for why the GPU, not the CPU, is the steady-state wall.
 
+**Distance LOD — coarse meshing of far chunks (the high-render-distance lever).** The geometry pass is
+triangle/primitive-setup bound (see findings), so at high render distance the per-frame triangle count is the
+wall. Distant chunks (where the detail is sub-pixel) are re-meshed at a coarser stride: **LOD 0** = full
+per-block (`< 96` blocks), **LOD 1** = stride-2 (`< 160`), **LOD 2** = stride-4 (beyond). `ChunkMesher.
+AddBlocksToVaoLod` samples each stride³ region at its corner block and emits one scaled face per exposed
+super-block direction (cull = the neighbour super-block's corner sample — approximate but fine at distance),
+all into the opaque arena (no separate transparent pass for LOD chunks). `ChunkRenderData.DesiredLod` is set
+by `WorldClient.ScanLod` (a distance scan gated on chunk-border crossings, like eviction; **bidirectional** —
+re-meshes on both approach *and* recede, since a recede chunk can rotate back into view; low-priority
+re-meshes so they sit behind first-load streaming) and `DrainRenderReady` (initial level at stream time); the
+mesh thread reads it in `Update`. **This took `geomMs` 4.8→1.2 ms at RD 16** and is the change that makes
+500 FPS reachable at RD 16. Tradeoff: distant terrain coarsens (near stays full detail); thresholds are the
+`Lod1DistanceSq`/`Lod2DistanceSq` consts.
+
 **The visible set gates the shadow passes.** `BuildVisibleSet` sets `_anyShadowReceiver` iff a visible chunk
 within `ShadowDistance` is **sky-exposed** (`ChunkRenderData.SkyExposed = Chunk.HasAnySkyLight()`), and the
 shadow depth pass runs only when `sunUp && _anyShadowReceiver && GraphicsSettings.ShadowsEnabled` (the last is
@@ -950,9 +964,8 @@ sun-up so the shadow passes run — the heavy case). Settings are **pinned in-me
 quality / FOV / brightness) and **`GraphicsSettings.SuppressSave` keeps the user's `GraphicsSettings.json`
 untouched** (verified byte-identical after a run). The report (also written to `benchmark-report.txt`) gives
 overall + per-phase avg / 1%-low / 0.1%-low FPS, **an UNCAPPED FPS = 1000/max(gpu,cpu) work time** (the
-present-independent throughput — observed FPS is otherwise capped at the ~120 Hz display refresh, see the
-findings below), frame-ms percentiles, the GPU per-pass split (shadow/geom/comp), CPU update/render ms, drawn
-chunks, and GC/alloc.
+present/pacing-independent engine throughput; observed FPS additionally folds in frame-time hitches), frame-ms
+percentiles, the GPU per-pass split (shadow/geom/comp), CPU update/render ms, drawn chunks, and GC/alloc.
 
 > ⚠️ **Benchmark only on an idle machine.** The UHD 630 is an integrated GPU sharing the CPU package's
 > thermal/power budget, so concurrent CPU load (a parallel build, another process, an agent workflow doing
@@ -961,45 +974,58 @@ chunks, and GC/alloc.
 > dropped, not the work). Run baseline and optimized builds back-to-back on a quiet machine to control for
 > thermal state; a single confounded run is worthless for an A/B.
 
-### Performance findings (UHD 630, 1280×720, what the benchmark established)
+### Performance findings (what the benchmark established)
 
-Measured with the flythrough at the pinned defaults (RD 8, Medium shadows). These are the load-bearing facts
-for anyone trying to make the renderer faster — read them before optimizing, they save dead ends.
+Load-bearing facts for anyone making the renderer faster — read before optimizing, they save dead ends. Two
+hardware profiles were measured: the **integrated UHD 630** (the dev laptop's default GPU) and the **dedicated
+NVIDIA GTX 750 Ti** (PRIME-offloaded — see "Running on the dedicated GPU" below).
 
-- **There is a hard ~8.3 ms present cap (≈120 Hz display refresh) that SwapBuffers obeys regardless of
-  vsync settings** — neither GLFW swap-interval-0, Wayland, X11, nor `vblank_mode=0` escapes it (all measured).
-  So **observed FPS can never exceed ~118 in this windowed setup**, no matter how fast the engine is: at
-  shadows-off + RD 4 the frame *work* is ~2 ms (≈500 FPS of capability) yet observed FPS is pinned at 118 with
-  p95/p99 flat at 8.3 ms. This is THE reason the game was "not reliably profilable" — the headline FPS measured
-  the monitor, not the engine. The benchmark therefore reports an **UNCAPPED FPS = 1000 / max(gpu work, cpu
-  work)** (present-independent), which is the metric to optimize against and compare across machines.
-- **Steady-state at full quality (Medium shadows, RD 8) is GPU-bound: ~9–9.5 ms of frame work ≈ 100–108 FPS
-  uncapped.** The whole-frame `GL_TIME_ELAPSED` ≈ frame work, and the same-frame per-pass timers sum to it:
-  **shadow ~3.4, geom ~4.5, comp ~1.1 ms**. CPU is not the wall (`updateMs` ~0.5, `renderMs` ~2 ms). Confirmed
-  by interleaved A/B: shadows-off drops GPU 9.2→5.1 ms (the shadow pass is real, ~3.4 ms), and the UNCAPPED
-  curve is Medium/RD8 ≈ 100, shadows-off ≈ 145, shadows-off+RD4 ≈ 390–650 FPS.
-- **The bottleneck is per-pixel fragment + depth-raster + vertex-shading fill, NOT draw-call overhead,
-  overdraw, vertex-fetch bandwidth, or present pacing.** Each was tested and ruled out: (1) batching all
-  ~238 opaque draws into one `glMultiDrawElementsBaseVertex` cut `renderMs` ~3.7→2.0 but left GPU time
-  **unchanged** (Mesa's non-indirect multidraw is a CPU loop → GPU still does N sub-draws); (2) removing the
-  cutout `discard` to enable early-Z changed `geomMs` ~5 % (so occluded-fragment overdraw is negligible — the
-  exposed-face mesher already keeps it low); (3) a position-only shadow VAO (12 B vs 72 B/vertex) did not move
-  `shadowMs` (so it is not vertex-fetch bound — it is triangle/primitive + depth-raster bound).
-- **Therefore 500 FPS (2 ms) is NOT achievable on this hardware at 720p with shadows without degrading
-  quality/features.** It needs a ~5× GPU reduction; the irreducible deferred-lighting composition pass alone is
-  ~1.1 ms, and `geom`+`shadow` (~8 ms) are real fragment/raster work, not waste. Every remaining GPU lever
-  trades quality: temporal shadow re-use (staleness/coverage or resolution loss — and the ahead-projected,
-  camera-following shadow map forces a rebuild on rotation, so the win is situational), a 3→2-attachment
-  G-buffer (~1 ms, repack risk), or greedy meshing (cuts triangles → helps shadow + geom vertex/raster, but
-  merging faces loses the per-vertex smooth-lighting/AO → an AO quality regression). The benchmark's
-  `--benchmark-shadows`/`--benchmark-rd` sweep quantifies the tradeoff curve so the **player** can choose where
-  500 FPS lives (lower RD, shadows Low/Off) — but those are settings, not a lossless engine win.
-- **What WAS won losslessly:** `renderMs` (CPU draw submission) roughly halved via the arena batching + cached
-  uniform locations + cached chunk centres; this does not raise steady-state FPS (GPU-bound) but reclaims CPU
-  headroom and helps the CPU-bound streaming/orbit case. **Open lossless work:** the orbit/streaming phase
-  still has frame-time **hitches** (1%-low ~13 FPS, ~40–80 ms spikes) from main-thread allocation + GC during
-  the chunk-fill burst — that is a real, lossless smoothness win still on the table (pool `ChunkRenderData`,
-  time-budget `DrainRenderReady`, cut the ~4 MB/frame fill allocation), independent of the GPU ceiling.
+- **The FPS cap was `GameWindowSettings.UpdateFrequency = 120`, NOT the display.** OpenTK 4.9 runs the whole
+  loop (update+render) at `UpdateFrequency`; 120 → a hard 8.33 ms/frame software cap that pinned observed FPS
+  at ~118 regardless of GPU/CPU (this is what made the game "not reliably profilable" — the headline FPS
+  measured the cap, not the engine). It is now **`UpdateFrequency = 0` (uncapped)** in all modes; frame pacing
+  is VSync's job (SwapBuffers blocks at the refresh when on). The benchmark also reports an **UNCAPPED FPS =
+  1000 / max(gpu work, cpu work)** — present/pacing-independent, the metric to optimize against and compare
+  across machines (observed FPS additionally folds in frame-time hitches).
+- **The geometry pass is triangle / primitive-setup bound, NOT fill, bandwidth, draw-call, or overdraw
+  bound.** Every other suspect was ruled out by measurement: (1) batching all opaque draws into one
+  `glMultiDrawElementsBaseVertex` cut `renderMs` ~3.7→2.0 but left GPU time unchanged (Mesa non-indirect
+  multidraw is a CPU loop); (2) removing the cutout `discard` to enable early-Z changed `geomMs` ~5 % (overdraw
+  is negligible — exposed-face meshing); (3) packing the vertex 72→32 B (2.25× less bandwidth) barely moved
+  `geomMs` (not bandwidth-bound); (4) the fullscreen composition pass is ~0.18 ms (fill is cheap). `geomMs`
+  scales linearly with **drawn-chunk count** (≈ triangle count), so the lever is **fewer triangles**.
+- **500 FPS at render distance 16 / shadows off IS achieved on the GTX 750 Ti** (the goal config), via three
+  stacked, mostly-lossless wins on the triangle/CPU bottleneck: **(a) packed 32-byte vertex** (halves mesh
+  alloc + upload, fixes the streaming GC hitches); **(b) distance LOD** (coarse stride-2/4 meshing of distant
+  chunks — `geomMs` 4.8→1.2 ms, the big one); **(c) distance-first visible-set cull** (skip the ~3000
+  out-of-range loaded chunks before the frustum test). Result: **OVERALL ~500–556 observed / ~620–670 uncapped
+  FPS**, every phase >500 uncapped, frame work ~1.5 ms (gpu ~1.4 / cpu ~0.9). From the 102 FPS capped start,
+  ~5×. Only the LOD trades quality (distant coarsening, near is full detail) — the user opted into it; the
+  rest is lossless.
+- **At FULL quality on the UHD 630 (Medium shadows, RD 8, 720p) the frame is GPU-bound at ~9 ms ≈ 100–108 FPS
+  uncapped** (per-pass: shadow ~3.4, geom ~4.5, comp ~1.1; CPU not the wall). 500 FPS there is **not** reachable
+  without quality cuts — it needs ~4–5× and the passes are real raster work. The `--benchmark-shadows` /
+  `--benchmark-rd` sweep quantifies the tradeoff curve (UHD 630 uncapped: Medium/RD8 ≈ 100, shadows-off ≈ 145,
+  shadows-off+RD4 ≈ 400–650). The same LOD + packing wins help the UHD 630 too, but its fill/shadow floor keeps
+  full-quality 500 out of reach on that GPU.
+- **Remaining hitches at RD 16 are Gen2 GC pauses** (~1 % of frames, ~15–30 ms) from the large resident heap
+  (~4400 chunks) + streaming/LOD-remesh allocation churn — they drag the *observed* average a touch below the
+  *uncapped* ~620. Lossless smoothing still on the table: cut the LOD-remesh allocation, a `ChunkRenderData`
+  pool, or GC latency tuning.
+
+### Running on the dedicated GPU (NVIDIA PRIME offload)
+
+The dev machine is a hybrid laptop (Intel UHD 630 default + NVIDIA GTX 750 Ti). Launch on the NVIDIA GPU with
+PRIME offload + the X11 backend (`MC3_FORCE_X11`, needed because RenderDoc/GLX paths and the offload prefer
+X11):
+
+```
+__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia MC3_FORCE_X11=1 __GL_SYNC_TO_VBLANK=0 \
+  bin/Release/net10.0/MinecraftClone3 --benchmark --benchmark-rd=16 --benchmark-shadows=Off
+```
+
+(`__GL_SYNC_TO_VBLANK=0` and the benchmark's forced VSync-off keep it uncapped.) **Benchmark Release, not
+Debug** — Debug understates FPS hugely. The 500 FPS figure is Release.
 
 ## Conventions
 
