@@ -1,5 +1,6 @@
 using MinecraftClone3API.Client;
 using MinecraftClone3API.Client.Blocks;
+using MinecraftClone3API.Entities;
 using OpenTK.Mathematics;
 using OpenTK.Graphics.OpenGL4;
 
@@ -53,7 +54,7 @@ namespace MinecraftClone3API.Graphics
             foreach (var entity in world.Entities.Values)
             {
                 var transform = Matrix4.CreateScale(CubeSize) *
-                                Matrix4.CreateTranslation(entity.Position) *
+                                Matrix4.CreateTranslation(entity.Position + new Vector3(0, EntityPlayer.Height / 2, 0)) *
                                 camera.View * projection;
                 GL.UniformMatrix4(uTransform, false, ref transform);
                 _vao.Draw();

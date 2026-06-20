@@ -13,6 +13,7 @@ namespace MinecraftClone3API.Networking
         public EntityPlayer Player;
         public int EntityId;
         public bool LoggedIn;
+        public bool ReadySent;
 
         // Gate for StreamChunks: the player chunk + loaded-chunk count at the last fully-drained interest
         // scan. When neither changed there is nothing new to stream, so the O(loaded) ConcurrentDictionary

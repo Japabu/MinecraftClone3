@@ -4,9 +4,11 @@ using System.Net.Sockets;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Client.Blocks;
 using MinecraftClone3API.Client.GUI;
+using MinecraftClone3API.Client.Graphics;
 using MinecraftClone3API.Client.StateSystem;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Graphics;
+using MinecraftClone3API.IO;
 using MinecraftClone3API.Networking;
 using MinecraftClone3API.Util;
 using OpenTK.Graphics.OpenGL4;
@@ -21,9 +23,11 @@ namespace MinecraftClone3.States
     {
         private const string ServerAddress = "127.0.0.1";
 
-        // First-frame placeholder camera position; the server is authoritative and corrects it via
-        // LoginAccept (the real spawn is seed-derived, so it can't be known here before connecting).
+        // Placeholder until the seed-derived spawn arrives in LoginAccept; the loading gate snaps the
+        // player onto it once the surrounding chunks have streamed in (see UpdateLoading).
         private static readonly Vector3 SpawnPos = new Vector3(0, 80, 0);
+
+        private const double LoadingTimeoutSeconds = 30;
 
         private readonly GameWindow _window;
         private readonly bool _multiplayer;
@@ -36,6 +40,11 @@ namespace MinecraftClone3.States
         private readonly ServerNetwork _network;
 
         private readonly bool _connectionFailed;
+
+        private bool _loading = true;
+        private bool _spawnApplied;
+        private readonly Stopwatch _loadingTimer = Stopwatch.StartNew();
+        private Texture _loadingBackground;
 
         private readonly Stopwatch _phaseTimer = new Stopwatch();
 
@@ -92,6 +101,12 @@ namespace MinecraftClone3.States
                 return;
             }
 
+            if (_loading)
+            {
+                UpdateLoading();
+                return;
+            }
+
             if (focused)
             {
                 if (_window.KeyboardState.IsKeyPressed(Keys.Escape))
@@ -124,9 +139,57 @@ namespace MinecraftClone3.States
             Profiler.AddClientAlloc(GC.GetAllocatedBytesForCurrentThread() - c);
         }
 
+        /// <summary>Pumps the world during the join handshake: applies the seed-derived spawn from
+        /// LoginAccept, then hands control to the player once the server signals the spawn area is
+        /// streamed (PlayerReady) and the client has actually decoded those chunks (so gravity has
+        /// ground to land on). The same packet path drives this for singleplayer and multiplayer; the
+        /// timeout is only an anti-hang safety against a dropped signal.</summary>
+        private void UpdateLoading()
+        {
+            _integratedServer?.Update();
+            _network?.Pump();
+            _world.Update();
+
+            if (_world.SpawnReceived && !_spawnApplied)
+            {
+                _player.Position = _world.SpawnPosition;
+                _player.PrevPosition = _world.SpawnPosition;
+                _player.InterpolatedPosition = _world.SpawnPosition;
+                _player.Velocity = Vector3.Zero;
+                _spawnApplied = true;
+            }
+
+            if (_spawnApplied) _world.SendMove(_player);
+
+            var ready = _spawnApplied && _world.Ready && SpawnChunksApplied();
+            if (ready || _loadingTimer.Elapsed.TotalSeconds > LoadingTimeoutSeconds)
+            {
+                _loading = false;
+                PlayerController.ResetMouse();
+                // The camera never updated during loading; sync it to the spawn so the first world
+                // frame doesn't flash the default origin view before PlayerController.Update runs.
+                PlayerController.Camera.Update();
+            }
+        }
+
+        // PlayerReady means the server has *sent* the spawn column; this confirms the client's apply
+        // thread has actually decoded it into LoadedChunks, so the player has ground before physics start.
+        private bool SpawnChunksApplied()
+        {
+            var feetChunk = WorldBase.ChunkInWorld(_player.Position.ToVector3i());
+            return _world.LoadedChunks.ContainsKey(feetChunk) &&
+                   _world.LoadedChunks.ContainsKey(feetChunk - new Vector3i(0, 1, 0));
+        }
+
         public override void Render()
         {
             if (_connectionFailed) return;
+
+            if (_loading)
+            {
+                RenderLoading();
+                return;
+            }
 
             var aspect = (float)_window.FramebufferSize.X / _window.FramebufferSize.Y;
             var projection = Matrix4.CreatePerspectiveFieldOfView(MathHelper.DegreesToRadians(60), aspect, 0.01f, 512);
@@ -154,12 +217,27 @@ namespace MinecraftClone3.States
         private static readonly Color4 OverlayText = new Color4(1f, 1f, 1f, 1f);
         private static readonly Color4 OverlayHeader = new Color4(0.55f, 0.8f, 1f, 1f);
 
+        private void RenderLoading()
+        {
+            _loadingBackground ??= ResourceReader.ReadTexture("System/Textures/Gui/ResourceLoadingBackground.png");
+            GuiRenderer.DrawTexture(_loadingBackground,
+                new Rectangle(0, 0, (int)ScaledResolution.GuiResolution.X, (int)ScaledResolution.GuiResolution.Y), null);
+
+            const string msg = "Generating world...";
+            const int scale = 3;
+            var x = (int)ScaledResolution.GuiResolution.X / 2 - Font.MeasureWidth(msg, scale) / 2;
+            var y = (int)ScaledResolution.GuiResolution.Y / 2 - Font.LineHeight(scale) / 2;
+            Font.DrawString(msg, x, y, scale, OverlayText);
+        }
+
         // Fixed keybinds for the F1 controls overlay (key column, description column).
         private static readonly (string Key, string Desc)[] ControlsRows =
         {
             ("Move", "WASD"),
-            ("Up / Down", "Space / Shift"),
+            ("Jump", "Space"),
             ("Sprint", "Ctrl"),
+            ("Toggle fly", "Double Space"),
+            ("Fly up / down", "Space / Shift"),
             ("Look", "Mouse"),
             ("Break / Place", "Left / Right Click"),
             ("Blocks", "number keys (keybindings.txt)"),

@@ -43,7 +43,6 @@ namespace MinecraftClone3API.Networking
         private volatile bool _running = true;
 
         private int _nextEntityId = 1;
-        private bool _torchPlaced;
 
         // Reused across StreamChunks ticks (server tick thread only) so per-player interest scanning
         // allocates nothing steady-state.
@@ -124,17 +123,36 @@ namespace MinecraftClone3API.Networking
             }
 
             RemoveDisconnected();
-            PlaceTorch();
 
             _pumpTimer.Restart();
             StreamChunks();
             LastStreamMs = _pumpTimer.Elapsed.TotalMilliseconds;
+
+            SendReadySignals();
 
             _pumpTimer.Restart();
             FlushBlockChanges();
             LastFlushMs = _pumpTimer.Elapsed.TotalMilliseconds;
 
             ResendDirtyChunks();
+        }
+
+        // Once the spawn column (the spawn chunk and the one below it, which the player stands on) has
+        // been streamed to a session, tell that client it may finish joining. Authoritative and
+        // transport-agnostic: the same packet drives the loading screen over loopback and TCP.
+        private void SendReadySignals()
+        {
+            var spawnChunk = WorldBase.ChunkInWorld(SpawnPosition.ToVector3i());
+            var belowChunk = spawnChunk - new Vector3i(0, 1, 0);
+
+            foreach (var session in _sessions)
+            {
+                if (!session.LoggedIn || session.ReadySent) continue;
+                if (!session.SentChunks.Contains(spawnChunk) || !session.SentChunks.Contains(belowChunk)) continue;
+
+                session.Connection.Send(new PlayerReadyPacket());
+                session.ReadySent = true;
+            }
         }
 
         private void HandlePacket(ClientSession session, Packet packet)
@@ -226,16 +244,6 @@ namespace MinecraftClone3API.Networking
 
                 _sessions.RemoveAt(i);
             }
-        }
-
-        private void PlaceTorch()
-        {
-            // A few blocks beside the spawn, one above the ground (spawn sits two above the surface).
-            var spawn = SpawnPosition;
-            var torchPos = new Vector3i((int) spawn.X + 2, (int) spawn.Y - 1, (int) spawn.Z);
-            if (_torchPlaced || _world.IsBlockInEmptyChunk(torchPos)) return;
-            _world.SetBlock(torchPos, GameRegistry.GetBlock("Vanilla:Torch"));
-            _torchPlaced = true;
         }
 
         private void StreamChunks()

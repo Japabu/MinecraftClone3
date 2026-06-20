@@ -39,7 +39,7 @@ namespace MinecraftClone3API.Graphics
             }
             else
             {
-                Position = ParentEntity.Position;
+                Position = ParentEntity.RenderPosition + ParentEntity.EyeOffset;
                 Forward = ParentEntity.Forward;
                 Right = ParentEntity.Right;
             }

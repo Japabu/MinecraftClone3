@@ -19,11 +19,14 @@ namespace MinecraftClone3API.Entities
         private const float FlySpeed = 16f;
         private const float SprintMultiplier = 3f;
         private const float MaxStepSeconds = 0.1f;
+        private const float DoubleTapSeconds = 0.3f;
 
         private static BlockRaytraceResult _blockRaytrace;
         private static string _currentBlock = "Vanilla:Stone";
         private static bool _skipMouseDelta;
         private static readonly Stopwatch _moveTimer = Stopwatch.StartNew();
+        private static readonly Stopwatch _spaceTapTimer = Stopwatch.StartNew();
+        private static float _physicsAccumulator;
 
         public static void SetEntity(EntityPlayer playerEntity)
         {
@@ -33,34 +36,38 @@ namespace MinecraftClone3API.Entities
 
         public static void Update(GameWindow window, WorldBase world)
         {
-            _blockRaytrace = world.BlockRaytrace(PlayerEntity.Position, PlayerEntity.Forward, 8);
+            _blockRaytrace = world.BlockRaytrace(PlayerEntity.RenderPosition + PlayerEntity.EyeOffset,
+                PlayerEntity.Forward, 8);
 
-            var dt = (float)_moveTimer.Elapsed.TotalSeconds;
+            var dt = (float) _moveTimer.Elapsed.TotalSeconds;
             _moveTimer.Restart();
             if (dt > MaxStepSeconds) dt = MaxStepSeconds;
 
             if (!window.IsFocused) return;
 
             var ks = window.KeyboardState;
-            var a = Vector3.Zero;
-            if (ks.IsKeyDown(Keys.A))
-                a.X -= 1;
-            if (ks.IsKeyDown(Keys.D))
-                a.X += 1;
-            if (ks.IsKeyDown(Keys.LeftShift))
-                a.Y -= 1;
-            if (ks.IsKeyDown(Keys.Space))
-                a.Y += 1;
-            if (ks.IsKeyDown(Keys.S))
-                a.Z -= 1;
-            if (ks.IsKeyDown(Keys.W))
-                a.Z += 1;
-            if (Math.Abs(a.LengthSquared) > 0.0001f)
+            var ms = window.MouseState;
+
+            var delta = ms.Delta;
+            if (_skipMouseDelta)
             {
-                var speed = FlySpeed;
-                if (ks.IsKeyDown(Keys.LeftControl)) speed *= SprintMultiplier;
-                PlayerEntity.Move(a.Normalized() * speed * dt);
+                delta = Vector2.Zero;
+                _skipMouseDelta = false;
             }
+            PlayerEntity.Rotate(-delta.Y * 0.008f, -delta.X * 0.008f);
+
+            if (ks.IsKeyPressed(Keys.Space))
+            {
+                if (_spaceTapTimer.Elapsed.TotalSeconds < DoubleTapSeconds)
+                {
+                    PlayerEntity.Flying = !PlayerEntity.Flying;
+                    PlayerEntity.Velocity = Vector3.Zero;
+                }
+                _spaceTapTimer.Restart();
+            }
+
+            if (PlayerEntity.Flying) UpdateFlying(ks, dt);
+            else UpdateWalking(ks, dt, world);
 
             foreach (var keybinding in ClientResources.Keybindings)
             {
@@ -73,21 +80,61 @@ namespace MinecraftClone3API.Entities
             if (ks.IsKeyPressed(Keys.F7)) RenderDebug.ShadowFactor = !RenderDebug.ShadowFactor;
             if (ks.IsKeyPressed(Keys.F10)) Profiler.Toggle();
 
-            var ms = window.MouseState;
-            var delta = ms.Delta;
-            if (_skipMouseDelta)
-            {
-                delta = Vector2.Zero;
-                _skipMouseDelta = false;
-            }
-            PlayerEntity.Rotate(-delta.Y * 0.008f, -delta.X * 0.008f);
-
             if (ms.IsButtonDown(MouseButton.Left) && !ms.WasButtonDown(MouseButton.Left))
                 BreakBlock(world);
             if (ms.IsButtonDown(MouseButton.Right) && !ms.WasButtonDown(MouseButton.Right))
                 PlaceBlock(world);
 
             Camera.Update();
+        }
+
+        private static void UpdateFlying(KeyboardState ks, float dt)
+        {
+            var a = Vector3.Zero;
+            if (ks.IsKeyDown(Keys.A)) a.X -= 1;
+            if (ks.IsKeyDown(Keys.D)) a.X += 1;
+            if (ks.IsKeyDown(Keys.LeftShift)) a.Y -= 1;
+            if (ks.IsKeyDown(Keys.Space)) a.Y += 1;
+            if (ks.IsKeyDown(Keys.S)) a.Z -= 1;
+            if (ks.IsKeyDown(Keys.W)) a.Z += 1;
+            if (Math.Abs(a.LengthSquared) > 0.0001f)
+            {
+                var speed = FlySpeed;
+                if (ks.IsKeyDown(Keys.LeftControl)) speed *= SprintMultiplier;
+                PlayerEntity.Move(a.Normalized() * speed * dt);
+            }
+
+            PlayerEntity.PrevPosition = PlayerEntity.Position;
+            PlayerEntity.InterpolatedPosition = PlayerEntity.Position;
+        }
+
+        private static void UpdateWalking(KeyboardState ks, float dt, WorldBase world)
+        {
+            var inputX = 0f;
+            var inputZ = 0f;
+            if (ks.IsKeyDown(Keys.A)) inputX -= 1;
+            if (ks.IsKeyDown(Keys.D)) inputX += 1;
+            if (ks.IsKeyDown(Keys.S)) inputZ -= 1;
+            if (ks.IsKeyDown(Keys.W)) inputZ += 1;
+
+            var forward = new Vector2((float) Math.Sin(PlayerEntity.Yaw), (float) Math.Cos(PlayerEntity.Yaw));
+            var wish = PlayerEntity.Right.Xz * inputX + forward * inputZ;
+            if (wish.LengthSquared > 1f) wish = wish.Normalized();
+
+            var jump = ks.IsKeyDown(Keys.Space);
+            var sprint = ks.IsKeyDown(Keys.LeftControl) && inputZ > 0;
+
+            _physicsAccumulator += dt;
+            while (_physicsAccumulator >= PlayerPhysics.TickSeconds)
+            {
+                PlayerEntity.PrevPosition = PlayerEntity.Position;
+                PlayerPhysics.Tick(world, PlayerEntity, wish, jump, sprint);
+                _physicsAccumulator -= PlayerPhysics.TickSeconds;
+            }
+
+            var alpha = _physicsAccumulator / PlayerPhysics.TickSeconds;
+            PlayerEntity.InterpolatedPosition =
+                Vector3.Lerp(PlayerEntity.PrevPosition, PlayerEntity.Position, alpha);
         }
 
         private static void BreakBlock(WorldBase world)

@@ -37,6 +37,16 @@ namespace MinecraftClone3API.Networking
         }
     }
 
+    /// <summary>Server tells the client the spawn-area chunks have been streamed, so it may apply the
+    /// spawn and hand control to the player. Same packet path over loopback (singleplayer) and TCP
+    /// (multiplayer), so the client's join/loading flow is identical for both.</summary>
+    public class PlayerReadyPacket : Packet
+    {
+        public override PacketId Id => PacketId.PlayerReady;
+        public override void Write(BinaryWriter writer) { }
+        public override void Read(BinaryReader reader) { }
+    }
+
     /// <summary>Server streams a full chunk. Over the loopback (singleplayer) the live
     /// <see cref="Chunk"/> is carried by reference and the client clones it directly — no serialize,
     /// compress, or decompress at all. Over TCP the chunk is serialized and GZip-compressed lazily in

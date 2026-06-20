@@ -63,6 +63,10 @@ namespace MinecraftClone3API.Client.Blocks
 
         public int LocalEntityId = -1;
 
+        public Vector3 SpawnPosition;
+        public bool SpawnReceived;
+        public bool Ready;
+
         // Per-Update phase timings + GL upload volume, surfaced to the profiler so a frame spike can be
         // split into packet-handling / render-data creation / GL upload / eviction — isolating whether the
         // cost is the update path or the GPU upload (the re-BufferData of edited chunks).
@@ -270,6 +274,11 @@ namespace MinecraftClone3API.Client.Blocks
             {
                 case LoginAcceptPacket accept:
                     LocalEntityId = accept.EntityId;
+                    SpawnPosition = accept.Spawn;
+                    SpawnReceived = true;
+                    break;
+                case PlayerReadyPacket _:
+                    Ready = true;
                     break;
                 case ChunkDataPacket _:
                 case BlockChangesPacket _:

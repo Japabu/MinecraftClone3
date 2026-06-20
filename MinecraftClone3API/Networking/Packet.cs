@@ -9,6 +9,7 @@ namespace MinecraftClone3API.Networking
     {
         Login,
         LoginAccept,
+        PlayerReady,
         ChunkData,
         ChunkRelease,
         BlockChanges,
@@ -29,6 +30,7 @@ namespace MinecraftClone3API.Networking
         {
             {PacketId.Login, () => new LoginPacket()},
             {PacketId.LoginAccept, () => new LoginAcceptPacket()},
+            {PacketId.PlayerReady, () => new PlayerReadyPacket()},
             {PacketId.ChunkData, () => new ChunkDataPacket()},
             {PacketId.ChunkRelease, () => new ChunkReleasePacket()},
             {PacketId.BlockChanges, () => new BlockChangesPacket()},

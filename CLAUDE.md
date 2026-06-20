@@ -11,8 +11,9 @@
 A from-scratch Minecraft-like voxel engine in C# on OpenTK (OpenGL). Custom deferred renderer, plugin
 system, chunked world with RGB block-light + sky-light propagation and a dynamic day/night cycle, a
 **plugin-extensible world generator** (engine framework + vanilla content: biomes, ores, trees, caves,
-oceans), and **client/server multiplayer** (singleplayer runs an in-process server over a loopback
-connection; multiplayer connects to a dedicated server over TCP).
+oceans), **player movement** (walking with Minecraft-exact gravity/jump/AABB-collision plus a creative
+free-flight toggle), and **client/server multiplayer** (singleplayer runs an in-process server over a
+loopback connection; multiplayer connects to a dedicated server over TCP).
 
 ---
 
@@ -93,8 +94,14 @@ and talks to it over an in-memory loopback connection; multiplayer swaps the loo
 - **`ServerNetwork`** (`Networking/ServerNetwork.cs`): per-client sessions, interest-based chunk streaming,
   dirty-chunk resends, entity relay, the TCP listener.
 - **Authority:** server owns blocks + light (block + sky). Position is **client-authoritative** (there is no server-side
-  physics; `Entity.Move` is a direct position write). The client *requests* edits; the server applies and
-  broadcasts the result.
+  physics — the *client* runs walk gravity/collision and writes the result; the server just relays it). The
+  client *requests* edits; the server applies and broadcasts the result.
+- **Join handshake (loading screen).** Login → server assigns id + a seed-derived spawn (`LoginAccept`) and
+  starts streaming chunks around it → once the server has *sent* the spawn column it sends **`PlayerReady`** →
+  the client (`StateWorld._loading`) shows a loading screen, applies the spawn, and enters the world once
+  `PlayerReady` arrives **and** the spawn chunks have decoded locally (so there's ground before gravity
+  starts). This is one packet path, so SP (loopback) and MP (TCP) share the exact same flow; a wall-clock
+  timeout only fail-safes a dropped signal. (No spawn torch — that was removed.)
 - **Chunk lifetime is client-owned (see below).** The server streams a chunk once and keeps it in the
   session's `SentChunks` until the chunk is dirtied or the **client** releases it; the server never tells a
   client to unload. A client that walks away and back re-renders from its own cache — zero bytes on the wire.
@@ -252,7 +259,8 @@ old server-side `Chunk.Write` already had, made safe by the palette copy-on-grow
 ```
   Packets (Networking/Packets.cs)
   C→S  Login                 announce
-  S→C  LoginAccept           assigns entity id + spawn
+  S→C  LoginAccept           assigns entity id + spawn (the client applies this spawn behind the loading screen)
+  S→C  PlayerReady           spawn column streamed → client may apply spawn + enter the world (join handshake)
   S→C  ChunkData             Vector3i + Chunk (loopback: by ref; TCP: GZip of Chunk.Write)   (initial chunk streaming only)
   S→C  BlockChanges          ChunkPos + (localIndex, blockId, light, sky)[]   (edits + block-light + sky-light, see below)
   C→S  ChunkRelease          client dropped a chunk from its cache; clears its SentChunks entry
@@ -304,8 +312,9 @@ the old single-block form, was removed — `BlockChangesPacket` supersedes it.)
 
 `ServerNetwork.Pump()` runs once per server tick and does, in order: adopt pending connections → drain &
 handle each session's packets (incl. `ChunkRelease` clearing `SentChunks` entries) → drop disconnected
-sessions → place the spawn torch once → **stream chunks** (nearest-first, in-range-not-yet-sent only, capped
-at `MaxChunksPerTick` per session per tick — no unload pass) → **flush block changes** (delta packets) →
+sessions → **stream chunks** (nearest-first, in-range-not-yet-sent only, capped at `MaxChunksPerTick` per
+session per tick — no unload pass) → **send `PlayerReady`** to any session whose `SentChunks` now covers the
+spawn column (one-shot join signal, see the handshake above) → **flush block changes** (delta packets) →
 **resend dirty chunks** (block-data only).
 
 ---
@@ -535,7 +544,27 @@ GuiResourceLoading ──(done)──▶ GuiMainMenu ──Singleplayer/Multipla
 
 `StateWorld(window, multiplayer)` builds the connection (loopback+integrated `WorldServer` for SP, or a
 `TcpConnection` for MP), creates the `WorldClient`, and logs in. On a failed MP connect it flips back to
-the main menu.
+the main menu. It then sits in a `_loading` phase (pumping server/network/world + drawing a loading screen)
+until the join handshake completes (see "Join handshake" in the networking section) before running player
+input.
+
+**Player movement & physics** (`Entities/PlayerController.cs` + `PlayerPhysics.cs`, client-only, main
+thread). The player is a **0.6 × 1.8 AABB**; `Entity.Position` is the **feet** and the camera renders at
+`Position + EyeOffset` (1.62) via `Entity.RenderPosition`/`EyeOffset` (defaults keep non-player entities a
+point). Two modes, toggled by **double-tapping Space**:
+- **Walk (default):** exact-Minecraft constants integrated on a **fixed 0.05 s (20 tps) accumulator** —
+  gravity `v_y=(v_y−0.08)·0.98`, jump `0.42`, ground accel `0.1`/friction `0.546`, air `0.02`/`0.91`, Ctrl
+  sprint `1.3×`. `PlayerPhysics.MoveWithCollision` is **swept per-axis (Y→X→Z)**: it clips each axis's
+  displacement against the AABBs of overlapping solid blocks (`!Block.CanPassThrough`; blocks are centred on
+  integer coords, ±0.5), zeroes the blocked component, and sets `OnGround` when a downward move is clipped.
+  The 20 tps physics is **render-interpolated** to the 120 Hz frame (`InterpolatedPosition =
+  Lerp(PrevPosition, Position, accumulatorFraction)`) so the camera is smooth, not 20 Hz-steppy.
+- **Fly (creative):** the original dt-scaled direct `Entity.Move` — Space/Shift up/down, Ctrl fast, **no
+  gravity/collision** (noclip). `InterpolatedPosition` just tracks `Position`.
+
+The block-target raytrace uses the **eye** (`RenderPosition + EyeOffset`); `SendMove` ships the **feet**
+position, so remote players (drawn by `EntityRenderer` as 0.6×1.8 boxes, offset up by half-height to stand
+on their feet) line up.
 
 **Graphics options.** `GuiGraphicsOptions` (reachable from both `GuiMainMenu` and the `GuiPauseMenu` overlay
 via their "Options" button) is an **overlay** — it draws over whichever screen opened it and closing it
@@ -925,6 +954,20 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
 
 ## Known rough edges / deferred work
 
+- **Player physics is the "80%" walk model — several exact-MC behaviours are deferred.** Implemented: gravity,
+  jump, swept per-axis AABB collision, Ctrl sprint, walk/fly toggle. **Not** implemented: sprint-jump forward
+  boost, sneaking (no crouch/edge-stop), per-block slipperiness (no ice/slime blocks exist), **auto-step up
+  0.6-block ledges** (you must jump onto a single block), swimming/fluid physics (water has `CanPassThrough`
+  so you fall through it), **collision for creative flight** (flight is deliberately noclip, to keep the
+  original free-fly), per-block non-cube collision shapes (every solid block collides as a full cube — fine
+  today since none define a custom `GetBoundingBox`), and remote-player movement interpolation (they still
+  snap). The exact-constant *ordering* (gravity-before-move vs after) may be a tick off MC and is tunable in
+  `PlayerPhysics.Tick`.
+- **Walking into a not-yet-streamed chunk reads as air (could fall through an edge).** Collision uses
+  `WorldBase.GetBlock`, which returns air for unloaded chunks, so a solid block in an un-streamed chunk
+  doesn't collide. Bounded in practice: the join handshake pre-streams the spawn column, and the client cache
+  distance (384) stays well ahead of the server view distance (256), so terrain is normally resident before
+  you reach it. A fast clip into ungenerated space could still drop the player; accepted for now.
 - **Water is Tier-A static (no animated/reflective surface).** The block is present and translucent (real
   `water_still` frame-0 texture, tinted blue), but the surface doesn't move or reflect. The agreed next step is
   Tier B (procedural sine-wave normals + Fresnel **sky** reflection + sun specular — no pipeline change) then

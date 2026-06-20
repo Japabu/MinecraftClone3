@@ -12,6 +12,9 @@ namespace MinecraftClone3API.Entities
         public float Pitch;
         public float Yaw;
 
+        public virtual Vector3 EyeOffset => Vector3.Zero;
+        public virtual Vector3 RenderPosition => Position;
+
         public Entity()
         {
             Right = new Vector3(1, 0, 0);
