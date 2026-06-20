@@ -51,7 +51,7 @@ namespace VanillaPlugin.Blocks
             return otherBlock == this && myMeta == otherMeta ? ConnectionType.Connected : ConnectionType.Undefined;
         }
 
-        public override int GetPlacementMetadata(KeyboardState ks)
+        public override int GetPlacementMetadata(KeyboardState ks, EntityPlayer player, BlockRaytraceResult ray)
         {
             for (var i = 0; i < BindKeys.Length; i++)
             {

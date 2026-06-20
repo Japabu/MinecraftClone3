@@ -147,7 +147,14 @@ This shrinks the per-chunk clone **and** the resident chunk heap ~10–50× vers
 order.
 
 `ChunkMesher.AddBlockToVao(WorldBase, ...)` reads neighbour blocks through `WorldBase`, so it works for any
-world. Chunk serialization (`Chunk.Write` ↔ `new CachedChunk(world, pos, reader)`) is reused for both disk
+world. It meshes each of `Block.Model.Elements` (Minecraft `from`/`to` boxes with per-face `uv`/texture/
+`cullface`), so partial-cube models (stairs) render as-is. **Per-block orientation** is `Block.GetModelTransform`
+(default identity), composed after the element transform so it rotates the centred element about the block
+origin — the engine parses **no blockstate files**, so a stair's facing (which vanilla keeps in the
+blockstate) is applied here from the block's stored metadata. (Face normals + `cullface` are **not** rotated,
+which is harmless: a partial block — `IsFullBlock` false — is never the both-full pair the face cull needs, so
+its faces always draw; only flat shading on rotated faces is mildly off.) Chunk serialization (`Chunk.Write` ↔
+`new CachedChunk(world, pos, reader)`) is reused for both disk
 saves (`WorldSerializer`) and the `ChunkData` network packet; both write each container's palette form via
 `PaletteStorage.Write`/`Read`.
 
@@ -277,10 +284,13 @@ old server-side `Chunk.Write` already had, made safe by the palette copy-on-grow
 
 **Placement metadata is computed client-side, never read on the server.** `Block.OnPlaced(world, pos, player,
 int metadata)` receives the metadata in the `PlaceBlockRequest`; the client derives it via
-`Block.GetPlacementMetadata(KeyboardState)` (default `0`; `BlockTintedGlass` overrides it with its U/I/O/P
-tint scan) in `PlayerController.PlaceBlock` and threads it through `WorldClient.PlaceBlock` into the packet.
-The headless server never touches input — `ServerNetwork.ApplyPlaceRequest` just passes `place.Metadata` to
-`WorldServer.PlaceBlock` → `OnPlaced`.
+`Block.GetPlacementMetadata(KeyboardState, EntityPlayer, BlockRaytraceResult)` (default `0`) in
+`PlayerController.PlaceBlock` and threads it through `WorldClient.PlaceBlock` into the packet. The player +
+ray are passed so a block can orient by the placer's look and clicked face (stairs: facing from yaw, half
+from the clicked face); `BlockTintedGlass` uses only the held-key tint. The headless server never touches
+input — `ServerNetwork.ApplyPlaceRequest` just passes `place.Metadata` to `WorldServer.PlaceBlock` →
+`OnPlaced`. (Like tinted glass, a stair's facing is block *data*, so it rides the whole-chunk `ChunkData`
+resend, not the lighter `BlockChanges` delta.)
 
 **Chunk caching & eviction is client-owned.** The client keeps every chunk it receives in memory and, each
 `WorldClient.Update`, drops chunks whose centre is farther than `CacheDistance` (240) from the player,
@@ -625,8 +635,12 @@ smooth at the frame rate. Two modes, toggled by **double-tapping Space**:
 - **Walk (default):** exact-Minecraft constants integrated **once per 20 tps tick** —
   gravity `v_y=(v_y−0.08)·0.98`, jump `0.42`, ground accel `0.1`/friction `0.546`, air `0.02`/`0.91`, Ctrl
   sprint `1.3×`. `PlayerPhysics.MoveWithCollision` is **swept per-axis (Y→X→Z)**: it clips each axis's
-  displacement against the AABBs of overlapping solid blocks (`!Block.CanPassThrough`; blocks are centred on
-  integer coords, ±0.5) and zeroes the blocked component. `OnGround` is then a **velocity-independent
+  displacement against the collision boxes of overlapping solid blocks and zeroes the blocked component. A
+  block contributes its boxes via **`Block.GetCollisionBoxes`** (block-local, centred ±0.5), which defaults
+  to the single `GetBoundingBox` cube but lets a block return **several** boxes — stairs return an L (slab +
+  step), so you can walk up them (each 0.5 rise is within auto-step). The clip loops iterate the boxes from a
+  reused scratch list (no per-cell allocation). `GetBoundingBox` stays a single cube and is used for the
+  *raytrace/targeting + outline* only, so targeting a stair is a simple whole-cube hit. `OnGround` is then a **velocity-independent
   downward probe** (`ClipY(box, −GroundProbe)` clipped ⇒ grounded), not the Y-clip outcome — so a tick that
   enters with `Velocity.Y==0` (spawn, just un-flew) or lands exactly flush doesn't read airborne for a tick.
   **Auto-step:** when grounded, **not rising** (`velY ≤ 0`), and a horizontal axis is blocked, the move is
@@ -1110,11 +1124,18 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
 - **Player physics is the "80%" walk model — several exact-MC behaviours are deferred.** Implemented: gravity,
   jump, swept per-axis AABB collision, Ctrl sprint, walk/fly toggle, **auto-step up `StepHeight` (0.6 = MC)
   ledges** (climbs slabs/partial blocks, still jump for a full cube). **Not** implemented: sprint-jump forward
-  boost, sneaking (no crouch/edge-stop), per-block slipperiness (no ice/slime blocks exist),
-  **collision for creative flight** (flight is deliberately noclip, to keep the
-  original free-fly), and per-block non-cube collision shapes (every solid block collides as a full cube —
-  fine today since none define a custom `GetBoundingBox`). The exact-constant *ordering* (gravity-before-move
-  vs after) may be a tick off MC and is tunable in `PlayerPhysics.Tick`.
+  boost, sneaking (no crouch/edge-stop), per-block slipperiness (no ice/slime blocks exist), and
+  **collision for creative flight** (flight is deliberately noclip, to keep the original free-fly).
+  Non-cube collision now exists (multi-box `GetCollisionBoxes`, used by stairs). The exact-constant *ordering*
+  (gravity-before-move vs after) may be a tick off MC and is tunable in `PlayerPhysics.Tick`.
+- **Stairs are the "straight, 80%" stair.** `VanillaPlugin/Blocks/BlockStairs.cs` (`Vanilla:OakStairs`) uses
+  the real `minecraft:block/oak_stairs` model from the pack; orientation (facing bits 0-1, top-half bit 2) is
+  applied as a mesh-time `GetModelTransform` rotation + matching multi-box L collision, since the engine reads
+  no blockstate. Deferred / accepted: **no corner (inner/outer) variants**; the **raytrace/outline + targeting
+  is the full cube** (not the L), so the highlight covers a bit of air over the low step; rotated faces keep
+  their un-rotated normals/`cullface` (mildly off flat shading, harmless culling); facing rides whole-chunk
+  resends like tinted glass. The **yaw→facing mapping** (high step toward the player's look) and the top-half
+  X-flip are the visual-tuning knobs — flip the sign / axis in `BlockStairs` if placement reads reversed.
 - **Walking into a not-yet-streamed chunk reads as air (could fall through an edge).** Collision uses
   `WorldBase.GetBlock`, which returns air for unloaded chunks, so a solid block in an un-streamed chunk
   doesn't collide. Bounded in practice: the join handshake pre-streams the spawn column, and the client cache

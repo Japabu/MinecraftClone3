@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using MinecraftClone3API.Blocks;
+using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Entities
@@ -176,19 +178,25 @@ namespace MinecraftClone3API.Entities
             for (var z = z0; z <= z1; z++)
             for (var y = y0; y <= y1; y++)
             {
-                if (!TrySolidBox(world, x, y, z, out var bmin, out var bmax)) continue;
-                if (max.X <= bmin.X + Epsilon || min.X >= bmax.X - Epsilon) continue;
-                if (max.Z <= bmin.Z + Epsilon || min.Z >= bmax.Z - Epsilon) continue;
+                var n = GetSolidBoxes(world, x, y, z);
+                for (var bi = 0; bi < n; bi++)
+                {
+                    var box = _solidBoxes[bi];
+                    var bmin = new Vector3(x + box.Min.X, y + box.Min.Y, z + box.Min.Z);
+                    var bmax = new Vector3(x + box.Max.X, y + box.Max.Y, z + box.Max.Z);
+                    if (max.X <= bmin.X + Epsilon || min.X >= bmax.X - Epsilon) continue;
+                    if (max.Z <= bmin.Z + Epsilon || min.Z >= bmax.Z - Epsilon) continue;
 
-                if (dy > 0 && max.Y <= bmin.Y + Epsilon)
-                {
-                    var d = bmin.Y - max.Y;
-                    if (d < dy) dy = d;
-                }
-                else if (dy < 0 && min.Y >= bmax.Y - Epsilon)
-                {
-                    var d = bmax.Y - min.Y;
-                    if (d > dy) dy = d;
+                    if (dy > 0 && max.Y <= bmin.Y + Epsilon)
+                    {
+                        var d = bmin.Y - max.Y;
+                        if (d < dy) dy = d;
+                    }
+                    else if (dy < 0 && min.Y >= bmax.Y - Epsilon)
+                    {
+                        var d = bmax.Y - min.Y;
+                        if (d > dy) dy = d;
+                    }
                 }
             }
 
@@ -211,19 +219,25 @@ namespace MinecraftClone3API.Entities
             for (var z = z0; z <= z1; z++)
             for (var y = y0; y <= y1; y++)
             {
-                if (!TrySolidBox(world, x, y, z, out var bmin, out var bmax)) continue;
-                if (max.Y <= bmin.Y + Epsilon || min.Y >= bmax.Y - Epsilon) continue;
-                if (max.Z <= bmin.Z + Epsilon || min.Z >= bmax.Z - Epsilon) continue;
+                var n = GetSolidBoxes(world, x, y, z);
+                for (var bi = 0; bi < n; bi++)
+                {
+                    var box = _solidBoxes[bi];
+                    var bmin = new Vector3(x + box.Min.X, y + box.Min.Y, z + box.Min.Z);
+                    var bmax = new Vector3(x + box.Max.X, y + box.Max.Y, z + box.Max.Z);
+                    if (max.Y <= bmin.Y + Epsilon || min.Y >= bmax.Y - Epsilon) continue;
+                    if (max.Z <= bmin.Z + Epsilon || min.Z >= bmax.Z - Epsilon) continue;
 
-                if (dx > 0 && max.X <= bmin.X + Epsilon)
-                {
-                    var d = bmin.X - max.X;
-                    if (d < dx) dx = d;
-                }
-                else if (dx < 0 && min.X >= bmax.X - Epsilon)
-                {
-                    var d = bmax.X - min.X;
-                    if (d > dx) dx = d;
+                    if (dx > 0 && max.X <= bmin.X + Epsilon)
+                    {
+                        var d = bmin.X - max.X;
+                        if (d < dx) dx = d;
+                    }
+                    else if (dx < 0 && min.X >= bmax.X - Epsilon)
+                    {
+                        var d = bmax.X - min.X;
+                        if (d > dx) dx = d;
+                    }
                 }
             }
 
@@ -246,41 +260,41 @@ namespace MinecraftClone3API.Entities
             for (var z = z0; z <= z1; z++)
             for (var y = y0; y <= y1; y++)
             {
-                if (!TrySolidBox(world, x, y, z, out var bmin, out var bmax)) continue;
-                if (max.X <= bmin.X + Epsilon || min.X >= bmax.X - Epsilon) continue;
-                if (max.Y <= bmin.Y + Epsilon || min.Y >= bmax.Y - Epsilon) continue;
+                var n = GetSolidBoxes(world, x, y, z);
+                for (var bi = 0; bi < n; bi++)
+                {
+                    var box = _solidBoxes[bi];
+                    var bmin = new Vector3(x + box.Min.X, y + box.Min.Y, z + box.Min.Z);
+                    var bmax = new Vector3(x + box.Max.X, y + box.Max.Y, z + box.Max.Z);
+                    if (max.X <= bmin.X + Epsilon || min.X >= bmax.X - Epsilon) continue;
+                    if (max.Y <= bmin.Y + Epsilon || min.Y >= bmax.Y - Epsilon) continue;
 
-                if (dz > 0 && max.Z <= bmin.Z + Epsilon)
-                {
-                    var d = bmin.Z - max.Z;
-                    if (d < dz) dz = d;
-                }
-                else if (dz < 0 && min.Z >= bmax.Z - Epsilon)
-                {
-                    var d = bmax.Z - min.Z;
-                    if (d > dz) dz = d;
+                    if (dz > 0 && max.Z <= bmin.Z + Epsilon)
+                    {
+                        var d = bmin.Z - max.Z;
+                        if (d < dz) dz = d;
+                    }
+                    else if (dz < 0 && min.Z >= bmax.Z - Epsilon)
+                    {
+                        var d = bmax.Z - min.Z;
+                        if (d > dz) dz = d;
+                    }
                 }
             }
 
             return dz;
         }
 
-        private static bool TrySolidBox(WorldBase world, int x, int y, int z, out Vector3 min, out Vector3 max)
+        // Reused scratch for the block's collision boxes at one cell (block-local, centred). Single writer
+        // (the player physics tick runs on the client main thread), refilled per cell, consumed immediately.
+        private static readonly List<AxisAlignedBoundingBox> _solidBoxes = new List<AxisAlignedBoundingBox>(4);
+
+        // Fills _solidBoxes with the cell's collision boxes (block-local). Returns the count; 0 = pass-through.
+        private static int GetSolidBoxes(WorldBase world, int x, int y, int z)
         {
-            min = default;
-            max = default;
-
-            var pos = new Vector3i(x, y, z);
-            var block = world.GetBlock(x, y, z);
-            if (block.CanPassThrough(world, pos)) return false;
-
-            var bb = block.GetBoundingBox(world, pos);
-            if (bb == null) return false;
-
-            var center = new Vector3(x, y, z);
-            min = center + bb.Min;
-            max = center + bb.Max;
-            return true;
+            _solidBoxes.Clear();
+            world.GetBlock(x, y, z).GetCollisionBoxes(world, new Vector3i(x, y, z), _solidBoxes);
+            return _solidBoxes.Count;
         }
 
         private static int Floor(float v) => (int) Math.Floor(v);

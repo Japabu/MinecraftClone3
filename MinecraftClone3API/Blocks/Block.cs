@@ -1,4 +1,5 @@
-﻿using MinecraftClone3API.Client;
+﻿using System.Collections.Generic;
+using MinecraftClone3API.Client;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
@@ -48,6 +49,23 @@ namespace MinecraftClone3API.Blocks
         public virtual AxisAlignedBoundingBox GetBoundingBox(WorldBase world, Vector3i blockPos)
             => DefaultAlignedBoundingBox;
 
+        /// <summary>The solid collision boxes (block-local, centred -0.5..0.5) the player sweeps against.
+        /// Default is the single <see cref="GetBoundingBox"/> cube; non-cube blocks (stairs) override to
+        /// return several boxes. Pass-through blocks contribute none. Kept separate from
+        /// <see cref="GetBoundingBox"/> so targeting/raytrace can stay a single simple cube.</summary>
+        public virtual void GetCollisionBoxes(WorldBase world, Vector3i blockPos, List<AxisAlignedBoundingBox> boxes)
+        {
+            if (CanPassThrough(world, blockPos)) return;
+            var bb = GetBoundingBox(world, blockPos);
+            if (bb != null) boxes.Add(bb);
+        }
+
+        /// <summary>Per-block model orientation applied at mesh time (composed after the element transform,
+        /// so it rotates about the block centre). Default identity. The engine parses no blockstate files,
+        /// so orientation that vanilla keeps in the blockstate (e.g. a stair's facing) lives here, driven by
+        /// the block's stored metadata.</summary>
+        public virtual Matrix4 GetModelTransform(WorldBase world, Vector3i blockPos) => Matrix4.Identity;
+
         public virtual Color4 GetTintColor(WorldBase world, Vector3i blockPos, int tintId) => Color4.White;
         public virtual LightLevel GetLightLevel(WorldBase world, Vector3i blockPos) => LightLevel.Zero;
 
@@ -55,9 +73,10 @@ namespace MinecraftClone3API.Blocks
         {
         }
 
-        /// <summary>Client-side: derive the metadata to carry in the place request (e.g. a tint chosen by
-        /// held keys). Runs on the client so the server — which may be headless — never reads input.</summary>
-        public virtual int GetPlacementMetadata(KeyboardState ks) => 0;
+        /// <summary>Client-side: derive the metadata to carry in the place request (e.g. a tint from held
+        /// keys, or a stair's facing from the placing player's look + clicked face). Runs on the client so
+        /// the server — which may be headless — never reads input.</summary>
+        public virtual int GetPlacementMetadata(KeyboardState ks, EntityPlayer player, BlockRaytraceResult ray) => 0;
 
         public virtual int OnLightPassThrough(WorldBase world, Vector3i blockPos, int lightLevel, int color)
             => lightLevel - 1;

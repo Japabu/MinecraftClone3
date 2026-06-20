@@ -36,6 +36,7 @@ namespace VanillaPlugin
 
             context.Register(new BlockGrass());
             context.Register(new BlockTorch());
+            context.Register(new BlockStairs());
             //context.Register(new BlockGlass());
             //context.Register(new BlockTintedGlass());
 

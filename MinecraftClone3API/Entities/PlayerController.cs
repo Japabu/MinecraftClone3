@@ -148,7 +148,7 @@ namespace MinecraftClone3API.Entities
             if (_blockRaytrace == null) return;
             var block = GameRegistry.GetBlock(_currentBlock);
             world.PlaceBlock(PlayerEntity, _blockRaytrace.BlockPos + _blockRaytrace.Face.GetNormali(), block,
-                block.GetPlacementMetadata(ks));
+                block.GetPlacementMetadata(ks, PlayerEntity, _blockRaytrace));
 
             Logger.Debug(PlayerEntity.Position + ":" + _blockRaytrace.BlockPos);
         }
