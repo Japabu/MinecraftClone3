@@ -21,6 +21,7 @@ namespace MinecraftClone3API.Entities
         private const float Height = EntityPlayer.Height;
         private const float Epsilon = 1e-4f;
         private const float GroundProbe = 1e-3f;
+        private const float StepHeight = 0.6f;
 
         public static void Tick(WorldBase world, EntityPlayer p, Vector2 wishDir, bool jump, bool sprint)
         {
@@ -44,34 +45,76 @@ namespace MinecraftClone3API.Entities
 
         private static void MoveWithCollision(WorldBase world, EntityPlayer p)
         {
+            var velX = p.Velocity.X;
+            var velY = p.Velocity.Y;
+            var velZ = p.Velocity.Z;
+            var grounded = p.OnGround;
+
             var feet = p.Position;
-
-            var min = new Vector3(feet.X - HalfWidth, feet.Y, feet.Z - HalfWidth);
-            var max = new Vector3(feet.X + HalfWidth, feet.Y + Height, feet.Z + HalfWidth);
-            var dy = ClipY(world, min, max, p.Velocity.Y);
+            var dy = ClipYFrom(world, feet, velY);
             feet.Y += dy;
-            if (dy != p.Velocity.Y) p.Velocity.Y = 0;
+            if (dy != velY) p.Velocity.Y = 0;
 
-            min = new Vector3(feet.X - HalfWidth, feet.Y, feet.Z - HalfWidth);
-            max = new Vector3(feet.X + HalfWidth, feet.Y + Height, feet.Z + HalfWidth);
-            var dx = ClipX(world, min, max, p.Velocity.X);
-            feet.X += dx;
-            if (dx != p.Velocity.X) p.Velocity.X = 0;
+            // Horizontal collide (X then Z) from the post-vertical position.
+            var afterY = feet;
+            var cdx = ClipXFrom(world, afterY, velX);
+            var cdz = ClipZFrom(world, new Vector3(afterY.X + cdx, afterY.Y, afterY.Z), velZ);
+            var blockedX = cdx != velX;
+            var blockedZ = cdz != velZ;
 
-            min = new Vector3(feet.X - HalfWidth, feet.Y, feet.Z - HalfWidth);
-            max = new Vector3(feet.X + HalfWidth, feet.Y + Height, feet.Z + HalfWidth);
-            var dz = ClipZ(world, min, max, p.Velocity.Z);
-            feet.Z += dz;
-            if (dz != p.Velocity.Z) p.Velocity.Z = 0;
+            feet = new Vector3(afterY.X + cdx, afterY.Y, afterY.Z + cdz);
+            var resVelX = blockedX ? 0f : velX;
+            var resVelZ = blockedZ ? 0f : velZ;
 
+            // Auto-step: when grounded and a horizontal axis was blocked, retry the full horizontal move
+            // raised by StepHeight (up → horizontal → drop back down) and keep it if it advanced farther.
+            // StepHeight 0.6 = Minecraft: climbs slabs/partial blocks, still needs a jump for a full cube.
+            if (grounded && (blockedX || blockedZ))
+            {
+                var up = ClipYFrom(world, afterY, StepHeight);
+                var stepped = new Vector3(afterY.X, afterY.Y + up, afterY.Z);
+                var sdx = ClipXFrom(world, stepped, velX);
+                var sdz = ClipZFrom(world, new Vector3(stepped.X + sdx, stepped.Y, stepped.Z), velZ);
+                stepped = new Vector3(stepped.X + sdx, stepped.Y, stepped.Z + sdz);
+                stepped.Y += ClipYFrom(world, stepped, -up);
+
+                if (sdx * sdx + sdz * sdz > cdx * cdx + cdz * cdz)
+                {
+                    feet = stepped;
+                    resVelX = sdx != velX ? 0f : velX;
+                    resVelZ = sdz != velZ ? 0f : velZ;
+                }
+            }
+
+            p.Velocity.X = resVelX;
+            p.Velocity.Z = resVelZ;
             p.Position = feet;
 
             // Ground state from an explicit downward probe, not the Y-clip outcome: a tick that enters
             // with Velocity.Y==0 (spawn, just un-flew) or lands exactly flush would otherwise read
             // airborne for one tick (no jump, wrong friction).
-            min = new Vector3(feet.X - HalfWidth, feet.Y, feet.Z - HalfWidth);
-            max = new Vector3(feet.X + HalfWidth, feet.Y + Height, feet.Z + HalfWidth);
-            p.OnGround = ClipY(world, min, max, -GroundProbe) != -GroundProbe;
+            p.OnGround = ClipYFrom(world, feet, -GroundProbe) != -GroundProbe;
+        }
+
+        private static float ClipYFrom(WorldBase world, Vector3 feet, float dy)
+        {
+            var min = new Vector3(feet.X - HalfWidth, feet.Y, feet.Z - HalfWidth);
+            var max = new Vector3(feet.X + HalfWidth, feet.Y + Height, feet.Z + HalfWidth);
+            return ClipY(world, min, max, dy);
+        }
+
+        private static float ClipXFrom(WorldBase world, Vector3 feet, float dx)
+        {
+            var min = new Vector3(feet.X - HalfWidth, feet.Y, feet.Z - HalfWidth);
+            var max = new Vector3(feet.X + HalfWidth, feet.Y + Height, feet.Z + HalfWidth);
+            return ClipX(world, min, max, dx);
+        }
+
+        private static float ClipZFrom(WorldBase world, Vector3 feet, float dz)
+        {
+            var min = new Vector3(feet.X - HalfWidth, feet.Y, feet.Z - HalfWidth);
+            var max = new Vector3(feet.X + HalfWidth, feet.Y + Height, feet.Z + HalfWidth);
+            return ClipZ(world, min, max, dz);
         }
 
         private static float ClipY(WorldBase world, Vector3 min, Vector3 max, float dy)

@@ -579,6 +579,9 @@ point). Two modes, toggled by **double-tapping Space**:
   integer coords, ±0.5) and zeroes the blocked component. `OnGround` is then a **velocity-independent
   downward probe** (`ClipY(box, −GroundProbe)` clipped ⇒ grounded), not the Y-clip outcome — so a tick that
   enters with `Velocity.Y==0` (spawn, just un-flew) or lands exactly flush doesn't read airborne for a tick.
+  **Auto-step:** when grounded and a horizontal axis is blocked, the move is retried raised by `StepHeight`
+  (0.6 = MC: up → horizontal → drop back down) and kept only if it advanced farther — climbs slabs/partial
+  blocks, still needs a jump for a full cube.
   The 20 tps physics is **render-interpolated** to the 120 Hz frame (`InterpolatedPosition =
   Lerp(PrevPosition, Position, accumulatorFraction)`) so the camera is smooth, not 20 Hz-steppy.
 - **Fly (creative):** the original dt-scaled direct `Entity.Move` — Space/Shift up/down, Ctrl fast, **no
@@ -1045,9 +1048,10 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
 ## Known rough edges / deferred work
 
 - **Player physics is the "80%" walk model — several exact-MC behaviours are deferred.** Implemented: gravity,
-  jump, swept per-axis AABB collision, Ctrl sprint, walk/fly toggle. **Not** implemented: sprint-jump forward
-  boost, sneaking (no crouch/edge-stop), per-block slipperiness (no ice/slime blocks exist), **auto-step up
-  0.6-block ledges** (you must jump onto a single block), swimming/fluid physics (water has `CanPassThrough`
+  jump, swept per-axis AABB collision, Ctrl sprint, walk/fly toggle, **auto-step up `StepHeight` (0.6 = MC)
+  ledges** (climbs slabs/partial blocks, still jump for a full cube). **Not** implemented: sprint-jump forward
+  boost, sneaking (no crouch/edge-stop), per-block slipperiness (no ice/slime blocks exist),
+  swimming/fluid physics (water has `CanPassThrough`
   so you fall through it), **collision for creative flight** (flight is deliberately noclip, to keep the
   original free-fly), per-block non-cube collision shapes (every solid block collides as a full cube — fine
   today since none define a custom `GetBoundingBox`), and remote-player movement interpolation (they still
