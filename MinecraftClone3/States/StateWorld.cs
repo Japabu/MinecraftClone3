@@ -168,7 +168,6 @@ namespace MinecraftClone3.States
             ("F3", "debug overlay"),
             ("F4", "chunk borders"),
             ("F5", "occlusion culling on/off"),
-            ("F6", "cascade tint"),
             ("F7", "shadow factor"),
             ("F10", "profiler record (CSV)")
         };
@@ -187,7 +186,7 @@ namespace MinecraftClone3.States
             Font.DrawString($"chunks drawn {RenderDebug.DrawnChunks} / {_world.RenderList.Count}" +
                             $"   visited {RenderDebug.VisitedChunks}   (cull {occlusion})", 4, y, scale, OverlayText); y += lh;
 
-            var shadows = RenderDebug.ShadowPass ? $"on ({WorldRenderer.CascadeCount} csm)" : "off";
+            var shadows = RenderDebug.ShadowPass ? "on" : "off";
             Font.DrawString($"shadows {shadows}   loaded {_world.LoadedChunkCount}" +
                             $"   mesh {_world.MeshQueueDepth}   upload {_world.UploadQueueDepth}", 4, y, scale, OverlayText); y += lh;
 

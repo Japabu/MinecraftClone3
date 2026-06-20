@@ -21,9 +21,6 @@ namespace MinecraftClone3API.Client
             public VSyncMode VSync = VSyncMode.On;
             public bool Shadows = true;
             public bool Fullscreen = false;
-            // Active sun-shadow cascades (clamped to [1, ShadowFramebuffer.MaxCascadeCount] when read). Fewer
-            // = fewer depth passes = more FPS at lower far-shadow resolution. Read each frame by WorldRenderer.
-            public int ShadowCascades = 2;
         }
 
         private static Data _data = new Data();
@@ -38,12 +35,6 @@ namespace MinecraftClone3API.Client
         {
             get => _data.Shadows;
             set { _data.Shadows = value; Save(); }
-        }
-
-        public static int ShadowCascades
-        {
-            get => _data.ShadowCascades;
-            set { _data.ShadowCascades = value; Save(); }
         }
 
         public static bool Fullscreen

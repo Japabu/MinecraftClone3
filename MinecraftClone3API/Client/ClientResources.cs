@@ -20,7 +20,7 @@ namespace MinecraftClone3API.Client
         public static GeometryFramebuffer GeometryFramebuffer;
         public static TextureFramebuffer LightFramebuffer;
         public static ShadowFramebuffer ShadowFramebuffer;
-        // Half-resolution resolved sun shadow (the cascaded PCF runs into this, then composition upsamples).
+        // Half-resolution resolved sun shadow (the shadow PCF runs into this, then composition upsamples).
         public static TextureFramebuffer ShadowResolveFramebuffer;
 
         public static Shader WorldGeometryShader;
@@ -106,7 +106,7 @@ namespace MinecraftClone3API.Client
             LightFramebuffer?.Dispose();
             LightFramebuffer = new TextureFramebuffer(Window.FramebufferSize.X, Window.FramebufferSize.Y, false);
 
-            // Half the framebuffer resolution (rounded up): the resolved sun shadow runs the cascaded PCF at
+            // Half the framebuffer resolution (rounded up): the resolved sun shadow runs the shadow PCF at
             // quarter the pixel count, then the composition pass depth-aware-upsamples it back to full res.
             ShadowResolveFramebuffer?.Dispose();
             ShadowResolveFramebuffer = new TextureFramebuffer(

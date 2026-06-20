@@ -1,8 +1,7 @@
 #version 410 core
 
-// One entry per MAX_CASCADES (only used by the F6 cascade-tint debug now; the cascaded PCF itself moved to
-// ShadowResolve.fs, which runs at half res -- see that shader + WorldRenderer.DrawShadowResolve).
-#define MAX_CASCADES 4
+// Deferred composition. The 12-tap sun-shadow PCF runs in ShadowResolve.fs at half res; this pass
+// depth-aware-upsamples that result and combines it with the baked block + sky light.
 
 in vec2 vTexCoord;
 
@@ -23,10 +22,10 @@ uniform vec3 uSunColor;
 uniform vec3 uSkyAmbient;
 
 // Half-resolution resolved sun shadow (from ShadowResolve.fs): r = shadow factor (1 lit .. 0 shadowed),
-// g = normalized view depth, b = cascade index. Depth-aware-upsampled to full res below. uShadowMaxDepth is
-// the far shadow distance (uCascadeSplits[last]) used to denormalize g back to view-space units.
+// g = normalized view depth. Depth-aware-upsampled to full res below. uShadowDistance is the far shadow
+// distance used to denormalize g back to view-space units.
 uniform sampler2D uShadowResolved;
-uniform float uShadowMaxDepth;
+uniform float uShadowDistance;
 
 // uViewProjectionInv reconstructs world position from the camera depth buffer; uView gives view-space depth
 // (for the upsample's per-tap depth comparison). uSunFade (0..1) scales the whole directional sun term and
@@ -45,23 +44,17 @@ uniform float uShadowStrength;
 // shadow buffer is stale). Surfaces then read as fully lit (shadow = 1) instead of sampling that stale buffer.
 uniform float uShadowsEnabled;
 
-// Debug (F7): raw shadow factor as greyscale (white = lit, black = shadowed). Debug (F6): tint by cascade
-// (green->yellow->orange->red, near->far; untinted past the shadow distance) so the CSM split is visible.
+// Debug (F7): raw shadow factor as greyscale (white = lit, black = shadowed).
 uniform float uDebugShadow;
-uniform float uDebugCascade;
 
 // Floor so a surface reached by no light at all isn't a literal void: a cave with no torch reads as nearly
 // black (bring a torch). Raise for a brighter global ambient; 0 = pure black.
 const vec3 MinLight = vec3(0.01);
 
-// Joint-bilateral upsample sharpness (in normalized-depth units, i.e. view depth / uShadowMaxDepth). Larger
+// Joint-bilateral upsample sharpness (in normalized-depth units, i.e. view depth / uShadowDistance). Larger
 // = a smaller depth difference rejects a tap, so the half-res shadow doesn't bleed across silhouette edges;
 // too large and same-surface taps get rejected too (the half-res shadow shows through as blocky). Tunable.
 const float DepthSharpness = 256.0;
-
-// Cascade debug tints (F6), near -> far. One entry per MAX_CASCADES.
-const vec3 CascadeColor[MAX_CASCADES] = vec3[](
-	vec3(0.3, 1.0, 0.3), vec3(1.0, 1.0, 0.2), vec3(1.0, 0.6, 0.1), vec3(1.0, 0.25, 0.25));
 
 vec3 PositionFromDepth(float depth)
 {
@@ -118,25 +111,14 @@ vec4 GetColor()
 	// pass used): daytime (uSunFade > 0), shadows enabled, and a sky-reached surface (lightSample.a). Past the
 	// shadow distance there is no coverage. Everything else is fully lit (shadow = 1).
 	float shadow = 1.0;
-	int debugCascade = -1;
 	if (uShadowsEnabled > 0.5 && uSunFade > 0.0 && lightSample.a > 0.004)
 	{
 		float fragDepth = FragViewDepth();
-		if (fragDepth < uShadowMaxDepth)
-		{
-			shadow = UpsampleShadow(fragDepth/uShadowMaxDepth);
-			ivec2 hs = textureSize(uShadowResolved, 0);
-			ivec2 t = clamp(ivec2(vTexCoord*vec2(hs)), ivec2(0), hs - 1);
-			debugCascade = int(texelFetch(uShadowResolved, t, 0).b*float(MAX_CASCADES) + 0.5) - 1;
-		}
+		if (fragDepth < uShadowDistance)
+			shadow = UpsampleShadow(fragDepth/uShadowDistance);
 	}
 
 	if (uDebugShadow > 0.5) return vec4(vec3(shadow), 1.0);
-	if (uDebugCascade > 0.5)
-	{
-		vec3 tint = debugCascade < 0 ? vec3(0.5) : CascadeColor[debugCascade];
-		return vec4(diffuse.rgb*tint, diffuse.a);
-	}
 
 	// Lift the shadow floor by uShadowStrength so a fully-shadowed surface keeps some direct sun instead of
 	// crushing to ambient-only (the "shadows too dark" knob). Only the direct-sun term is affected.

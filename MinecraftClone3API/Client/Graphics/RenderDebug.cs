@@ -18,9 +18,6 @@ namespace MinecraftClone3API.Graphics
         /// <summary>F5: disable occlusion culling (linear all-chunks scan + shadows always on) for A/B.</summary>
         public static bool DisableOcclusionCulling;
 
-        /// <summary>F6: tint each lit pixel by which shadow cascade it samples (drives composition uDebugCascade).</summary>
-        public static bool CascadeTint;
-
         /// <summary>F7: output the raw shadow factor as greyscale (drives composition uDebugShadow).</summary>
         public static bool ShadowFactor;
 

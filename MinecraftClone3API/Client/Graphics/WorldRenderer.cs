@@ -39,32 +39,22 @@ namespace MinecraftClone3API.Graphics
         // Refilled in place each frame instead of allocating a fresh Plane[6] + 6 planes per call.
         private static readonly Frustum _viewFrustum = new Frustum();
 
-        // Cascaded sun shadow maps. The camera view frustum is split into CascadeCount distance slices
-        // ([ShadowNear, ShadowDistance], partitioned by the practical log/uniform blend below); each slice
-        // gets its own depth layer tightly fit to its bounding sphere, so near cascades are crisp and far
-        // cascades cover more ground at lower resolution. Geometry past ShadowDistance casts no shadow
-        // (faded out smoothly). ShadowDistance is the main coverage knob; raising it (or CascadeCount /
-        // ShadowMapSize) costs extra depth passes — see CLAUDE.md.
-        //
-        // MaxCascadeCount sizes the fixed scratch + the shadow framebuffer's layers; CascadeCount is the
-        // RUNTIME active count (the GraphicsSettings shadow-quality knob, clamped to [1, Max]), read each
-        // frame so it can change with no realloc / shader recompile. Both the depth-pass loop and the
-        // composition's uCascadeCount run to it, so dropping it trims depth passes for FPS.
-        public const int MaxCascadeCount = ShadowFramebuffer.MaxCascadeCount;
-        public static int CascadeCount => Math.Clamp(GraphicsSettings.ShadowCascades, 1, MaxCascadeCount);
+        // Sun shadow map. A single orthographic depth map from the sun's point of view, fit each frame to the
+        // analytic bounding sphere of the [ShadowNear, ShadowDistance] view-frustum slice (radius depends only
+        // on the slice + FOV, so it is constant as the camera rotates -> no size shimmer). Geometry past
+        // ShadowDistance casts no shadow (faded out smoothly). ShadowDistance is the coverage knob and
+        // ShadowMapSize the resolution knob; the map is deliberately low-res for a soft, blurry look (the PCF
+        // penumbra grows with the coarse world-per-texel) -- see CLAUDE.md.
         public const float ShadowNear = 0.5f;
         public const float ShadowDistance = 160f;
-        // Split distribution: 0 = uniform (even far cascades), 1 = logarithmic (tight near cascades). The
-        // blend keeps near detail without starving the far cascade.
-        private const float CascadeSplitLambda = 0.85f;
-        // Pull each cascade's light eye this far past its bounding sphere toward the sun so casters just
-        // outside the slice (e.g. a tall block) still shadow into it.
+        // Pull the light eye this far past the bounding sphere toward the sun so casters just outside the slice
+        // (e.g. a tall block) still shadow into it.
         private const float ShadowCasterExtent = 64f;
 
-        // Shadow look knobs (uploaded as composition uniforms each frame, so tunable here with no shader
-        // recompile). ShadowStrength (0..1): how dark a fully-shadowed surface goes — 1 = can reach black,
-        // lower lifts the floor so sun shadows aren't crushed (only the direct-sun term, not ambient/caves).
-        // ShadowSoftness: PCF penumbra radius in shadow texels — larger = softer, at no extra tap cost.
+        // Shadow look knobs (uploaded as shader uniforms each frame, so tunable here with no shader recompile).
+        // ShadowStrength (0..1): how dark a fully-shadowed surface goes -- 1 = can reach black, lower lifts the
+        // floor so sun shadows aren't crushed (only the direct-sun term, not ambient/caves). ShadowSoftness:
+        // PCF penumbra radius in shadow texels -- larger = softer, at no extra tap cost.
         public static float ShadowStrength = 0.65f;
         public static float ShadowSoftness = 8f;
 
@@ -75,37 +65,20 @@ namespace MinecraftClone3API.Graphics
         private const float ShadowFadeLow = 0.05f;
         private const float ShadowFadeHigh = 0.15f;
 
-        // Per-cascade RenderDoc debug-group names, precomputed so the shadow pass allocates no strings.
-        private static readonly string[] _cascadeGroupNames = new string[MaxCascadeCount];
-
-        private static readonly Frustum[] _shadowFrusta = new Frustum[MaxCascadeCount];
+        private static readonly Frustum _shadowFrustum = new Frustum();
         private static readonly List<ChunkRenderData> _shadowChunks = new List<ChunkRenderData>(1024);
-        private static readonly Matrix4[] _lightViewProj = new Matrix4[MaxCascadeCount];
-        // Flattened row-major copy of _lightViewProj for the mat4[] uniform upload (same byte layout OpenTK
-        // marshals a single ref Matrix4 with, so transpose=false behaves identically per element).
-        private static readonly float[] _lightViewProjFlat = new float[MaxCascadeCount * 16];
-        // Far view-space distance of each cascade (shader cascade selection) and world units per shadow
-        // texel of each cascade (shader normal-offset bias scales with it).
-        private static readonly float[] _cascadeSplitsView = new float[MaxCascadeCount];
-        private static readonly float[] _cascadeTexelWorld = new float[MaxCascadeCount];
-
-        static WorldRenderer()
-        {
-            for (var i = 0; i < MaxCascadeCount; i++)
-            {
-                _shadowFrusta[i] = new Frustum();
-                _cascadeGroupNames[i] = "Cascade " + i;
-            }
-        }
+        private static Matrix4 _lightViewProj;
+        // World units per shadow texel (the shader scales its normal-offset bias by this).
+        private static float _shadowTexelWorld;
 
         // Set by BuildVisibleSet: true iff a visible chunk within ShadowDistance is sky-exposed. Gates the
-        // sun shadow passes — deep in a cave no visible chunk is sky-lit, so the four cascade depth passes
-        // (a fixed per-frame cost, see CLAUDE.md) are skipped; at a cave mouth the BFS reaches the sky-lit
-        // terrain and they run again.
+        // sun shadow passes — deep in a cave no visible chunk is sky-lit, so the shadow depth pass (a fixed
+        // per-frame cost, see CLAUDE.md) is skipped; at a cave mouth the BFS reaches the sky-lit terrain and
+        // it runs again.
         private static bool _anyShadowReceiver;
 
-        // Distance past which a sky-exposed chunk no longer forces the shadow passes (matches the composition
-        // shader, which early-outs shadow sampling past the last cascade).
+        // Distance past which a sky-exposed chunk no longer forces the shadow passes (matches the shadow-resolve
+        // shader, which early-outs shadow sampling past the shadow distance).
         public const float ShadowDistanceSq = ShadowDistance * ShadowDistance;
 
         // Render-time visibility BFS scratch (main-thread only, reused → zero per-frame alloc). Visited is
@@ -221,7 +194,7 @@ namespace MinecraftClone3API.Graphics
             if (wireframe) GL.PolygonMode(TriangleFace.Front, PolygonMode.Fill);
 
             GpuTimers.Begin(GpuTimers.Pass.Composition);
-            // Resolve the cascaded PCF at half res first (the old per-pixel-at-full-res cost was ~45% of the
+            // Resolve the shadow PCF at half res first (the old per-pixel-at-full-res cost was ~45% of the
             // frame); composition then depth-aware-upsamples it. Gated like DrawShadowMap — when skipped the
             // resolve buffer is stale but composition's same early-outs never sample it.
             if (RenderDebug.ShadowPass) DrawShadowResolve(PlayerController.Camera, viewProjectionInv, sunFade);
@@ -231,21 +204,13 @@ namespace MinecraftClone3API.Graphics
             GpuTimers.EndFrame();
         }
 
-        /// <summary>Split distance i of the cascade partition of [ShadowNear, ShadowDistance]: a blend of a
-        /// logarithmic and a uniform split (the standard "practical split scheme"). i in [0, CascadeCount].</summary>
-        private static float CascadeSplit(int i)
-        {
-            var p = (float) i / CascadeCount;
-            var logSplit = ShadowNear * MathF.Pow(ShadowDistance / ShadowNear, p);
-            var uniformSplit = ShadowNear + (ShadowDistance - ShadowNear) * p;
-            return MathHelper.Lerp(uniformSplit, logSplit, CascadeSplitLambda);
-        }
-
-        /// <summary>Renders opaque chunk depth from the sun's orthographic point of view into each cascade
-        /// layer of the shadow framebuffer. Re-draws the already-uploaded chunk VAOs (no remesh, main-thread
-        /// GL only); the composition pass picks a cascade per pixel and samples it to attenuate the sky/sun
-        /// term. Each cascade is fit to the bounding sphere of its view-frustum slice (radius constant per
-        /// cascade as the camera rotates → stable size) and texel-snapped (no shimmer as the player moves).</summary>
+        /// <summary>Renders opaque chunk depth from the sun's orthographic point of view into the shadow
+        /// framebuffer. Re-draws the already-uploaded chunk VAOs (no remesh, main-thread GL only); the
+        /// shadow-resolve pass samples it to attenuate the sky/sun term. The map is fit to the bounding sphere
+        /// of the [ShadowNear, ShadowDistance] view-frustum slice (radius constant as the camera rotates →
+        /// stable size). Deliberately NOT texel-snapped — the sun advances every frame, so snapping to the
+        /// rotating light-space texel grid would turn the shadow's smooth crawl into whole-texel flicker; the
+        /// soft low-res PCF keeps camera-motion shimmer down instead. See CLAUDE.md.</summary>
         private static void DrawShadowMap(WorldClient world, Camera camera, Matrix4 projection, Vector3 toSun)
         {
             // Frustum half-angle tangents straight from the projection (robust to FOV/aspect/resize):
@@ -261,12 +226,9 @@ namespace MinecraftClone3API.Graphics
 
             GraphicsDebug.PushGroup("Shadow");
 
-            var forward = camera.Forward;
-            var camPos = camera.Position;
-
             // Cull disabled: the voxel mesher only emits exposed (single-sided) faces, so there are no back
             // faces — culling would drop the sun-facing surfaces. Polygon offset pushes shadow depth back to
-            // fight self-shadowing acne (paired with the normal-offset + depth bias in the composition shader).
+            // fight self-shadowing acne (paired with the normal-offset + depth bias in the resolve shader).
             RenderState.Set(new GlState {CullFace = false, DepthTest = true, DepthFunc = DepthFunction.Lequal});
             GL.Enable(EnableCap.PolygonOffsetFill);
             GL.PolygonOffset(2f, 4f);
@@ -276,78 +238,54 @@ namespace MinecraftClone3API.Graphics
             var uWorld = shader.GetUniformLocation("uWorld");
             var uLightViewProj = shader.GetUniformLocation("uLightViewProj");
 
-            for (var c = 0; c < CascadeCount; c++)
+            // Analytic bounding sphere of the whole [ShadowNear, ShadowDistance] frustum slice. Centre rides
+            // the camera forward axis (only the camera position, not its orientation, moves it); radius depends
+            // solely on near/far + FOV, so it is constant across frames -> no rotation shimmer. When the sphere
+            // through both corner rings would sit past the far plane, the far ring's circumscribed sphere is tighter.
+            var n = ShadowNear;
+            var f = ShadowDistance;
+            var zc = (n + f) * (k2 + 1f) * 0.5f;
+            float radius;
+            if (zc >= f) { zc = f; radius = f * MathF.Sqrt(k2); }
+            else radius = MathF.Sqrt(n * n * k2 + (n - zc) * (n - zc));
+
+            var center = camera.Position + camera.Forward * zc;
+            _shadowTexelWorld = 2f * radius / ShadowFramebuffer.ShadowMapSize;
+
+            var distBack = radius + ShadowCasterExtent;
+            var lightEye = center + toSun * distBack;
+            var lightView = Matrix4.LookAt(lightEye, center, up);
+            var lightProj = Matrix4.CreateOrthographic(2f * radius, 2f * radius, 0f, distBack + radius);
+            _lightViewProj = lightView * lightProj;
+            _shadowFrustum.Set(_lightViewProj);
+
+            var shadowChunks = _shadowChunks;
+            shadowChunks.Clear();
+            var renderList = world.RenderList;
+            for (var i = 0; i < renderList.Count; i++)
             {
-                var n = CascadeSplit(c);
-                var f = CascadeSplit(c + 1);
-                _cascadeSplitsView[c] = f;
+                var renderData = renderList[i];
+                if (renderData.HasTransparency) continue;
+                var chunkMiddle = (renderData.Chunk.Position * Chunk.Size + new Vector3i(Chunk.Size / 2)).ToVector3();
+                if (!_shadowFrustum.SpehereIntersection(chunkMiddle, Chunk.Radius)) continue;
+                shadowChunks.Add(renderData);
+            }
 
-                // Analytic bounding sphere of the [n, f] frustum slice. Centre is on the camera forward axis
-                // (so only the camera position, not its orientation, moves it); radius depends solely on n, f
-                // and the FOV, so it is constant across frames -> no rotation shimmer. When the sphere through
-                // both corner rings would sit past the far plane, the far ring's circumscribed sphere is tighter.
-                var zc = (n + f) * (k2 + 1f) * 0.5f;
-                float radius;
-                if (zc >= f) { zc = f; radius = f * MathF.Sqrt(k2); }
-                else radius = MathF.Sqrt(n * n * k2 + (n - zc) * (n - zc));
+            ClientResources.ShadowFramebuffer.Bind();
+            GL.Clear(ClearBufferMask.DepthBufferBit);
+            GL.UniformMatrix4(uLightViewProj, false, ref _lightViewProj);
 
-                var center = camPos + forward * zc;
-                _cascadeTexelWorld[c] = 2f * radius / ShadowFramebuffer.ShadowMapSize;
-
-                // Deliberately NOT texel-snapped. The sun advances every frame (day/night cycle), so snapping
-                // the projection to the rotating light-space texel grid turns the shadow's smooth crawl into
-                // frequent whole-texel jumps -- the flicker. Unsnapped, the projection follows the sun
-                // smoothly; the 6x6-effective PCF keeps any camera-motion shimmer soft. See CLAUDE.md.
-                var distBack = radius + ShadowCasterExtent;
-                var lightEye = center + toSun * distBack;
-                var lightView = Matrix4.LookAt(lightEye, center, up);
-                var lightProj = Matrix4.CreateOrthographic(2f * radius, 2f * radius, 0f, distBack + radius);
-                var lightViewProj = lightView * lightProj;
-                _lightViewProj[c] = lightViewProj;
-                _shadowFrusta[c].Set(lightViewProj);
-                FlattenMatrix(lightViewProj, _lightViewProjFlat, c * 16);
-
-                var shadowChunks = _shadowChunks;
-                shadowChunks.Clear();
-                var renderList = world.RenderList;
-                for (var i = 0; i < renderList.Count; i++)
-                {
-                    var renderData = renderList[i];
-                    if (renderData.HasTransparency) continue;
-                    var chunkMiddle = (renderData.Chunk.Position * Chunk.Size + new Vector3i(Chunk.Size / 2)).ToVector3();
-                    if (!_shadowFrusta[c].SpehereIntersection(chunkMiddle, Chunk.Radius)) continue;
-                    shadowChunks.Add(renderData);
-                }
-
-                GraphicsDebug.PushGroup(_cascadeGroupNames[c]);
-                ClientResources.ShadowFramebuffer.BindLayer(c);
-                GL.Clear(ClearBufferMask.DepthBufferBit);
-                GL.UniformMatrix4(uLightViewProj, false, ref lightViewProj);
-
-                foreach (var chunk in shadowChunks)
-                {
-                    var worldMat = Matrix4.CreateTranslation(chunk.Chunk.Position.X * Chunk.Size, chunk.Chunk.Position.Y * Chunk.Size,
-                        chunk.Chunk.Position.Z * Chunk.Size);
-                    GL.UniformMatrix4(uWorld, false, ref worldMat);
-                    chunk.Draw();
-                }
-                GraphicsDebug.PopGroup();
+            foreach (var chunk in shadowChunks)
+            {
+                var worldMat = Matrix4.CreateTranslation(chunk.Chunk.Position.X * Chunk.Size, chunk.Chunk.Position.Y * Chunk.Size,
+                    chunk.Chunk.Position.Z * Chunk.Size);
+                GL.UniformMatrix4(uWorld, false, ref worldMat);
+                chunk.Draw();
             }
 
             GL.Disable(EnableCap.PolygonOffsetFill);
             ClientResources.ShadowFramebuffer.Unbind(ClientResources.Window.FramebufferSize.X, ClientResources.Window.FramebufferSize.Y);
             GraphicsDebug.PopGroup();
-        }
-
-        /// <summary>Copies a Matrix4 into a flat float[] at <paramref name="offset"/> in OpenTK's native
-        /// row-major byte order, so the mat4[] uniform upload (transpose=false) matches the single ref
-        /// Matrix4 marshalling element-for-element.</summary>
-        private static void FlattenMatrix(Matrix4 m, float[] dst, int offset)
-        {
-            dst[offset + 0] = m.Row0.X; dst[offset + 1] = m.Row0.Y; dst[offset + 2] = m.Row0.Z; dst[offset + 3] = m.Row0.W;
-            dst[offset + 4] = m.Row1.X; dst[offset + 5] = m.Row1.Y; dst[offset + 6] = m.Row1.Z; dst[offset + 7] = m.Row1.W;
-            dst[offset + 8] = m.Row2.X; dst[offset + 9] = m.Row2.Y; dst[offset + 10] = m.Row2.Z; dst[offset + 11] = m.Row2.W;
-            dst[offset + 12] = m.Row3.X; dst[offset + 13] = m.Row3.Y; dst[offset + 14] = m.Row3.Z; dst[offset + 15] = m.Row3.W;
         }
 
         /// <summary>Fills the opaque/transparent draw lists for this frame and flags whether the sun shadow
@@ -581,11 +519,11 @@ namespace MinecraftClone3API.Graphics
             */
         }
 
-        /// <summary>Resolves the cascaded sun shadow at HALF resolution into <see cref="ClientResources.
-        /// ShadowResolveFramebuffer"/>: a fullscreen quad runs the 12-tap cascaded PCF (moved out of the
-        /// composition pass) per half-res pixel, writing the shadow factor + normalized depth. Composition then
+        /// <summary>Resolves the sun shadow at HALF resolution into <see cref="ClientResources.
+        /// ShadowResolveFramebuffer"/>: a fullscreen quad runs the 12-tap PCF (moved out of the composition
+        /// pass) per half-res pixel, writing the shadow factor + normalized depth. Composition then
         /// depth-aware-upsamples it. This trades the full-res PCF (~45% of the GPU frame) for a quarter-count
-        /// PCF + a cheap upsample. Reads the G-buffer normal/depth/light + the cascade depth array.</summary>
+        /// PCF + a cheap upsample. Reads the G-buffer normal/depth/light + the shadow depth map.</summary>
         private static void DrawShadowResolve(Camera camera, Matrix4 viewProjectionInv, float sunFade)
         {
             GraphicsDebug.PushGroup("ShadowResolve");
@@ -604,11 +542,9 @@ namespace MinecraftClone3API.Graphics
             GL.Uniform1(sh.GetUniformLocation("uShadowMap"), 4);
             GL.UniformMatrix4(sh.GetUniformLocation("uViewProjectionInv"), false, ref viewProjectionInv);
             GL.UniformMatrix4(sh.GetUniformLocation("uView"), false, ref camera.View);
-            var cascadeCount = CascadeCount;
-            GL.Uniform1(sh.GetUniformLocation("uCascadeCount"), cascadeCount);
-            GL.UniformMatrix4(sh.GetUniformLocation("uLightViewProj"), cascadeCount, false, _lightViewProjFlat);
-            GL.Uniform1(sh.GetUniformLocation("uCascadeSplits"), cascadeCount, _cascadeSplitsView);
-            GL.Uniform1(sh.GetUniformLocation("uCascadeTexel"), cascadeCount, _cascadeTexelWorld);
+            GL.UniformMatrix4(sh.GetUniformLocation("uLightViewProj"), false, ref _lightViewProj);
+            GL.Uniform1(sh.GetUniformLocation("uShadowTexel"), _shadowTexelWorld);
+            GL.Uniform1(sh.GetUniformLocation("uShadowDistance"), ShadowDistance);
             GL.Uniform1(sh.GetUniformLocation("uSunFade"), sunFade);
             GL.Uniform1(sh.GetUniformLocation("uShadowSoftness"), ShadowSoftness);
             GL.Uniform1(sh.GetUniformLocation("uShadowsEnabled"), GraphicsSettings.Shadows ? 1f : 0f);
@@ -643,7 +579,7 @@ namespace MinecraftClone3API.Graphics
             GL.Uniform1(comp.GetUniformLocation("uDepth"), 2);
             GL.Uniform1(comp.GetUniformLocation("uLight"), 3);
             GL.Uniform1(comp.GetUniformLocation("uShadowResolved"), 4);
-            GL.Uniform1(comp.GetUniformLocation("uShadowMaxDepth"), _cascadeSplitsView[CascadeCount - 1]);
+            GL.Uniform1(comp.GetUniformLocation("uShadowDistance"), ShadowDistance);
             GL.UniformMatrix4(comp.GetUniformLocation("uViewProjectionInv"), false, ref viewProjectionInv);
             GL.UniformMatrix4(comp.GetUniformLocation("uView"), false, ref camera.View);
             GL.Uniform1(comp.GetUniformLocation("uSunFade"), sunFade);
@@ -652,7 +588,6 @@ namespace MinecraftClone3API.Graphics
             // the shader to treat every sky-lit surface as fully lit instead of sampling that stale buffer.
             GL.Uniform1(comp.GetUniformLocation("uShadowsEnabled"), GraphicsSettings.Shadows ? 1f : 0f);
             GL.Uniform1(comp.GetUniformLocation("uDebugShadow"), RenderDebug.ShadowFactor ? 1f : 0f);
-            GL.Uniform1(comp.GetUniformLocation("uDebugCascade"), RenderDebug.CascadeTint ? 1f : 0f);
             var sun = SunColor();
             GL.Uniform3(comp.GetUniformLocation("uSunColor"), sun.X, sun.Y, sun.Z);
             var skyAmbient = SkyAmbient();
