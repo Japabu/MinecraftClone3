@@ -20,6 +20,7 @@ namespace MinecraftClone3API.Entities
         private const float HalfWidth = EntityPlayer.Width / 2;
         private const float Height = EntityPlayer.Height;
         private const float Epsilon = 1e-4f;
+        private const float GroundProbe = 1e-3f;
 
         public static void Tick(WorldBase world, EntityPlayer p, Vector2 wishDir, bool jump, bool sprint)
         {
@@ -44,17 +45,12 @@ namespace MinecraftClone3API.Entities
         private static void MoveWithCollision(WorldBase world, EntityPlayer p)
         {
             var feet = p.Position;
-            p.OnGround = false;
 
             var min = new Vector3(feet.X - HalfWidth, feet.Y, feet.Z - HalfWidth);
             var max = new Vector3(feet.X + HalfWidth, feet.Y + Height, feet.Z + HalfWidth);
             var dy = ClipY(world, min, max, p.Velocity.Y);
             feet.Y += dy;
-            if (dy != p.Velocity.Y)
-            {
-                if (p.Velocity.Y < 0) p.OnGround = true;
-                p.Velocity.Y = 0;
-            }
+            if (dy != p.Velocity.Y) p.Velocity.Y = 0;
 
             min = new Vector3(feet.X - HalfWidth, feet.Y, feet.Z - HalfWidth);
             max = new Vector3(feet.X + HalfWidth, feet.Y + Height, feet.Z + HalfWidth);
@@ -69,6 +65,13 @@ namespace MinecraftClone3API.Entities
             if (dz != p.Velocity.Z) p.Velocity.Z = 0;
 
             p.Position = feet;
+
+            // Ground state from an explicit downward probe, not the Y-clip outcome: a tick that enters
+            // with Velocity.Y==0 (spawn, just un-flew) or lands exactly flush would otherwise read
+            // airborne for one tick (no jump, wrong friction).
+            min = new Vector3(feet.X - HalfWidth, feet.Y, feet.Z - HalfWidth);
+            max = new Vector3(feet.X + HalfWidth, feet.Y + Height, feet.Z + HalfWidth);
+            p.OnGround = ClipY(world, min, max, -GroundProbe) != -GroundProbe;
         }
 
         private static float ClipY(WorldBase world, Vector3 min, Vector3 max, float dy)

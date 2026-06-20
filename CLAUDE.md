@@ -576,7 +576,9 @@ point). Two modes, toggled by **double-tapping Space**:
   gravity `v_y=(v_y−0.08)·0.98`, jump `0.42`, ground accel `0.1`/friction `0.546`, air `0.02`/`0.91`, Ctrl
   sprint `1.3×`. `PlayerPhysics.MoveWithCollision` is **swept per-axis (Y→X→Z)**: it clips each axis's
   displacement against the AABBs of overlapping solid blocks (`!Block.CanPassThrough`; blocks are centred on
-  integer coords, ±0.5), zeroes the blocked component, and sets `OnGround` when a downward move is clipped.
+  integer coords, ±0.5) and zeroes the blocked component. `OnGround` is then a **velocity-independent
+  downward probe** (`ClipY(box, −GroundProbe)` clipped ⇒ grounded), not the Y-clip outcome — so a tick that
+  enters with `Velocity.Y==0` (spawn, just un-flew) or lands exactly flush doesn't read airborne for a tick.
   The 20 tps physics is **render-interpolated** to the 120 Hz frame (`InterpolatedPosition =
   Lerp(PrevPosition, Position, accumulatorFraction)`) so the camera is smooth, not 20 Hz-steppy.
 - **Fly (creative):** the original dt-scaled direct `Entity.Move` — Space/Shift up/down, Ctrl fast, **no
