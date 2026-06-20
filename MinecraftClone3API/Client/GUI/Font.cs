@@ -209,9 +209,14 @@ namespace MinecraftClone3API.Client.GUI
 
         private static string ResolveTexturePath(string file)
         {
+            var ns = "minecraft";
             var colon = file.IndexOf(':');
-            if (colon >= 0) file = file.Substring(colon + 1);
-            return "System/Textures/" + file;
+            if (colon >= 0)
+            {
+                ns = file.Substring(0, colon);
+                file = file.Substring(colon + 1);
+            }
+            return $"{ns}/textures/{file}";
         }
 
         /// <summary>

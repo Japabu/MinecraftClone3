@@ -26,7 +26,7 @@ MinecraftClone3.sln
 │   ├── Client/             Client-only code (needs a GL context)
 │   │   ├── Blocks/         WorldClient (client world replica)
 │   │   ├── Graphics/       WorldRenderer, ChunkRenderData, EntityRenderer, BoundingBoxRenderer, VAOs, Camera
-│   │   ├── GUI/            GuiBase, GuiButton, widgets
+│   │   ├── GUI/            GuiBase, GuiButton, GuiSlider, widgets
 │   │   └── StateSystem/    StateEngine, StateBase, GuiBase
 │   ├── Entities/           Entity, EntityPlayer, PlayerController
 │   ├── IO/                 GamePaths, WorldManager (+WorldInfo), FileSystem*, ResourceReader, CommonResources, plugin file systems
@@ -529,8 +529,8 @@ caves, and the connectivity graph + BFS were complexity the simple scan doesn't 
 
 **The visible set gates the shadow passes.** `BuildVisibleSet` sets `_anyShadowReceiver` iff a visible chunk
 within `ShadowDistance` is **sky-exposed** (`ChunkRenderData.SkyExposed = Chunk.HasAnySkyLight()`), and the
-shadow depth pass runs only when `sunUp && _anyShadowReceiver && GraphicsSettings.Shadows` (the last is
-the user's **Shadows** graphics option — see the state-system section). Deep in a cave nothing visible is
+shadow depth pass runs only when `sunUp && _anyShadowReceiver && GraphicsSettings.ShadowsEnabled` (the last is
+the user's **Shadows** quality option ≠ Off — see the state-system section). Deep in a cave nothing visible is
 sky-lit, so the passes (a fixed per-frame GPU cost) are skipped entirely; look toward the surface and a
 sky-exposed chunk comes into view, so they run again. The sun is a *directional* viewer, so this can only
 decide **whether to run the passes**, not prune casters — `DrawShadowMap` keeps its light-frustum caster
@@ -610,13 +610,35 @@ on their feet) line up.
 **Graphics options.** `GuiGraphicsOptions` (reachable from both `GuiMainMenu` and the `GuiPauseMenu` overlay
 via their "Options" button) is an **overlay** — it draws over whichever screen opened it and closing it
 (Done / Esc) reveals that screen again, so opening options from the pause menu doesn't tear down the world.
-Each button cycles a value in `GraphicsSettings` (`MinecraftClone3API/Client/GraphicsSettings.cs`), a static
-holder persisted to `GamePaths.GraphicsSettingsFile` (`GraphicsSettings.json`): **VSync** (Off/On/Adaptive),
-**Shadows** (On/Off), **Fullscreen** (On/Off). The setters write the file and push window-level state onto the
-live `ClientResources.Window` (`VSync`, `WindowState`); `Shadows` has no window state — it gates the shadow
-passes + `uShadowsEnabled` in the renderer (see the rendering section). `Program.Main` calls
-`GraphicsSettings.Load()` before creating the window and seeds `NativeWindowSettings` from it, so the window
-opens with the saved vsync/fullscreen choice.
+Each control mutates a value in `GraphicsSettings` (`MinecraftClone3API/Client/GraphicsSettings.cs`), a static
+holder persisted to `GamePaths.GraphicsSettingsFile` (`GraphicsSettings.json`). The widget toolkit is two
+elements: **`GuiButton`** (cycles a discrete value, relabelling itself) and **`GuiSlider`** (a drag slider for
+a continuous/step value — `ScaledResolution.ToGuiCoords` hit-test + drag tracking like the button, `onChange`
+fires only when the snapped value changes). Controls:
+- **VSync** (Off/On/Adaptive) and **Fullscreen** (On/Off) — buttons; setters push window-level state onto the
+  live `ClientResources.Window` (`VSync`, `WindowState`).
+- **Shadows** — a button cycling a **`ShadowQuality`** enum (Off/Low/Medium/High), which **replaced** the old
+  on/off bool. It drives `WorldRenderer.ShadowDistance` (96/160/256) **and** `ShadowMapSize` (512/1024/2048);
+  `WorldRenderer.EnsureShadowMap()` recreates `ClientResources.ShadowFramebuffer` (GL, in the shadow pass, main
+  thread) when the size changes, and `uShadowMapTexel` (1/mapSize) is uploaded so the PCF disc tracks the new
+  resolution. `GraphicsSettings.ShadowsEnabled` (≠ Off) gates the passes + `uShadowsEnabled`.
+- **Render Distance** (slider, 4–24 chunks) — the flagship knob. The five coupled radii are derived from this
+  one setting so the `load ≥ send ≥ render`, `cache > send` chain can't be violated: client draw =
+  `WorldRenderer.RenderDistance` (a computed property reading the setting live → effect next frame);
+  **singleplayer** `StateWorld.ApplyRenderDistance` also drives `ServerNetwork.ViewDistance` (= chunks·16),
+  `WorldServer.TerrainRadius` (= chunks+1, volatile, read live by the LoadThread), and `WorldClient.CacheDistance`
+  (= chunks·16 + `CacheHysteresis` 80; its setter resets the evict gate so a *decrease* evicts immediately).
+  **Multiplayer** drives only the client draw distance (the client can't exceed what the remote server streams,
+  and its cache stays at the safe default since it doesn't know the remote view distance — a proper
+  `LoginAccept` view-distance advertise+clamp is deferred). `StateWorld.Update` re-applies when the setting changes.
+- **FOV** (slider 30–110°, read by `StateWorld`'s projection), **Sensitivity** (slider, the `PlayerController`
+  mouse-delta multiplier), **Brightness** (slider 0–0.3 → `uMinLight` in `Composition.fs`, the unlit floor).
+
+`Program.Main` calls `GraphicsSettings.Load()` before creating the window and seeds `NativeWindowSettings` from
+it, so the window opens with the saved vsync/fullscreen choice; the rest are read live each frame, so a change
+takes effect immediately with no reload. Numeric setters clamp to the `Min*/Max*` consts. **No back-compat:** an
+old `GraphicsSettings.json` deserializes with the dropped `Shadows` bool ignored and missing fields defaulted.
+The dedicated server never touches `GraphicsSettings` — it keeps the default `ViewDistance`/`TerrainRadius`.
 
 ---
 
@@ -688,7 +710,10 @@ no-pack fallback is unchanged. The plugin pins to **1.13+ vanilla naming** (sing
 
 **No pack present:** models/textures fail to resolve → existing `MissingModel`/`MissingTexture` fallback;
 the game runs with placeholder blocks, no crash (the headless server tolerates an absent pack — model parse
-is GL-free and only feeds the client mesher).
+is GL-free and only feeds the client mesher). **The GUI font is also pack-sourced** — `Font` (`Client/GUI/
+Font.cs`) loads `minecraft/font/default.json` and its `minecraft:font/*.png` bitmaps straight from the pack
+(the System plugin ships no font any more), so with no pack `Font.Load` logs an error and text rendering is
+disabled (the rest of the game still runs).
 
 ---
 

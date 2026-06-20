@@ -135,6 +135,9 @@ namespace MinecraftClone3.States
                 return;
             }
 
+            if (GraphicsSettings.RenderDistanceChunks != _lastRenderDistanceChunks)
+                ApplyRenderDistance();
+
             if (focused)
             {
                 if (_window.KeyboardState.IsKeyPressed(Keys.Escape))
@@ -220,7 +223,8 @@ namespace MinecraftClone3.States
             }
 
             var aspect = (float)_window.FramebufferSize.X / _window.FramebufferSize.Y;
-            var projection = Matrix4.CreatePerspectiveFieldOfView(MathHelper.DegreesToRadians(60), aspect, 0.01f, 512);
+            var projection = Matrix4.CreatePerspectiveFieldOfView(
+                MathHelper.DegreesToRadians(GraphicsSettings.Fov), aspect, 0.01f, 512);
             WorldRenderer.RenderWorld(_world, projection);
 
             if (!Profiler.Recording && !RenderDebug.ShowDiagnostics && !RenderDebug.ShowControls) return;
