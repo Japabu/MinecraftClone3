@@ -367,12 +367,28 @@ spawn column (one-shot join signal, see the handshake above) → **flush block c
    RenderWorld() (MAIN thread) BuildVisibleSet runs the frustum + render-distance scan of RenderList, then
                  the shadow + geometry + composition passes
 
- Client game loop (MinecraftClone3/Program.cs, 120 Hz, MAIN thread):
+ Client game loop (MinecraftClone3/Program.cs, display rate ~120 Hz, MAIN thread):
    OnUpdateFrame → StateEngine.Update() → StateWorld.Update():
-       integratedServer.Update();  network.Pump();   // singleplayer only
-       world.SendMove(player);     world.Update();
+       per FRAME:  PlayerController.UpdateFrame (look/break/place/camera), world.Update() (GL + packet pump + evict)
+       per TICK (fixed 20 tps accumulator, 0..N times per frame) → StateWorld.Tick():
+           PlayerController.Tick (one physics step)   // singleplayer + multiplayer
+           integratedServer.Update();  network.Pump();  // singleplayer only (advances WorldServer.TickCount)
+           world.SendMove(player);
+       then ApplyInterpolation(alpha) renders the 20 tps motion smooth at the frame rate
    OnRenderFrame → StateEngine.Render() → WorldRenderer.RenderWorld(worldClient, projection)
 ```
+
+**The whole simulation runs at a fixed 20 tps; input/look/camera/render run every display frame.**
+`StateWorld` owns a real-time accumulator (`_simTimer`/`_simAccumulator`): each `Update` it adds the elapsed
+frame time (clamped to `MaxFrameTime`) and runs `Tick()` while ≥ `PlayerPhysics.TickSeconds` (capped at
+`MaxCatchUpTicks` so a stall can't spiral). A `Tick` is one player physics step, the integrated
+`WorldServer.Update()` (which increments `TickCount` — the authoritative world clock, also 20 tps on the
+dedicated server), `ServerNetwork.Pump()`, and the client `SendMove`. Between ticks the player position is
+**render-interpolated** (`PlayerController.ApplyInterpolation(alpha)`, `alpha = accumulator / TickSeconds`),
+so motion is smooth at the display rate even though the sim steps at 20 Hz. SP freezes the accumulator while
+paused (unfocused); MP keeps ticking the (remote) server. `UpdateFrequency` stays at the display rate — only
+the sim cadence is fixed. (`ServerNetwork.MaxChunksPerTick` was sized up ~6× when the streaming loop went
+from the ~120 Hz frame rate to 20 tps, to hold the same chunks/second.)
 
 **The client chunk pipeline is split across three threads so the render thread does only GL + reads:** the
 apply thread decodes/mutates chunk storage (the per-chunk copy that used to dominate the render thread), the
@@ -571,8 +587,11 @@ input.
 **Player movement & physics** (`Entities/PlayerController.cs` + `PlayerPhysics.cs`, client-only, main
 thread). The player is a **0.6 × 1.8 AABB**; `Entity.Position` is the **feet** and the camera renders at
 `Position + EyeOffset` (1.62) via `Entity.RenderPosition`/`EyeOffset` (defaults keep non-player entities a
-point). Two modes, toggled by **double-tapping Space**:
-- **Walk (default):** exact-Minecraft constants integrated on a **fixed 0.05 s (20 tps) accumulator** —
+point). `PlayerController` is split into `UpdateFrame` (per display frame: look, fly toggle, hotbar, debug
+keys, break/place, camera) and `Tick` (one fixed **20 tps** step), driven by `StateWorld`'s accumulator (see
+the game-loop section); `ApplyInterpolation(alpha)` lerps `PrevPosition→Position` so the 20 tps motion is
+smooth at the frame rate. Two modes, toggled by **double-tapping Space**:
+- **Walk (default):** exact-Minecraft constants integrated **once per 20 tps tick** —
   gravity `v_y=(v_y−0.08)·0.98`, jump `0.42`, ground accel `0.1`/friction `0.546`, air `0.02`/`0.91`, Ctrl
   sprint `1.3×`. `PlayerPhysics.MoveWithCollision` is **swept per-axis (Y→X→Z)**: it clips each axis's
   displacement against the AABBs of overlapping solid blocks (`!Block.CanPassThrough`; blocks are centred on
@@ -582,14 +601,12 @@ point). Two modes, toggled by **double-tapping Space**:
   **Auto-step:** when grounded and a horizontal axis is blocked, the move is retried raised by `StepHeight`
   (0.6 = MC: up → horizontal → drop back down) and kept only if it advanced farther — climbs slabs/partial
   blocks, still needs a jump for a full cube.
-  The 20 tps physics is **render-interpolated** to the 120 Hz frame (`InterpolatedPosition =
-  Lerp(PrevPosition, Position, accumulatorFraction)`) so the camera is smooth, not 20 Hz-steppy.
 - **Swim (in water):** when the body overlaps a `Block.IsLiquid` block (`PlayerPhysics.IsInLiquid` samples
-  the lower + mid body), `Tick` takes the water branch instead — gentle water accel, all velocity damped by
-  `WaterDrag`, **Space buoys up** (`SwimImpulse`), otherwise a slow sink (`WaterGravity` ≪ land gravity).
-  Liquid is pass-through, so swept collision + the ground probe still run; you don't fall through the floor.
-- **Fly (creative):** the original dt-scaled direct `Entity.Move` — Space/Shift up/down, Ctrl fast, **no
-  gravity/collision** (noclip). `InterpolatedPosition` just tracks `Position`.
+  the lower + mid body), the walk tick takes the water branch instead — gentle water accel, all velocity
+  damped by `WaterDrag`, **Space buoys up** (`SwimImpulse`), otherwise a slow sink (`WaterGravity` ≪ land
+  gravity). Liquid is pass-through, so swept collision + the ground probe still run; you don't fall through.
+- **Fly (creative):** the same fixed-step `Entity.Move` — Space/Shift up/down, Ctrl fast, **no
+  gravity/collision** (noclip). Also runs in the 20 tps tick and is render-interpolated like walking.
 
 The block-target raytrace uses the **eye** (`RenderPosition + EyeOffset`); `SendMove` ships the **feet**
 position, so remote players (drawn by `EntityRenderer` as 0.6×1.8 boxes, offset up by half-height to stand

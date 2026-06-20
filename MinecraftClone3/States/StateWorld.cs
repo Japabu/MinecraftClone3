@@ -50,6 +50,14 @@ namespace MinecraftClone3.States
 
         private readonly Stopwatch _phaseTimer = new Stopwatch();
 
+        // The whole simulation (player physics, server tick, network pump, send-move) runs at a fixed
+        // 20 tps off this accumulator, while input/look/camera/render keep running every display frame and
+        // interpolate. _simTimer measures real time between Update calls (the loop is the display rate).
+        private readonly Stopwatch _simTimer = new Stopwatch();
+        private double _simAccumulator;
+        private const double MaxFrameTime = 0.25;
+        private const int MaxCatchUpTicks = 5;
+
         public StateWorld(GameWindow window, bool multiplayer = false)
         {
             _window = window;
@@ -132,34 +140,71 @@ namespace MinecraftClone3.States
             if (GraphicsSettings.RenderDistanceChunks != _lastRenderDistanceChunks)
                 ApplyRenderDistance();
 
-            if (focused)
+            var active = focused;
+            if (focused && _window.KeyboardState.IsKeyPressed(Keys.Escape))
             {
-                if (_window.KeyboardState.IsKeyPressed(Keys.Escape))
-                    StateEngine.AddOverlay(new GuiPauseMenu(_window));
-                else
-                    PlayerController.Update(_window, _world);
+                StateEngine.AddOverlay(new GuiPauseMenu(_window));
+                active = false;
             }
 
             // Singleplayer freezes the world while paused; multiplayer can't pause a shared server.
-            if (focused || _multiplayer)
+            var simulate = focused || _multiplayer;
+            if (simulate)
             {
-                var a = GC.GetAllocatedBytesForCurrentThread();
-                _phaseTimer.Restart();
-                _integratedServer?.Update();
-                Profiler.AddServerTime(_phaseTimer.Elapsed.TotalMilliseconds);
-                Profiler.AddServerAlloc(GC.GetAllocatedBytesForCurrentThread() - a);
+                var dt = _simTimer.Elapsed.TotalSeconds;
+                _simTimer.Restart();
+                if (dt > MaxFrameTime) dt = MaxFrameTime;
+                _simAccumulator += dt;
 
-                a = GC.GetAllocatedBytesForCurrentThread();
-                _phaseTimer.Restart();
-                _network?.Pump();
-                Profiler.AddNetworkTime(_phaseTimer.Elapsed.TotalMilliseconds);
-                Profiler.AddNetworkAlloc(GC.GetAllocatedBytesForCurrentThread() - a);
+                var steps = 0;
+                while (_simAccumulator >= PlayerPhysics.TickSeconds && steps < MaxCatchUpTicks)
+                {
+                    Tick(active);
+                    _simAccumulator -= PlayerPhysics.TickSeconds;
+                    steps++;
+                }
+                // Don't let a long stall (alt-tab, GC) spiral into an ever-growing tick backlog.
+                if (steps == MaxCatchUpTicks) _simAccumulator = 0;
             }
+            else
+            {
+                _simTimer.Restart();
+                _simAccumulator = 0;
+            }
+
+            PlayerController.ApplyInterpolation(simulate ? (float) (_simAccumulator / PlayerPhysics.TickSeconds) : 1f);
+
+            if (active) PlayerController.UpdateFrame(_window, _world);
+
+            var c = GC.GetAllocatedBytesForCurrentThread();
+            _phaseTimer.Restart();
+            _world.Update();
+            Profiler.AddClientTime(_phaseTimer.Elapsed.TotalMilliseconds);
+            Profiler.AddClientAlloc(GC.GetAllocatedBytesForCurrentThread() - c);
+        }
+
+        /// <summary>One fixed 20 tps simulation step: the player physics (only when <paramref name="stepPlayer"/>,
+        /// i.e. focused and not paused), then the server tick, network pump, and the client's send-move.
+        /// Called zero or more times per display frame by the accumulator in <see cref="Update"/>.</summary>
+        private void Tick(bool stepPlayer)
+        {
+            if (stepPlayer) PlayerController.Tick(_window, _world);
+
+            var a = GC.GetAllocatedBytesForCurrentThread();
+            _phaseTimer.Restart();
+            _integratedServer?.Update();
+            Profiler.AddServerTime(_phaseTimer.Elapsed.TotalMilliseconds);
+            Profiler.AddServerAlloc(GC.GetAllocatedBytesForCurrentThread() - a);
+
+            a = GC.GetAllocatedBytesForCurrentThread();
+            _phaseTimer.Restart();
+            _network?.Pump();
+            Profiler.AddNetworkTime(_phaseTimer.Elapsed.TotalMilliseconds);
+            Profiler.AddNetworkAlloc(GC.GetAllocatedBytesForCurrentThread() - a);
 
             var c = GC.GetAllocatedBytesForCurrentThread();
             _phaseTimer.Restart();
             _world.SendMove(_player);
-            _world.Update();
             Profiler.AddClientTime(_phaseTimer.Elapsed.TotalMilliseconds);
             Profiler.AddClientAlloc(GC.GetAllocatedBytesForCurrentThread() - c);
         }
@@ -190,9 +235,12 @@ namespace MinecraftClone3.States
             if (ready || _loadingTimer.Elapsed.TotalSeconds > LoadingTimeoutSeconds)
             {
                 _loading = false;
+                // Start the sim clock fresh so the first frame after loading doesn't see a huge dt.
+                _simTimer.Restart();
+                _simAccumulator = 0;
                 PlayerController.ResetMouse();
                 // The camera never updated during loading; sync it to the spawn so the first world
-                // frame doesn't flash the default origin view before PlayerController.Update runs.
+                // frame doesn't flash the default origin view before PlayerController.UpdateFrame runs.
                 PlayerController.Camera.Update();
             }
         }

@@ -12,6 +12,11 @@ namespace MinecraftClone3API.Blocks
 {
     public class WorldServer : WorldBase
     {
+        /// <summary>Authoritative world clock: ticks elapsed since the world started, advanced once per
+        /// <see cref="Update"/> (20 tps in both the integrated and the dedicated server). Drives the
+        /// day/night time sync. Single writer (the tick thread); a plain field read elsewhere is fine.</summary>
+        public long TickCount { get; private set; }
+
         public static readonly TimeSpan ChunkLifetime = TimeSpan.FromSeconds(30);
         private readonly Dictionary<Vector3i, CachedChunk> _chunksReadyToAdd = new Dictionary<Vector3i, CachedChunk>();
         private readonly HashSet<Vector3i> _chunksReadyToRemove = new HashSet<Vector3i>();
@@ -304,6 +309,8 @@ namespace MinecraftClone3API.Blocks
         public override void Update()
         {
             if (_unloaded) return;
+
+            TickCount++;
 
             //Update entities
             foreach (var playerEntity in PlayerEntities)

@@ -35,8 +35,10 @@ namespace MinecraftClone3API.Networking
         }
 
         /// <summary>Cap on new chunks sent per session per tick, so the initial flood streams in
-        /// smoothly instead of stalling the tick by serializing every loaded chunk at once.</summary>
-        private const int MaxChunksPerTick = 8;
+        /// smoothly instead of stalling the tick by serializing every loaded chunk at once. Sized for the
+        /// 20 tps tick (the loop used to run at the ~120 Hz display rate); ~6× the old per-frame cap keeps
+        /// the same chunks/second streaming throughput.</summary>
+        private const int MaxChunksPerTick = 48;
 
         // Resolved once from the generator (it spirals out for a land column, so cache it).
         private Vector3 _spawnPoint;
