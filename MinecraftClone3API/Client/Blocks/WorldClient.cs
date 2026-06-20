@@ -293,8 +293,8 @@ namespace MinecraftClone3API.Client.Blocks
         // Distance (block, chunk-centre to player) at which chunks switch to coarser LOD meshes — the
         // geometry pass is triangle/primitive-setup bound at high render distance, so distant chunks (where
         // the detail is sub-pixel) are meshed at stride 2 then stride 4, cutting their face count ~4×/16×.
-        private static readonly float Lod1DistanceSq = 128f * 128f;
-        private static readonly float Lod2DistanceSq = 208f * 208f;
+        private static readonly float Lod1DistanceSq = 96f * 96f;
+        private static readonly float Lod2DistanceSq = 160f * 160f;
         private Vector3i _lastLodChunk = new Vector3i(int.MinValue);
 
         private int LodFor(Vector3 center)

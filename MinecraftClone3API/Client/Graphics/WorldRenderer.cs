@@ -340,9 +340,11 @@ namespace MinecraftClone3API.Graphics
             {
                 var renderData = renderList[i];
                 var chunkMiddle = renderData.Middle;
-                if (!viewFrustum.SpehereIntersection(chunkMiddle, Chunk.Radius)) continue;
+                // Distance cull FIRST (one subtract + dot) so the ~3000 loaded-but-out-of-render-distance
+                // chunks at high render distance are rejected before the 6-plane frustum test.
                 var lengthSq = (camera.Position - chunkMiddle).LengthSquared;
                 if (lengthSq > renderDistanceSq) continue;
+                if (!viewFrustum.SpehereIntersection(chunkMiddle, Chunk.Radius)) continue;
 
                 if (renderData.HasTransparency)
                 {
