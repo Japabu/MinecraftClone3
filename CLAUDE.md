@@ -903,6 +903,43 @@ geometry/draw-call-bound, not fill/shader-bound** — the shadow pass redraws al
 the sun's POV, so the fix is reducing geometry submitted to it (a shorter `ShadowDistance`, a smaller
 `ShadowMapSize`), not shader work.
 
+**Automated flythrough benchmark (`--benchmark`).** A GTA-style profiling session: the client boots straight
+into a fresh fixed-seed world and an automated camera flies a deterministic scripted path while the full
+`Profiler` + `ChunkTracer` record, then prints a percentile report and exits. It is the reliable, repeatable
+way to measure a render/pipeline change — *not* hand-flying with F10. Code: `Util/Benchmark.cs` (engine, so it
+ties together `Profiler`/`WorldRenderer`/the camera), wired from `Program.Main` (CLI parse + vsync-off +
+settings pin), `GuiResourceLoading` (launches a benchmark `StateWorld` instead of the menu), `StateWorld`
+(benchmark ctor: drives the camera via `Benchmark.DriveCamera` instead of player input, pumps the server
+unfocused), and `GameClient.OnRenderFrame` (`Benchmark.Tick` per frame, `Close()` on `Finished`).
+
+```
+dotnet build MinecraftClone3.sln -c Release            # ALWAYS benchmark Release — Debug understates FPS hugely
+bin/Release/net10.0/MinecraftClone3 --benchmark        # boots straight into the flythrough, prints report, exits
+  --benchmark-seconds=60   # recorded duration (default 60)        --benchmark-warmup=6   # un-recorded settle
+  --benchmark-seed=1337    # world seed                            --benchmark-rd=8       # render distance (chunks)
+  --benchmark-shadows=Medium  # Off|Low|Medium|High                --benchmark-edits=off  # skip the edit phase
+  --benchmark-time=220     # pinned day-clock seconds (sun pos)
+```
+
+The run is split into four phases that each stress a different part of the pipeline, reported separately:
+**streaming** (cruise into virgin terrain → gen + mesh fill), **orbit** (360° pan over fresh ground → frustum
+/ shadow-map churn + heavy streaming), **return** (fly back over evicted ground → re-stream / regen +
+despawn), and **edit** (skim low, break/place each frame → light BFS + delta + remesh). Determinism: the world
+is wiped+regenerated each run (`Worlds/__benchmark__`), the camera path is a pure function of elapsed time
+(frame-rate independent), and the **day clock is pinned** (`WorldRenderer.FixedTimeOfDay`, default mid-morning
+sun-up so the shadow passes run — the heavy case). Settings are **pinned in-memory** (render distance / shadow
+quality / FOV / brightness) and **`GraphicsSettings.SuppressSave` keeps the user's `GraphicsSettings.json`
+untouched** (verified byte-identical after a run). The report (also written to `benchmark-report.txt`) gives
+overall + per-phase avg / 1%-low / 0.1%-low FPS, frame-ms percentiles, the GPU per-pass split
+(shadow/geom/comp), CPU update/render ms, drawn chunks, and GC/alloc.
+
+> ⚠️ **Benchmark only on an idle machine.** The UHD 630 is an integrated GPU sharing the CPU package's
+> thermal/power budget, so concurrent CPU load (a parallel build, another process, an agent workflow doing
+> file I/O) **down-clocks the iGPU** — a captured run showed every GPU pass inflate ~70%, including the
+> fixed-cost fullscreen composition pass (a tell-tale: a constant-work pass getting slower ⇒ the clock
+> dropped, not the work). Run baseline and optimized builds back-to-back on a quiet machine to control for
+> thermal state; a single confounded run is worthless for an A/B.
+
 ## Conventions
 
 - **Comments:** self-documenting code. Only `///` XML doc comments where they earn their place — **no

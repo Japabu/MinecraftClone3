@@ -31,7 +31,11 @@ namespace MinecraftClone3API.Graphics
         /// race rule as <see cref="MinecraftClone3API.Blocks.PaletteStorage"/>).</summary>
         public bool SkyExposed = true;
 
-        public Vector3 Middle => (Chunk.Position * Chunk.Size + new Vector3i(Chunk.Size / 2)).ToVector3();
+        /// <summary>World-space chunk centre. Constant for this render-data's lifetime (the Chunk is only ever
+        /// replaced by another at the same position), so it's computed once in the ctor instead of every access
+        /// — it was recomputed per chunk in BuildVisibleSet, the shadow caster scan, and (worst) the per-pair
+        /// transparent-sort comparator.</summary>
+        public readonly Vector3 Middle;
         public bool HasTransparency => _transparentVao.UploadedCount > 0;
 
         /// <summary>Total uploaded index count (opaque + transparent) — surfaced so the profiler can
@@ -44,6 +48,7 @@ namespace MinecraftClone3API.Graphics
         public ChunkRenderData(Chunk chunk)
         {
             Chunk = chunk;
+            Middle = (chunk.Position * Chunk.Size + new Vector3i(Chunk.Size / 2)).ToVector3();
         }
 
         public void Update()

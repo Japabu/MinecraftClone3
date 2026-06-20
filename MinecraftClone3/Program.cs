@@ -147,6 +147,7 @@ namespace MinecraftClone3
             // or the GPU itself — the two stalls a CPU sampler can't see.
             Profiler.Record(e.Time, _lastUpdateMs, renderMs, _lastSwapMs, _lastGapMs, _lastGpuMs,
                 _updateCalls, renderAlloc);
+            Benchmark.Tick(e.Time, _lastUpdateMs, renderMs, _lastGpuMs);
             _updateCalls = 0;
 
             _swapTimer.Restart();
@@ -154,6 +155,9 @@ namespace MinecraftClone3
             _lastSwapMs = _swapTimer.Elapsed.TotalMilliseconds;
 
             _gapTimer.Restart();
+
+            // The benchmark closes the window when its scripted run completes; the report has already printed.
+            if (Benchmark.Finished) Close();
         }
 
         protected override void OnUnload()
@@ -184,6 +188,11 @@ namespace MinecraftClone3
             // runtime changes go through the GraphicsSettings setters (which push onto the live window).
             GraphicsSettings.Load();
 
+            // Benchmark mode (--benchmark): boot straight into the automated flythrough. VSync MUST be off so we
+            // measure uncapped frame rate, and the deterministic overrides apply in-memory (no save).
+            Benchmark.Configure(args);
+            if (Benchmark.Enabled) Benchmark.ApplySettings();
+
             var nativeWindowSettings = new NativeWindowSettings
             {
                 ClientSize = new Vector2i(1280, 720),
@@ -191,7 +200,7 @@ namespace MinecraftClone3
                 Profile = ContextProfile.Core,
                 // macOS only exposes OpenGL up to 4.1 Core.
                 APIVersion = new Version(4, 1),
-                Vsync = GraphicsSettings.VSync,
+                Vsync = Benchmark.Enabled ? VSyncMode.Off : GraphicsSettings.VSync,
                 WindowState = GraphicsSettings.Fullscreen ? WindowState.Fullscreen : WindowState.Normal
             };
 

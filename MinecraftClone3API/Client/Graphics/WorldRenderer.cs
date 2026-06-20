@@ -39,6 +39,14 @@ namespace MinecraftClone3API.Graphics
             => (int) ((_sortCameraPos - chunk2.Middle).LengthSquared * 1000 -
                       (_sortCameraPos - chunk1.Middle).LengthSquared * 1000);
 
+        // Opaque chunks are drawn FRONT-TO-BACK (near first) so early-Z rejects occluded far fragments before
+        // the costly 3-MRT + texture-array fragment shader runs — pure overdraw reduction, identical pixels
+        // (depth resolves visibility either way). Without this the opaque list was in arbitrary RenderList
+        // order, shading then overwriting hidden fragments on the fill-bound iGPU.
+        private static readonly Comparison<ChunkRenderData> _opaqueSortNearFirst = (chunk1, chunk2)
+            => ((_sortCameraPos - chunk1.Middle).LengthSquared).CompareTo(
+                (_sortCameraPos - chunk2.Middle).LengthSquared);
+
         // Refilled in place each frame instead of allocating a fresh Plane[6] + 6 planes per call.
         private static readonly Frustum _viewFrustum = new Frustum();
 
@@ -109,12 +117,19 @@ namespace MinecraftClone3API.Graphics
         private const float DayLengthSeconds = 240f;
         private static readonly System.Diagnostics.Stopwatch _dayClock = System.Diagnostics.Stopwatch.StartNew();
 
+        /// <summary>When set (the benchmark sets it), the day clock is pinned to this many seconds instead of
+        /// the wall clock, so every benchmark run sees identical sun/shadow conditions. Null in normal play.</summary>
+        public static double? FixedTimeOfDay;
+
+        /// <summary>Seconds feeding the day/night cycle — the pinned benchmark value if set, else wall time.</summary>
+        private static double DayClockSeconds => FixedTimeOfDay ?? _dayClock.Elapsed.TotalSeconds;
+
         /// <summary>Sun colour/intensity for the current time of day: bright warm white at noon, orange at
         /// the horizon (sunrise/sunset), a dim blue at night. Multiplied by the baked sky factor in the
         /// composition shader.</summary>
         private static Vector3 SunColor()
         {
-            var t = 0.25f + (float) (_dayClock.Elapsed.TotalSeconds / DayLengthSeconds);
+            var t = 0.25f + (float) (DayClockSeconds / DayLengthSeconds);
             var sunHeight = MathF.Sin(t * MathHelper.TwoPi);
 
             var day = MathHelper.Clamp((sunHeight + 0.2f) / 0.4f, 0f, 1f);
@@ -134,7 +149,7 @@ namespace MinecraftClone3API.Graphics
         /// caves — those stay dark unless a block light reaches them. Tune for darker/brighter ambient.</summary>
         private static Vector3 SkyAmbient()
         {
-            var t = 0.25f + (float) (_dayClock.Elapsed.TotalSeconds / DayLengthSeconds);
+            var t = 0.25f + (float) (DayClockSeconds / DayLengthSeconds);
             var sunHeight = MathF.Sin(t * MathHelper.TwoPi);
             var day = MathHelper.Clamp((sunHeight + 0.2f) / 0.4f, 0f, 1f);
 
@@ -149,7 +164,7 @@ namespace MinecraftClone3API.Graphics
         /// horizon, shadow pass skipped). The small Z tilt keeps shadows off the world axes.</summary>
         private static Vector3 SunDirection()
         {
-            var t = 0.25f + (float) (_dayClock.Elapsed.TotalSeconds / DayLengthSeconds);
+            var t = 0.25f + (float) (DayClockSeconds / DayLengthSeconds);
             var angle = t * MathHelper.TwoPi;
             return Vector3.Normalize(new Vector3(MathF.Cos(angle), MathF.Sin(angle), 0.35f));
         }
@@ -329,7 +344,7 @@ namespace MinecraftClone3API.Graphics
             for (var i = 0; i < renderList.Count; i++)
             {
                 var renderData = renderList[i];
-                var chunkMiddle = (renderData.Chunk.Position * Chunk.Size + new Vector3i(Chunk.Size / 2)).ToVector3();
+                var chunkMiddle = renderData.Middle;
                 if (!viewFrustum.SpehereIntersection(chunkMiddle, Chunk.Radius)) continue;
                 var lengthSq = (camera.Position - chunkMiddle).LengthSquared;
                 if (lengthSq > renderDistanceSq) continue;
@@ -548,7 +563,7 @@ namespace MinecraftClone3API.Graphics
             var toSun = SunDirection();
             GL.Uniform3(comp.GetUniformLocation("uCameraPos"), camera.Position.X, camera.Position.Y, camera.Position.Z);
             GL.Uniform3(comp.GetUniformLocation("uSunDirection"), toSun.X, toSun.Y, toSun.Z);
-            GL.Uniform1(comp.GetUniformLocation("uTime"), (float) (_dayClock.Elapsed.TotalSeconds % 3600.0));
+            GL.Uniform1(comp.GetUniformLocation("uTime"), (float) (DayClockSeconds % 3600.0));
             ClientResources.ScreenRectVao.Draw();
             GraphicsDebug.PopGroup();
 

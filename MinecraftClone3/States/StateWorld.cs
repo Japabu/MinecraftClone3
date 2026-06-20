@@ -32,6 +32,7 @@ namespace MinecraftClone3.States
 
         private readonly GameWindow _window;
         private readonly bool _multiplayer;
+        private readonly bool _benchmark;
 
         private readonly EntityPlayer _player;
         private readonly WorldClient _world;
@@ -51,18 +52,23 @@ namespace MinecraftClone3.States
         private readonly Stopwatch _phaseTimer = new Stopwatch();
 
         /// <summary>Singleplayer: runs the given world in an in-process server over a loopback connection.</summary>
-        public StateWorld(GameWindow window, WorldInfo world) : this(window, false, world) { }
+        public StateWorld(GameWindow window, WorldInfo world) : this(window, false, world, false) { }
+
+        /// <summary>Benchmark: singleplayer world driven by the automated <see cref="Benchmark"/> flythrough.</summary>
+        public StateWorld(GameWindow window, WorldInfo world, bool benchmark) : this(window, false, world, benchmark) { }
 
         /// <summary>Multiplayer: connects to the dedicated server over TCP.</summary>
-        public StateWorld(GameWindow window, bool multiplayer = false) : this(window, multiplayer, null) { }
+        public StateWorld(GameWindow window, bool multiplayer = false) : this(window, multiplayer, null, false) { }
 
-        private StateWorld(GameWindow window, bool multiplayer, WorldInfo world)
+        private StateWorld(GameWindow window, bool multiplayer, WorldInfo world, bool benchmark)
         {
             _window = window;
             _multiplayer = multiplayer;
+            _benchmark = benchmark;
 
-            // Grab the cursor so relative mouse movement drives the camera (FPS-style).
-            _window.CursorState = CursorState.Grabbed;
+            // Grab the cursor so relative mouse movement drives the camera (FPS-style). The benchmark drives the
+            // camera itself and runs unattended, so it must NOT grab the cursor (that would trap the user's mouse).
+            _window.CursorState = benchmark ? CursorState.Hidden : CursorState.Grabbed;
             PlayerController.ResetMouse();
 
             _player = new EntityPlayer {Position = SpawnPos};
@@ -138,7 +144,13 @@ namespace MinecraftClone3.States
             if (GraphicsSettings.RenderDistanceChunks != _lastRenderDistanceChunks)
                 ApplyRenderDistance();
 
-            if (focused)
+            if (_benchmark)
+            {
+                // The automated flythrough drives the camera (and issues edits) regardless of window focus.
+                Benchmark.DriveCamera(_player, _world);
+                PlayerController.Camera.Update();
+            }
+            else if (focused)
             {
                 if (_window.KeyboardState.IsKeyPressed(Keys.Escape))
                     StateEngine.AddOverlay(new GuiPauseMenu(_window));
@@ -146,8 +158,9 @@ namespace MinecraftClone3.States
                     PlayerController.Update(_window, _world);
             }
 
-            // Singleplayer freezes the world while paused; multiplayer can't pause a shared server.
-            if (focused || _multiplayer)
+            // Singleplayer freezes the world while paused; multiplayer can't pause a shared server. The
+            // benchmark always pumps so chunks keep streaming/regenerating even with the window unfocused.
+            if (focused || _multiplayer || _benchmark)
             {
                 var a = GC.GetAllocatedBytesForCurrentThread();
                 _phaseTimer.Restart();
@@ -200,6 +213,8 @@ namespace MinecraftClone3.States
                 // The camera never updated during loading; sync it to the spawn so the first world
                 // frame doesn't flash the default origin view before PlayerController.Update runs.
                 PlayerController.Camera.Update();
+                // Anchor the automated flythrough at the spawn now that terrain is under the player.
+                if (_benchmark) Benchmark.Begin(_player.Position);
             }
         }
 

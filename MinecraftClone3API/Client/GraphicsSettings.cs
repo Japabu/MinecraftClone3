@@ -51,6 +51,10 @@ namespace MinecraftClone3API.Client
 
         private static Data _data = new Data();
 
+        /// <summary>When true, setters apply in-memory but don't persist to disk — the benchmark sets this so
+        /// its deterministic overrides (render distance / shadow quality) don't clobber the user's saved file.</summary>
+        public static bool SuppressSave;
+
         public static VSyncMode VSync
         {
             get => _data.VSync;
@@ -119,6 +123,7 @@ namespace MinecraftClone3API.Client
 
         private static void Save()
         {
+            if (SuppressSave) return;
             try
             {
                 File.WriteAllText(GamePaths.GraphicsSettingsFile,
