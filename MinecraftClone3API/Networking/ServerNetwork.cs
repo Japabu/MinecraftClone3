@@ -30,8 +30,9 @@ namespace MinecraftClone3API.Networking
         /// smoothly instead of stalling the tick by serializing every loaded chunk at once.</summary>
         private const int MaxChunksPerTick = 8;
 
-        private static readonly Vector3 Spawn = new Vector3(0, 12, 0);
-        private static readonly Vector3i TorchPos = new Vector3i(0, 10, 0);
+        // Resolved once from the generator (it spirals out for a land column, so cache it).
+        private Vector3 _spawnPoint;
+        private bool _spawnResolved;
 
         private readonly WorldServer _world;
         private readonly List<ClientSession> _sessions = new List<ClientSession>();
@@ -64,7 +65,19 @@ namespace MinecraftClone3API.Networking
             _world = world;
         }
 
-        public Vector3 SpawnPosition => Spawn;
+        public Vector3 SpawnPosition
+        {
+            get
+            {
+                if (!_spawnResolved)
+                {
+                    _spawnPoint = _world.SpawnPosition;
+                    _spawnResolved = true;
+                }
+
+                return _spawnPoint;
+            }
+        }
 
         /// <summary>Registers an already-connected endpoint (e.g. the integrated loopback server side).</summary>
         public void AddConnection(IConnection connection) => _pending.Enqueue(connection);
@@ -157,11 +170,11 @@ namespace MinecraftClone3API.Networking
             if (session.LoggedIn) return;
 
             session.EntityId = _nextEntityId++;
-            session.Player = new EntityPlayer {Position = Spawn};
+            session.Player = new EntityPlayer {Position = SpawnPosition};
             session.LoggedIn = true;
             _world.AddPlayer(session.Player);
 
-            session.Connection.Send(new LoginAcceptPacket {EntityId = session.EntityId, Spawn = Spawn});
+            session.Connection.Send(new LoginAcceptPacket {EntityId = session.EntityId, Spawn = SpawnPosition});
 
             //Tell the new client about everyone already present, and everyone else about the newcomer.
             foreach (var other in _sessions)
@@ -217,8 +230,11 @@ namespace MinecraftClone3API.Networking
 
         private void PlaceTorch()
         {
-            if (_torchPlaced || _world.IsBlockInEmptyChunk(TorchPos)) return;
-            _world.SetBlock(TorchPos, GameRegistry.GetBlock("Vanilla:Torch"));
+            // A few blocks beside the spawn, one above the ground (spawn sits two above the surface).
+            var spawn = SpawnPosition;
+            var torchPos = new Vector3i((int) spawn.X + 2, (int) spawn.Y - 1, (int) spawn.Z);
+            if (_torchPlaced || _world.IsBlockInEmptyChunk(torchPos)) return;
+            _world.SetBlock(torchPos, GameRegistry.GetBlock("Vanilla:Torch"));
             _torchPlaced = true;
         }
 

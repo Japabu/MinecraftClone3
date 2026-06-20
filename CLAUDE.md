@@ -9,9 +9,10 @@
 > Treat editing this file as part of "done," not an afterthought.
 
 A from-scratch Minecraft-like voxel engine in C# on OpenTK (OpenGL). Custom deferred renderer, plugin
-system, chunked world with RGB block-light + sky-light propagation and a dynamic day/night cycle, and
-**client/server multiplayer** (singleplayer runs an in-process server over a loopback connection;
-multiplayer connects to a dedicated server over TCP).
+system, chunked world with RGB block-light + sky-light propagation and a dynamic day/night cycle, a
+**plugin-extensible world generator** (engine framework + vanilla content: biomes, ores, trees, caves,
+oceans), and **client/server multiplayer** (singleplayer runs an in-process server over a loopback
+connection; multiplayer connects to a dedicated server over TCP).
 
 ---
 
@@ -30,10 +31,12 @@ MinecraftClone3.sln
 │   ├── IO/                 GamePaths, FileSystem*, ResourceReader, CommonResources, plugin file systems
 │   ├── Networking/         IConnection, Packet(s), Loopback/Tcp connections, ServerNetwork, ClientSession
 │   ├── Plugins/            PluginManager, IPlugin, PluginContext
-│   └── Util/               GameRegistry, BlockRegistry, ChunkMesher, WorldSerializer, CompressionHelper, I18N
+│   ├── WorldGen/           Dimension, Biome, Feature, Carver, BiomeSource, NoiseChunkGenerator, region, RNG
+│   └── Util/               GameRegistry, BlockRegistry, ChunkMesher, WorldSerializer, WorldMetadata, OpenSimplexNoise, I18N
 ├── MinecraftClone3         Client executable (OpenTK GameWindow, 120 Hz). Owns Program + States/.
 ├── MinecraftClone3Server   Dedicated headless server executable (no GL).
-└── VanillaPlugin           Content plugin: the actual blocks (Stone, Dirt, Grass, Torch, ...).
+└── VanillaPlugin           Content plugin: blocks (Stone, Sand, OakLog, Water, ores, ...) + the Overworld
+                            dimension, biomes, ore/tree features (VanillaPlugin/WorldGen/).
 ```
 
 `MinecraftClone3` and `MinecraftClone3Server` are thin shells; nearly everything is in the API library.
@@ -52,7 +55,10 @@ dotnet run --project MinecraftClone3Server -c Debug # run the dedicated server (
 
 The server listens on **127.0.0.1:25565** (`ServerNetwork.DefaultPort`); the client's multiplayer button
 connects there (`StateWorld.ServerAddress`). World saves live in `~/.local/share/MinecraftClone3/World`
-(see `GamePaths`).
+(see `GamePaths`); the generation seed is persisted to `World/level.dat`. **After a worldgen change, delete
+`~/.local/share/MinecraftClone3/World`** — chunks load disk-first, so old saves would otherwise mask the new
+generator (and mint a fresh random seed). Block textures come from a resource pack (a 1.13+ Minecraft client
+jar) dropped in `~/.local/share/MinecraftClone3/ResourcePacks/`; with none, blocks render with placeholders.
 
 ---
 
@@ -146,6 +152,81 @@ raytrace) always see a structurally consistent snapshot. **Do not introduce a se
 
 ---
 
+## World generation: an engine framework, vanilla owns the content
+
+Generation is a **plugin-extensible framework in the engine** (`MinecraftClone3API/WorldGen/`) plus
+**concrete content in `VanillaPlugin`** (the Overworld dimension, biomes, ores, trees). The engine provides
+the machinery and reusable primitives; it bakes in **no** vanilla blocks or biome values. A third-party
+plugin adds a biome or feature by registering one — no Vanilla edits.
+
+```
+            Dimension (RegistryEntry)            VanillaPlugin/WorldGen/
+            - abstract CreateGenerator(seed)  ◀── OverworldDimension : Dimension
+            - shared per-step feature lists       (registered "Vanilla:Overworld")
+            - AddFeature(step, feature)           CreateGenerator wires a NoiseChunkGenerator
+                     │
+                     ▼ CreateGenerator(seed)
+   IChunkGenerator ── NoiseChunkGenerator (the reusable noise generator)
+   - Generate(CachedChunk, pos)        - SeaLevel=8, BedrockY=-32, WorldTop=96, MinChunkY=-2..MaxChunkY=6
+   - Spawn(), Min/MaxChunkY            - seeded OpenSimplexNoise per field (continental/hills/peaks/temp/humidity)
+        uses ▶ BiomeSource (ClimateBiomeSource: nearest biome in temp/humidity Voronoi)
+        uses ▶ List<Carver>  (NoiseCaveCarver: 3D-noise spaghetti caves)
+        uses ▶ Biome (climate point, surface blocks, height bias, per-step features)
+        uses ▶ Feature (OreFeature, TreeFeature) via IChunkGenRegion + WorldGenRandom
+```
+
+**Registries.** `GameRegistry` holds `Registry<Biome>`/`Registry<Feature>`/`Registry<Dimension>` alongside
+the block registries; `PluginContext.Register(Biome|Feature|Dimension)` prefixes with the plugin id exactly
+like `Register(Block)`. All three are `RegistryEntry` (so they get `prefix:name` keys). Lifecycle: plugins
+register **blocks → features → biomes → the dimension in `Load`**, then attach dimension-shared features
+(the 4 ore veins) in **`PostLoad`** (so any other plugin's biomes/features already exist). `WorldServer` is
+constructed *after* all `PostLoad`, so `Dimension.CreateGenerator` sees a complete registry — its
+`ClimateBiomeSource` enumerates **every** registered biome tagged `Vanilla:Overworld`, so a plugin biome
+auto-participates.
+
+**Per-chunk pipeline (`NoiseChunkGenerator.Generate`, no neighbour block reads):**
+1. **Biome + surface-height map** for the chunk's 16×16 columns (reused scratch). Biome is climate
+   (temp/humidity Voronoi) for land, with **height-derived overrides**: base height well below sea → Ocean,
+   shoreline band → Beach. Surface height = base noise + biome `HeightBias` + peaks·`HeightVariation`.
+2. **Base terrain** — bedrock at `BedrockY`, stone up to the surface.
+3. **Surface skin** — biome `TopBlock`/`FillerBlock` above sea, `UnderwaterBlock` (sand/gravel) below.
+4. **Water** — `Vanilla:Water` fills air below `SeaLevel` on ocean columns.
+5. **Carvers** — `NoiseCaveCarver` overwrites stone with air below the surface skin (never bedrock).
+6. **Sky seed** — open air above the surface → sky 15; the water column dims one level per block of depth
+   (bright surface, dark deep); carved caves keep sky 0. Preserves the `IsEmpty` fast path (above-terrain
+   air chunks only `SetSkyLight`, stay unstreamed; the client falls back to sky 15 for unloaded chunks).
+7. **Decoration** — for the chunk and each origin in a **±1-chunk XZ margin**, seed a `WorldGenRandom` from
+   `(seed, originChunk, feature.Salt)` and run the dimension's shared features (ores) then the origin's
+   centre-biome features (trees) for each `DecorationStep` (Ores, Vegetation). Features emit in **absolute
+   coordinates through `IChunkGenRegion`, which clips writes to the chunk being generated** — so a tree or
+   vein straddling a border is computed identically by both chunks (Minecraft's population-seed model) with
+   **no neighbour writes**. Decoration runs for every chunk the feature's Y-range can reach (it's gated by a
+   local surface-height check), so a feature crossing a vertical chunk boundary is stamped consistently by
+   both vertical chunks (the RNG is independent of chunk Y).
+
+**Determinism & threading.** Seeds are **process-stable**: `OpenSimplexNoise` is a seeded instance (Fisher–
+Yates perm from a SplitMix64 stream), `WorldGenRandom` is a struct SplitMix64 PRNG, and `Feature.Salt` is an
+**FNV-1a** hash of the registry key (never `string.GetHashCode`, which is per-run randomized). `Generate`
+runs only on the server **LoadThread** (single writer — Invariant 5 holds; the generator's column scratch is
+a plain reused field). The **seed is persisted** to `level.dat` (`WorldMetadata.LoadOrCreateSeed`,
+`GamePaths.LevelFile`); both call sites (`StateWorld` singleplayer, `MinecraftClone3Server`) pass it to
+`new WorldServer(long seed)`, and both resolve the same `WorldDir`, so they agree automatically. The
+generator resolves `GameRegistry.GetDimension("Vanilla:Overworld")`; if absent it logs and falls back to a
+`FlatChunkGenerator` (empty void) so the engine still runs without Vanilla. **Generation is server-only** —
+clients receive baked chunks, so there is no wire/client change (the new registries load client-side too but
+are unused there).
+
+**LoadThread band.** The interest scan loads the **full `MinChunkY..MaxChunkY` vertical column** within
+`TerrainRadius` (16 chunks, matched to `ServerNetwork.ViewDistance`/`RenderDistance` = 256) around each
+player — replacing the old thin surface slab, because the world now has real vertical extent (oceans, caves,
+mountains). Per-tick cost is unchanged (16-chunk cap, distance sort, dedup); resident chunk count grows
+(tune `TerrainRadius`/`ChunkLifetime`).
+
+**Spawn** comes from `NoiseChunkGenerator.Spawn()` (spiral out from origin for the first land column);
+`ServerNetwork` caches it and seeds `LoginAccept`.
+
+---
+
 ## Networking
 
 `Networking/Packet.cs` defines the `PacketId` enum, the `Packet` base (`Write`/`Read` over
@@ -233,7 +314,8 @@ at `MaxChunksPerTick` per session per tick — no unload pass) → **flush block
 
 ```
  WorldServer (background, started in ctor):
-   LoadThread    terrain gen + disk load around each player in PlayerEntities; fills _chunksReadyToAdd
+   LoadThread    disk load else _generator.Generate (world gen) over the full vertical band around each
+                 player in PlayerEntities; fills _chunksReadyToAdd. Sole writer of generated chunks.
    UnloadThread  saves + evicts chunks idle > 30s; fills _chunksReadyToRemove
    UpdateThread  drains _queuedLightUpdates → UpdateLightValues (RGB BFS flood) then UpdateSkyValues
                  (sky BFS flood, same edited cell) per edit; blocks on _lightSignal (an AutoResetEvent set
@@ -477,6 +559,21 @@ opens with the saved vsync/fullscreen choice.
 (`ClientResources.Load`, `BoundingBoxRenderer.Load`, `EntityRenderer.Load`, `BlockTextureManager.Upload`).
 Plugin model JSON and PNGs are read CPU-side via StbImage, so they load fine headless; only the texture-array
 *upload* is GL.
+
+**Animated textures (frame strips).** A texture whose height is a whole multiple of its width is a Minecraft
+animation sheet (e.g. `water_still` = 16×512, 32 frames; also lava/fire). `ResourceReader.ReadBlockTexture`
+detects this, and `BlockTextureManager.LoadAnimatedTexture` slices it into square per-frame layers and uploads
+**all** of them, plus the `.mcmeta` `frametime`, into `BlockTextureManager.AnimatedTextures`. Block faces
+currently sample **frame 0** only (textures are static), but every frame is retained so a future animator can
+cycle them with no re-slice. Without this, a strip would land in the square texture array mismapped.
+
+**Water.** Vanilla ships no cube model for water (its `model.json` is empty — vanilla uses a bespoke fluid
+renderer), and `water_still.png` is a grey **tint-mask** (vanilla multiplies it by a per-biome water colour).
+So `VanillaPlugin` authors a minimal cube model (`Vanilla/Models/Water.json`, parent `System/Models/Block`)
+that references the **real** `minecraft:block/water_still` texture with `tintindex 0`, and `BlockWater`
+returns the vanilla default water blue from `GetTintColor` (the mesher drops tint *alpha*, so the
+translucency comes from the texture's own alpha, ~0.7). This is Tier-A static water; an animated/reflective
+surface is deferred (see "Known rough edges").
 
 Because server-side light simulation calls `Block.GetLightLevel`, **block code that runs on the server must
 not touch client/GL/window state** (this is what crashed `BlockTorch` — it read the keyboard).
@@ -828,6 +925,40 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
 
 ## Known rough edges / deferred work
 
+- **Water is Tier-A static (no animated/reflective surface).** The block is present and translucent (real
+  `water_still` frame-0 texture, tinted blue), but the surface doesn't move or reflect. The agreed next step is
+  Tier B (procedural sine-wave normals + Fresnel **sky** reflection + sun specular — no pipeline change) then
+  optionally Tier C (a **forward water pass after composition** reading the opaque scene colour/depth for
+  refraction + depth absorption). Water is also **not a fluid**: it doesn't flow, level, or fill — it's a
+  static block placed by gen below sea level. The block (`Vanilla:Water`) is decoupled from its shader, so the
+  look is a self-contained follow-up.
+- **Animated textures show frame 0 only.** Strip textures are sliced and *all* frames are uploaded +
+  retained (`BlockTextureManager.AnimatedTextures` with `frametime`), but nothing cycles them yet. Adding the
+  animator (advance the sampled layer over time, by remesh-free means — a per-animated-texture uniform/layer
+  swap) is the deferred future path. The `.mcmeta` `frames`/`width`/`height` reorder fields are ignored (only
+  square top-to-bottom strips at default order are handled — covers water/lava/fire).
+- **Biome height is climate-driven with hard borders (no height blend).** Each column picks one biome and
+  applies its `HeightBias`/`HeightVariation`, so adjacent biomes with very different bias (only Mountains is
+  large) leave a foothill cliff at the border rather than a smooth blend — Minecraft pre-1.18 had this too.
+  Blending would need sampling several biomes per column. Ocean/Beach are **height-derived overrides** on the
+  base height, so an ocean-*variant* biome from a plugin isn't selectable (the climate source only sees
+  land-tagged climate biomes); supporting plugin ocean biomes needs a small extension. Deferred.
+- **Gen skips the light BFS, so some sky/light is approximate** (self-corrects on the first nearby edit, which
+  triggers the real BFS): no lateral sky spill into cave mouths or under overhangs, dense canopy doesn't shadow
+  the ground (leaves keep their seeded sky 15), deep water dims by a simple per-block gradient not a flood.
+  Caves carved below sea level are **air, not water** (no fluid fill).
+- **Decoration determinism relies on the ±1-chunk margin + bounded feature reach.** A feature that writes more
+  than ~1 chunk from its origin column would clip at borders (keep tree/vein extents small). Decoration is also
+  recomputed per *vertical* chunk in the band (the RNG is Y-independent so it's consistent, but a tall column of
+  air chunks re-runs the feature attempts before clipping them away) — bounded by the local surface-height gate;
+  a tighter per-step Y gate is a possible optimization. Ore/`SurfaceHeight` recompute inside the carver/features
+  duplicates the per-column noise the fill already did — background cost, not yet memoized.
+- **Single active dimension.** `WorldServer` binds one dimension (`Vanilla:Overworld`); multi-dimension travel
+  and per-chunk dimension metadata in saves are deferred. The generator's column scratch assumes the single
+  LoadThread writer (Invariant 5).
+- **Resident-chunk growth from the vertical band.** `TerrainRadius` (16) × the full `MinChunkY..MaxChunkY`
+  (9 chunks) is a much larger loaded set than the old thin surface slab; the `UnloadThread` still evicts idle
+  chunks but the working set is bigger. Tune `TerrainRadius`/`ChunkLifetime` if memory matters.
 - **Sun shadows are one low-res map capped at `ShadowDistance` (160).** A single shadow map covers
   `[ShadowNear, ShadowDistance]` and fades out at the edge; geometry past it (out to the 256-unit render
   distance) has no sun shadows, and the map is intentionally low-res (the **default favours low-res/soft
@@ -905,8 +1036,9 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
   singleplayer only because the integrated server shares the client process. Placement metadata should come
   from the place *request*, not a live keyboard read on the server.
 - **Sky light is "gen-seed + simple BFS" — known edit-time limitations (accepted scope).** At chunk-gen the
-  sky container is seeded exactly from the heightmap (open-air cells = 15), so untouched terrain is perfectly
-  lit. On edit, `UpdateSkyValues` floods sky like block light but with two simplifications: (1) **sky
+  `NoiseChunkGenerator` seeds the sky container directly (open air above the surface = 15, water dims with
+  depth, caves stay 0; see the world-generation section), so untouched terrain is well lit without a flood.
+  On edit, `UpdateSkyValues` floods sky like block light but with two simplifications: (1) **sky
   attenuates −1 in every direction including down**, so a cell reached only by downward *spread* dims with
   depth (note: a freshly-dug straight shaft does *not* dim — each dug cell re-seeds at 15 via `SkyExposed`'s
   straight-up scan; the dimming shows in caves/tunnels reached sideways, which is the desired dark-cave look);

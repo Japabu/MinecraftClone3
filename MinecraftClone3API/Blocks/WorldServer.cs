@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Threading;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Util;
+using MinecraftClone3API.WorldGen;
 using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Blocks
@@ -67,10 +68,14 @@ namespace MinecraftClone3API.Blocks
         // Reused by the unload scan (sole user) so the per-second sweep allocates no result list.
         private readonly List<Chunk> _unloadScratch = new List<Chunk>();
 
-        // Terrain block ids resolved once (the registry is array/dict-backed but the keys are strings):
-        // LoadChunk used to do two GameRegistry.GetBlock(string) lookups per block in its inner loop.
-        private Block _terrainGrass;
-        private Block _terrainDirt;
+        // Horizontal radius (in chunks) of the load band; matches ServerNetwork.ViewDistance /
+        // RenderDistance (256 ≈ 16 chunks) so the streamer never wants a chunk the load thread hasn't
+        // loaded. The full BedrockY..WorldTop vertical column is loaded within this radius.
+        private const int TerrainRadius = 16;
+
+        // The active world generator (resolved from the Vanilla:Overworld dimension, or a void fallback if
+        // no dimension is registered). Sole writer of generated chunks runs on the load thread.
+        private readonly IChunkGenerator _generator;
 
         // Per-block authoritative changes (edits + light propagation) queued for the network layer to
         // flush as compact BlockChanges packets instead of resending whole GZip'd chunks. Fed by the
@@ -98,8 +103,16 @@ namespace MinecraftClone3API.Blocks
 
         private bool _unloaded;
 
-        public WorldServer()
+        private const string OverworldDimensionKey = "Vanilla:Overworld";
+
+        public Vector3 SpawnPosition => _generator.Spawn().ToVector3();
+
+        public WorldServer(long seed)
         {
+            _generator = GameRegistry.TryGetDimension(OverworldDimensionKey, out var dimension)
+                ? dimension.CreateGenerator(seed)
+                : CreateFallbackGenerator();
+
             _loadSort = (v0, v1) =>
                 (int) (v0.ToVector3() - _loadSortOrigin.ToVector3()).LengthSquared -
                 (int) (v1.ToVector3() - _loadSortOrigin.ToVector3()).LengthSquared;
@@ -111,6 +124,13 @@ namespace MinecraftClone3API.Blocks
             _unloadThread.Start();
             _loadThread.Start();
             _updateThread.Start();
+        }
+
+        private static IChunkGenerator CreateFallbackGenerator()
+        {
+            Logger.Error($"Dimension \"{OverworldDimensionKey}\" is not registered — generating an empty " +
+                         "world. Is the Vanilla plugin loaded?");
+            return new FlatChunkGenerator();
         }
 
         public int ChunksLoadedCount => LoadedChunks.Count;
@@ -399,12 +419,12 @@ namespace MinecraftClone3API.Blocks
 
                     _loadDedup.Clear();
 
-                    //Load 7x7x7 around player
-                    for (var x = -3; x <= 3; x++)
-                        for (var y = -3; y <= 3; y++)
-                            for (var z = -3; z <= 3; z++)
+                    //Load the full BedrockY..WorldTop vertical band within TerrainRadius around the player.
+                    for (var x = -TerrainRadius; x <= TerrainRadius; x++)
+                        for (var z = -TerrainRadius; z <= TerrainRadius; z++)
+                            for (var y = _generator.MinChunkY; y <= _generator.MaxChunkY; y++)
                             {
-                                var chunkPos = playerChunk + new Vector3i(x, y, z);
+                                var chunkPos = new Vector3i(playerChunk.X + x, y, playerChunk.Z + z);
                                 if (!_loadDedup.Add(chunkPos)) continue;
                                 if (_populatedChunks.ContainsKey(chunkPos) || _chunksReadyToAdd.ContainsKey(chunkPos))
                                 {
@@ -415,32 +435,6 @@ namespace MinecraftClone3API.Blocks
 
                                 playerChunksToLoad.Add(chunkPos);
                             }
-
-
-                    //Load 61x3x61 terrain if overworld
-                    //heightmap(x*Chunk.Size + Chunk.Size/2, z*Chunk.Size + Chunk.Size/2)
-
-                    var height = 0 + Chunk.Size/2;
-                    var heightMapChunkY = ChunkInWorld(0, height, 0).Y;
-                    for (var x = -30; x <= 30; x++)
-                        for (var y = -1; y <= 1; y++)
-                            for (var z = -30; z <= 30; z++)
-                            {
-                                if (x <= 3 && x >= -3 && y <= 3 && y >= -3 && z <= 3 && z >= -3) continue;
-
-                                var chunkPos = new Vector3i(playerChunk.X + x, heightMapChunkY + y, playerChunk.Z + z);
-                                if (!_loadDedup.Add(chunkPos)) continue;
-
-                                if (_populatedChunks.ContainsKey(chunkPos) || _chunksReadyToAdd.ContainsKey(chunkPos))
-                                {
-                                    //Reset chunk time so it will not be unloaded
-                                    if (LoadedChunks.TryGetValue(chunkPos, out var chunk)) chunk.Time = DateTime.Now;
-                                    continue;
-                                }
-
-                                playerChunksToLoad.Add(chunkPos);
-                            }
-
 
 
                     _loadSortOrigin = playerChunk;
@@ -784,35 +778,8 @@ namespace MinecraftClone3API.Blocks
             var chunk = WorldSerializer.LoadChunk(this, position);
             if (chunk != null) return chunk;
 
-            //TODO: implement terrain gen
             chunk = new CachedChunk(this, position);
-            var worldMin = position * Chunk.Size;
-
-            var grass = _terrainGrass ??= GameRegistry.GetBlock("Vanilla:Grass");
-            var dirt = _terrainDirt ??= GameRegistry.GetBlock("Vanilla:Dirt");
-
-            for (var x = 0; x < Chunk.Size; x++)
-            for (var z = 0; z < Chunk.Size; z++)
-            {
-
-                var height = OpenSimplexNoise.Generate((worldMin.X + x)*0.06f, (worldMin.Z + z)*0.06f)*5;
-                height += OpenSimplexNoise.Generate((worldMin.X + x) * 0.1f, (worldMin.Z + z) * 0.1f)*2;
-                //height += OpenSimplexNoise.Generate((worldMin.X + x) * 0.005f, (worldMin.Z + z) * 0.005f) * 10;
-
-
-                for (var y = 0; y < Chunk.Size; y++)
-                {
-                    var worldY = worldMin.Y + y;
-                    //Pure heightmap (no overhangs), so a column's air cells are exactly those above the
-                    //surface: seed them to full sky directly (exact, no BFS needed at gen).
-                    if (worldY <= height)
-                        chunk.SetBlock(x, y, z, (worldY == (int) height) ? grass : dirt);
-                    else
-                        chunk.SetSkyLight(x, y, z, LightLevel.SkyMax);
-                }
-            }
-
-
+            _generator.Generate(chunk, position);
             return chunk;
         }
     }

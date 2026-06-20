@@ -10,7 +10,7 @@ namespace MinecraftClone3API.Blocks
     /// <see cref="Chunk(CachedChunk)"/> which adopts its paletted storage by reference. Keeping the build
     /// off the live <see cref="Chunk"/> type means the publish step is a cheap reference handoff.
     /// </summary>
-    internal class CachedChunk
+    public class CachedChunk
     {
         public readonly WorldBase World;
         public readonly Vector3i Position;

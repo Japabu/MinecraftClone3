@@ -2,3 +2,16 @@
 vanilla.blocks.Stone=Stone
 vanilla.blocks.Dirt=Dirt
 vanilla.blocks.Grass=Grass
+vanilla.blocks.Sand=Sand
+vanilla.blocks.Gravel=Gravel
+vanilla.blocks.Snow=Snow Block
+vanilla.blocks.Bedrock=Bedrock
+vanilla.blocks.CoalOre=Coal Ore
+vanilla.blocks.IronOre=Iron Ore
+vanilla.blocks.GoldOre=Gold Ore
+vanilla.blocks.DiamondOre=Diamond Ore
+vanilla.blocks.OakLog=Oak Log
+vanilla.blocks.Leaves=Oak Leaves
+vanilla.blocks.Water=Water
+vanilla.blocks.Torch=Torch
+vanilla.blocks.BrewingStand=Brewing Stand

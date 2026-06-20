@@ -10,6 +10,10 @@ namespace MinecraftClone3API.Util
         public T this[string key] => _keysToEntries[key];
         public string this[T entry] => _entriesToKeys[entry];
 
+        public IEnumerable<T> Values => _keysToEntries.Values;
+
+        public bool TryGet(string key, out T entry) => _keysToEntries.TryGetValue(key, out entry);
+
         public virtual void Register(string prefix, T entry)
         {
             entry.RegistryKey = $"{prefix}:{entry.Name}";

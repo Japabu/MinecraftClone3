@@ -1,9 +1,11 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using MinecraftClone3API.Client;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.Util;
+using Newtonsoft.Json.Linq;
 using StbImageSharp;
 
 namespace MinecraftClone3API.IO
@@ -44,9 +46,36 @@ namespace MinecraftClone3API.IO
             }
 
             if (_cachedTextures.TryGetValue(resolved, out var tex)) return tex;
-            tex = BlockTextureManager.LoadTexture(ReadTextureData(resolved));
+
+            var data = ReadTextureData(resolved);
+            // A vertical strip whose height is a whole multiple of its width is a Minecraft animation
+            // sheet (water_still, lava, fire, …). Slice it into square frames; only frame 0 is used for
+            // now, but the whole animation is retained (see BlockTextureManager.LoadAnimatedTexture).
+            if (data.Width > 0 && data.Height > data.Width && data.Height % data.Width == 0)
+                tex = BlockTextureManager.LoadAnimatedTexture(data, data.Height / data.Width, ReadFrameTime(resolved));
+            else
+                tex = BlockTextureManager.LoadTexture(data);
+
             _cachedTextures.Add(resolved, tex);
             return tex;
+        }
+
+        private static int ReadFrameTime(string texturePath)
+        {
+            var metaPath = texturePath + ".mcmeta";
+            if (!Exists(metaPath)) return 1;
+
+            try
+            {
+                var frameTime = JObject.Parse(ReadString(metaPath))["animation"]?["frametime"]?.Value<int>() ?? 1;
+                return frameTime <= 0 ? 1 : frameTime;
+            }
+            catch (Exception e)
+            {
+                Logger.Warn($"Could not parse animation metadata \"{metaPath}\"");
+                Logger.Exception(e);
+                return 1;
+            }
         }
 
         public static Shader ReadShader(string path) => new Shader(path);

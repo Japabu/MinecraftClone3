@@ -21,9 +21,9 @@ namespace MinecraftClone3.States
     {
         private const string ServerAddress = "127.0.0.1";
 
-        // Matches ServerNetwork.SpawnPosition; the server is authoritative but the client positions
-        // its camera here immediately so there's no first-frame jump before LoginAccept arrives.
-        private static readonly Vector3 SpawnPos = new Vector3(0, 12, 0);
+        // First-frame placeholder camera position; the server is authoritative and corrects it via
+        // LoginAccept (the real spawn is seed-derived, so it can't be known here before connecting).
+        private static readonly Vector3 SpawnPos = new Vector3(0, 80, 0);
 
         private readonly GameWindow _window;
         private readonly bool _multiplayer;
@@ -70,7 +70,7 @@ namespace MinecraftClone3.States
             }
             else
             {
-                _integratedServer = new WorldServer();
+                _integratedServer = new WorldServer(WorldMetadata.LoadOrCreateSeed());
                 _network = new ServerNetwork(_integratedServer);
                 var loopback = new LoopbackConnection();
                 _network.AddConnection(loopback.ServerSide);

@@ -48,6 +48,9 @@ namespace MinecraftClone3API.IO
         /// <summary>Per-user world-save directory.</summary>
         public static string WorldDir => Path.Combine(UserDataDir, "World");
 
+        /// <summary>World metadata file (persisted seed) inside <see cref="WorldDir"/>.</summary>
+        public static string LevelFile => Path.Combine(WorldDir, "level.dat");
+
         /// <summary>
         /// Per-user resource-pack directory. Created on access. Packs (folders, zips, or Minecraft
         /// client jars) dropped here supply the assets the plugins reference; they cascade on top of

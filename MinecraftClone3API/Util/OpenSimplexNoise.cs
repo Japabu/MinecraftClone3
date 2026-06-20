@@ -1,94 +1,37 @@
-﻿using System;
+using System;
 
 namespace MinecraftClone3API.Util
 {
-    public static class OpenSimplexNoise
+    /// <summary>
+    /// Seeded simplex noise. Each instance owns its own permutation table built by a Fisher–Yates
+    /// shuffle of 0..255 from the seed, so independent noise fields (continentalness, temperature, …)
+    /// are decorrelated by giving each a different seed. Output of <see cref="Generate"/> is in roughly
+    /// [-1, 1].
+    /// </summary>
+    public class OpenSimplexNoise
     {
-        private static byte[] _perm;
+        private readonly byte[] _perm = new byte[512];
 
-        private static readonly byte[] PermOriginal =
+        public OpenSimplexNoise(long seed)
         {
-            151, 160, 137, 91, 90, 15,
-            131, 13, 201, 95, 96, 53, 194, 233, 7, 225, 140, 36, 103, 30, 69, 142, 8, 99, 37, 240, 21, 10, 23,
-            190, 6, 148, 247, 120, 234, 75, 0, 26, 197, 62, 94, 252, 219, 203, 117, 35, 11, 32, 57, 177, 33,
-            88, 237, 149, 56, 87, 174, 20, 125, 136, 171, 168, 68, 175, 74, 165, 71, 134, 139, 48, 27, 166,
-            77, 146, 158, 231, 83, 111, 229, 122, 60, 211, 133, 230, 220, 105, 92, 41, 55, 46, 245, 40, 244,
-            102, 143, 54, 65, 25, 63, 161, 1, 216, 80, 73, 209, 76, 132, 187, 208, 89, 18, 169, 200, 196,
-            135, 130, 116, 188, 159, 86, 164, 100, 109, 198, 173, 186, 3, 64, 52, 217, 226, 250, 124, 123,
-            5, 202, 38, 147, 118, 126, 255, 82, 85, 212, 207, 206, 59, 227, 47, 16, 58, 17, 182, 189, 28, 42,
-            223, 183, 170, 213, 119, 248, 152, 2, 44, 154, 163, 70, 221, 153, 101, 155, 167, 43, 172, 9,
-            129, 22, 39, 253, 19, 98, 108, 110, 79, 113, 224, 232, 178, 185, 112, 104, 218, 246, 97, 228,
-            251, 34, 242, 193, 238, 210, 144, 12, 191, 179, 162, 241, 81, 51, 145, 235, 249, 14, 239, 107,
-            49, 192, 214, 31, 181, 199, 106, 157, 184, 84, 204, 176, 115, 121, 50, 45, 127, 4, 150, 254,
-            138, 236, 205, 93, 222, 114, 67, 29, 24, 72, 243, 141, 128, 195, 78, 66, 215, 61, 156, 180,
-            151, 160, 137, 91, 90, 15,
-            131, 13, 201, 95, 96, 53, 194, 233, 7, 225, 140, 36, 103, 30, 69, 142, 8, 99, 37, 240, 21, 10, 23,
-            190, 6, 148, 247, 120, 234, 75, 0, 26, 197, 62, 94, 252, 219, 203, 117, 35, 11, 32, 57, 177, 33,
-            88, 237, 149, 56, 87, 174, 20, 125, 136, 171, 168, 68, 175, 74, 165, 71, 134, 139, 48, 27, 166,
-            77, 146, 158, 231, 83, 111, 229, 122, 60, 211, 133, 230, 220, 105, 92, 41, 55, 46, 245, 40, 244,
-            102, 143, 54, 65, 25, 63, 161, 1, 216, 80, 73, 209, 76, 132, 187, 208, 89, 18, 169, 200, 196,
-            135, 130, 116, 188, 159, 86, 164, 100, 109, 198, 173, 186, 3, 64, 52, 217, 226, 250, 124, 123,
-            5, 202, 38, 147, 118, 126, 255, 82, 85, 212, 207, 206, 59, 227, 47, 16, 58, 17, 182, 189, 28, 42,
-            223, 183, 170, 213, 119, 248, 152, 2, 44, 154, 163, 70, 221, 153, 101, 155, 167, 43, 172, 9,
-            129, 22, 39, 253, 19, 98, 108, 110, 79, 113, 224, 232, 178, 185, 112, 104, 218, 246, 97, 228,
-            251, 34, 242, 193, 238, 210, 144, 12, 191, 179, 162, 241, 81, 51, 145, 235, 249, 14, 239, 107,
-            49, 192, 214, 31, 181, 199, 106, 157, 184, 84, 204, 176, 115, 121, 50, 45, 127, 4, 150, 254,
-            138, 236, 205, 93, 222, 114, 67, 29, 24, 72, 243, 141, 128, 195, 78, 66, 215, 61, 156, 180
-        };
-
-        static OpenSimplexNoise()
-        {
-            _perm = new byte[PermOriginal.Length];
-            PermOriginal.CopyTo(_perm, 0);
-        }
-
-        public static int Seed
-        {
-            get { return 0; }
-            set
+            // SplitMix64-seeded shuffle so a tiny salt difference fully scrambles the table (a plain
+            // new Random((int)seed) leaves adjacent seeds visibly correlated).
+            var state = (ulong) seed;
+            for (var i = 0; i < 256; i++) _perm[i] = (byte) i;
+            for (var i = 255; i > 0; i--)
             {
-                if (value == 0)
-                {
-                    _perm = new byte[PermOriginal.Length];
-                    PermOriginal.CopyTo(_perm, 0);
-                }
-                else
-                {
-                    _perm = new byte[512];
-                    var random = new Random(value);
-                    random.NextBytes(_perm);
-                }
+                state += 0x9E3779B97F4A7C15UL;
+                var z = state;
+                z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9UL;
+                z = (z ^ (z >> 27)) * 0x94D049BB133111EBUL;
+                z ^= z >> 31;
+                var j = (int) (z % (ulong) (i + 1));
+                (_perm[i], _perm[j]) = (_perm[j], _perm[i]);
             }
+            for (var i = 0; i < 256; i++) _perm[256 + i] = _perm[i];
         }
 
-        public static float[] Calc1D(int width, float scale)
-        {
-            var values = new float[width];
-            for (var i = 0; i < width; i++)
-                values[i] = Generate(i * scale) * 128 + 128;
-            return values;
-        }
-
-        public static float[,] Calc2D(int width, int height, float scale)
-        {
-            var values = new float[width, height];
-            for (var i = 0; i < width; i++)
-            for (var j = 0; j < height; j++)
-                values[i, j] = Generate(i * scale, j * scale) * 128 + 128;
-            return values;
-        }
-
-        public static float[,,] Calc3D(int width, int height, int length, float scale)
-        {
-            var values = new float[width, height, length];
-            for (var i = 0; i < width; i++)
-            for (var j = 0; j < height; j++)
-            for (var k = 0; k < length; k++)
-                values[i, j, k] = Generate(i * scale, j * scale, k * scale) * 128 + 128;
-            return values;
-        }
-
-        internal static float Generate(float x)
+        public float Generate(float x)
         {
             var i0 = FastFloor(x);
             var i1 = i0 + 1;
@@ -106,7 +49,7 @@ namespace MinecraftClone3API.Util
             return 0.395f * (n0 + n1);
         }
 
-        internal static float Generate(float x, float y)
+        public float Generate(float x, float y)
         {
             const float f2 = 0.366025403f;
             const float g2 = 0.211324865f;
@@ -179,8 +122,7 @@ namespace MinecraftClone3API.Util
             return 40.0f * (n0 + n1 + n2);
         }
 
-
-        internal static float Generate(float x, float y, float z)
+        public float Generate(float x, float y, float z)
         {
             const float f3 = 0.333333333f;
             const float g3 = 0.166666667f;
