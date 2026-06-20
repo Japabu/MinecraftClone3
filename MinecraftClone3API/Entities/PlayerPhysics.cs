@@ -17,6 +17,11 @@ namespace MinecraftClone3API.Entities
         private const float AirAccel = 0.02f;
         private const float SprintMultiplier = 1.3f;
 
+        private const float WaterAccel = 0.02f;
+        private const float WaterDrag = 0.8f;
+        private const float WaterGravity = 0.02f;
+        private const float SwimImpulse = 0.04f;
+
         private const float HalfWidth = EntityPlayer.Width / 2;
         private const float Height = EntityPlayer.Height;
         private const float Epsilon = 1e-4f;
@@ -25,6 +30,12 @@ namespace MinecraftClone3API.Entities
 
         public static void Tick(WorldBase world, EntityPlayer p, Vector2 wishDir, bool jump, bool sprint)
         {
+            if (IsInLiquid(world, p))
+            {
+                TickInWater(world, p, wishDir, jump);
+                return;
+            }
+
             var friction = p.OnGround ? GroundFriction : AirFriction;
             var accel = (p.OnGround ? GroundAccel : AirAccel) * (sprint ? SprintMultiplier : 1f);
 
@@ -42,6 +53,35 @@ namespace MinecraftClone3API.Entities
             p.Velocity.X *= friction;
             p.Velocity.Z *= friction;
         }
+
+        /// <summary>The "80%" swim model: gentle water accel, Space buoys up, otherwise sink slowly; all
+        /// velocity damped by <see cref="WaterDrag"/>. Liquid never collides (it's pass-through), so the
+        /// swept-collision and ground probe still run via <see cref="MoveWithCollision"/>.</summary>
+        private static void TickInWater(WorldBase world, EntityPlayer p, Vector2 wishDir, bool jump)
+        {
+            p.Velocity.X += wishDir.X * WaterAccel;
+            p.Velocity.Z += wishDir.Y * WaterAccel;
+
+            if (jump) p.Velocity.Y += SwimImpulse;
+
+            MoveWithCollision(world, p);
+
+            p.Velocity.X *= WaterDrag;
+            p.Velocity.Z *= WaterDrag;
+            p.Velocity.Y = p.Velocity.Y * WaterDrag - WaterGravity;
+        }
+
+        private static bool IsInLiquid(WorldBase world, EntityPlayer p)
+        {
+            var pos = p.Position;
+            return IsLiquidAt(world, pos.X, pos.Y + 0.1f, pos.Z)
+                || IsLiquidAt(world, pos.X, pos.Y + Height * 0.5f, pos.Z);
+        }
+
+        private static bool IsLiquidAt(WorldBase world, float x, float y, float z)
+            => world.GetBlock(BlockCoord(x), BlockCoord(y), BlockCoord(z)).IsLiquid;
+
+        private static int BlockCoord(float v) => (int) Math.Floor(v + 0.5f);
 
         private static void MoveWithCollision(WorldBase world, EntityPlayer p)
         {

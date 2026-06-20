@@ -43,6 +43,7 @@ namespace MinecraftClone3API.Blocks
 
         public virtual bool CanPassThrough(WorldBase world, Vector3i blockPos) => false;
         public virtual bool CanTarget(WorldBase world, Vector3i vector3I) => true;
+        public virtual bool IsLiquid => false;
 
         public virtual AxisAlignedBoundingBox GetBoundingBox(WorldBase world, Vector3i blockPos)
             => DefaultAlignedBoundingBox;

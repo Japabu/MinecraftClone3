@@ -584,6 +584,10 @@ point). Two modes, toggled by **double-tapping Space**:
   blocks, still needs a jump for a full cube.
   The 20 tps physics is **render-interpolated** to the 120 Hz frame (`InterpolatedPosition =
   Lerp(PrevPosition, Position, accumulatorFraction)`) so the camera is smooth, not 20 Hz-steppy.
+- **Swim (in water):** when the body overlaps a `Block.IsLiquid` block (`PlayerPhysics.IsInLiquid` samples
+  the lower + mid body), `Tick` takes the water branch instead — gentle water accel, all velocity damped by
+  `WaterDrag`, **Space buoys up** (`SwimImpulse`), otherwise a slow sink (`WaterGravity` ≪ land gravity).
+  Liquid is pass-through, so swept collision + the ground probe still run; you don't fall through the floor.
 - **Fly (creative):** the original dt-scaled direct `Entity.Move` — Space/Shift up/down, Ctrl fast, **no
   gravity/collision** (noclip). `InterpolatedPosition` just tracks `Position`.
 
@@ -1051,8 +1055,7 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
   jump, swept per-axis AABB collision, Ctrl sprint, walk/fly toggle, **auto-step up `StepHeight` (0.6 = MC)
   ledges** (climbs slabs/partial blocks, still jump for a full cube). **Not** implemented: sprint-jump forward
   boost, sneaking (no crouch/edge-stop), per-block slipperiness (no ice/slime blocks exist),
-  swimming/fluid physics (water has `CanPassThrough`
-  so you fall through it), **collision for creative flight** (flight is deliberately noclip, to keep the
+  **collision for creative flight** (flight is deliberately noclip, to keep the
   original free-fly), per-block non-cube collision shapes (every solid block collides as a full cube — fine
   today since none define a custom `GetBoundingBox`), and remote-player movement interpolation (they still
   snap). The exact-constant *ordering* (gravity-before-move vs after) may be a tick off MC and is tunable in
