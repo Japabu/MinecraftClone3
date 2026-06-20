@@ -116,6 +116,11 @@ namespace MinecraftClone3.States
             _text = $"{I18N.Get("system.loading.resources.uploadTextures")} ({_progress}%)";
             Logger.Debug($"{I18N.GetOrdinal("system.loading.resources.uploadTextures")} ({_progress}%)");
             BlockTextureManager.Upload();
+
+            // The font comes from the Minecraft resource pack (minecraft/font/default.json), which is only
+            // indexed by AddResourcePacks above — so the font must load here, after the pack, not in the
+            // earlier ClientResources.Load (which runs before the pack is added).
+            Font.Load();
         }
     }
 }
