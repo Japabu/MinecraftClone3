@@ -253,6 +253,7 @@ namespace MinecraftClone3API.Client.Blocks
 
             _phaseTimer.Restart();
             EvictDistantChunks();
+            ScanLod();
             LastEvictMs = _phaseTimer.Elapsed.TotalMilliseconds;
 
             while (_disposeQueue.TryDequeue(out var disposed))
@@ -284,7 +285,43 @@ namespace MinecraftClone3API.Client.Blocks
                 }
 
                 renderData.Chunk = chunk;
+                renderData.DesiredLod = LodFor(renderData.Middle);
                 QueueMesh(ready.Position, ready.HighPriority);
+            }
+        }
+
+        // Distance (block, chunk-centre to player) at which chunks switch to coarser LOD meshes — the
+        // geometry pass is triangle/primitive-setup bound at high render distance, so distant chunks (where
+        // the detail is sub-pixel) are meshed at stride 2 then stride 4, cutting their face count ~4×/16×.
+        private static readonly float Lod1DistanceSq = 128f * 128f;
+        private static readonly float Lod2DistanceSq = 208f * 208f;
+        private Vector3i _lastLodChunk = new Vector3i(int.MinValue);
+
+        private int LodFor(Vector3 center)
+        {
+            var distSq = (center - _playerPosition).LengthSquared;
+            if (distSq < Lod1DistanceSq) return 0;
+            if (distSq < Lod2DistanceSq) return 1;
+            return 2;
+        }
+
+        /// <summary>Re-evaluates each rendered chunk's LOD against the player's new position and re-queues any
+        /// whose level changed (a chunk approached → finer, receded → coarser). Gated on a chunk-border
+        /// crossing like eviction, so a stationary player does no work; the re-meshes are low priority so they
+        /// sit behind first-load streaming. Main-thread only (touches RenderList).</summary>
+        private void ScanLod()
+        {
+            var playerChunk = ChunkInWorld(_playerPosition.ToVector3i());
+            if (playerChunk == _lastLodChunk) return;
+            _lastLodChunk = playerChunk;
+
+            for (var i = 0; i < RenderList.Count; i++)
+            {
+                var rd = RenderList[i];
+                var want = LodFor(rd.Middle);
+                if (want == rd.DesiredLod) continue;
+                rd.DesiredLod = want;
+                QueueMesh(rd.Chunk.Position, false);
             }
         }
 

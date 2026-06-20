@@ -35,6 +35,44 @@ namespace MinecraftClone3API.Util
             new Vector3(-0.5f, -0.5f, +0.5f), new Vector3(+0.5f, -0.5f, +0.5f)
         };
 
+        /// <summary>
+        /// Coarse LOD mesh of a whole chunk at <paramref name="stride"/> (2, 4, …): each stride³ region becomes
+        /// one scaled "super-block" sampled at its corner, so the mesh has ~1/stride² the faces. Used for
+        /// distant chunks where the per-pixel detail is invisible but the triangle/primitive-setup cost is the
+        /// geometry-pass bottleneck at high render distance. Self-contained replacement for the per-block path;
+        /// everything goes into the opaque <paramref name="vao"/> (distant transparency isn't worth a second
+        /// sorted pass). Faces are scaled by <paramref name="stride"/> via the transform; cull uses the
+        /// neighbour super-block's corner sample (approximate — fine at distance).
+        /// </summary>
+        public static void AddBlocksToVaoLod(WorldBase world, Vector3i chunkOrigin, Chunk chunk, MeshBuffer vao, int stride)
+        {
+            // Unit face (+-0.5) -> +-stride/2, then shifted so the quad spans [corner-0.5, corner+stride-0.5].
+            var transform = Matrix4.CreateScale(stride) * Matrix4.CreateTranslation(new Vector3((stride - 1) * 0.5f));
+
+            for (var x = 0; x < Chunk.Size; x += stride)
+            for (var y = 0; y < Chunk.Size; y += stride)
+            for (var z = 0; z < Chunk.Size; z += stride)
+            {
+                var id = chunk.GetBlock(new Vector3i(x, y, z));
+                if (id == 0) continue;
+                var block = GameRegistry.BlockRegistry[id];
+                var blockPos = chunkOrigin + new Vector3i(x, y, z);
+                if (!block.IsVisible(world, blockPos) || block.Model == null) continue;
+
+                foreach (var element in block.Model.Elements)
+                foreach (var entry in element.Faces)
+                {
+                    var face = entry.Key;
+                    var cullface = entry.Value.Cullface == BlockFace.None ? face : entry.Value.Cullface;
+                    var neighbourPos = blockPos + cullface.GetNormali() * stride;
+                    var neighbour = world.GetBlock(neighbourPos);
+                    if (neighbour.IsOpaqueFullBlock(world, neighbourPos)) continue;
+
+                    AddFaceToVao(world, blockPos, x, y, z, block, face, entry.Value, vao, transform);
+                }
+            }
+        }
+
         public static void AddBlockToVao(WorldBase world, Vector3i blockPos, int x, int y, int z, Block block,
             MeshBuffer vao, MeshBuffer transparentVao)
         {
