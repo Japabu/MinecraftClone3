@@ -208,9 +208,10 @@ namespace MinecraftClone3
             var gameWindowSettings = new GameWindowSettings
             {
                 // OpenTK 4.9 runs OnUpdateFrame and OnRenderFrame at one shared rate = UpdateFrequency.
-                // 0 = uncapped: the benchmark must run unthrottled to measure true engine throughput (the
-                // 120 Hz cap = 8.33 ms/frame is what pinned observed FPS at ~118 regardless of GPU/CPU).
-                UpdateFrequency = Benchmark.Enabled ? 0 : 120
+                // 0 = uncapped — frame pacing is left to VSync (SwapBuffers blocks at the refresh when VSync
+                // is on; with VSync off the loop runs as fast as the CPU/GPU allow). A hard UpdateFrequency
+                // cap was what pinned the game at 120 FPS regardless of how fast the engine actually was.
+                UpdateFrequency = 0
             };
 
             Window = new GameClient(gameWindowSettings, nativeWindowSettings);
