@@ -1,68 +1,28 @@
-﻿using System;
-using System.Collections.Generic;
+using System;
 using OpenTK.Mathematics;
 using OpenTK.Graphics.OpenGL4;
 
 namespace MinecraftClone3API.Graphics
 {
-    public class VertexArrayObject : IDisposable
+    /// <summary>
+    /// A <see cref="MeshBuffer"/> backed by its own GL vertex array + buffers. Used for the per-chunk
+    /// TRANSPARENT mesh (which needs an independent per-frame back-to-front index sort, see
+    /// <see cref="SortedVertexArrayObject"/>); the opaque mesh instead uploads into the shared
+    /// <see cref="ChunkMeshArena"/> and is drawn with one batched multidraw.
+    /// </summary>
+    public class VertexArrayObject : MeshBuffer, IDisposable
     {
-        protected static readonly uint[] FaceIndices = {2, 1, 0, 2, 3, 1};
-        protected static readonly uint[] FlippedFaceIndices = {0, 2, 3, 0, 3, 1};
-
         protected readonly int VaoId;
         protected readonly int[] BufferIds = new int[5];
         protected readonly int IndicesId;
 
-        protected List<Vector3> Positions;
-        protected List<Vector4> TexCoords;
-        protected List<Vector4> Normals;
-        protected List<Vector3> Colors;
-        // xyz = baked block-light brightness (0..1 per channel), w = baked sky-light brightness (0..1).
-        // The composition shader multiplies w by the sun colour for the dynamic day/night cycle.
-        protected List<Vector4> Lights;
-        protected List<uint> Indices;
-
         public int UploadedCount;
-        public int VertexCount => (Positions?.Count).GetValueOrDefault();
-        public int IndicesCount => (Indices?.Count).GetValueOrDefault();
 
         public VertexArrayObject()
         {
             VaoId = GL.GenVertexArray();
             GL.GenBuffers(BufferIds.Length, BufferIds);
             IndicesId = GL.GenBuffer();
-        }
-
-        public virtual void Add(Vector3 position, Vector4 texCoord, Vector4 normal, Vector3 color, Vector4 light)
-        {
-            if (Positions == null)
-            {
-                Positions = VaoBufferPool.RentVector3();
-                TexCoords = VaoBufferPool.RentVector4();
-                Normals = VaoBufferPool.RentVector4();
-                Colors = VaoBufferPool.RentVector3();
-                Lights = VaoBufferPool.RentVector4();
-
-                Indices = VaoBufferPool.RentUint();
-            }
-
-            Positions.Add(position);
-            TexCoords.Add(texCoord);
-            Normals.Add(normal);
-            Colors.Add(color);
-            Lights.Add(light);
-        }
-
-        public virtual void AddFace(uint[] indices, Vector3 faceMiddle) => Indices.AddRange(indices);
-
-        /// <summary>Appends the six indices for the four vertices just <see cref="Add"/>ed, generated
-        /// in place from the shared winding pattern so the mesher allocates no per-face index array.</summary>
-        public virtual void AddFace(int baseVertex, bool flipped, Vector3 faceMiddle)
-        {
-            var pattern = flipped ? FlippedFaceIndices : FaceIndices;
-            for (var i = 0; i < pattern.Length; i++)
-                Indices.Add((uint) (pattern[i] + baseVertex));
         }
 
         public virtual void Upload()
@@ -126,23 +86,6 @@ namespace MinecraftClone3API.Graphics
 
             GL.BindVertexArray(VaoId);
             GL.DrawElements(mode, UploadedCount, DrawElementsType.UnsignedInt, 0);
-        }
-
-        public virtual void Clear()
-        {
-            VaoBufferPool.Return(Positions);
-            VaoBufferPool.Return(TexCoords);
-            VaoBufferPool.Return(Normals);
-            VaoBufferPool.Return(Colors);
-            VaoBufferPool.Return(Lights);
-            VaoBufferPool.Return(Indices);
-
-            Positions = null;
-            TexCoords = null;
-            Normals = null;
-            Colors = null;
-            Lights = null;
-            Indices = null;
         }
 
         public virtual void Sort()

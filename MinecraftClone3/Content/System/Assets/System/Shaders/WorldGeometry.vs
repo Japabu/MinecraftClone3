@@ -11,13 +11,14 @@ out vec4 vNormal;
 out vec3 vColor;
 out vec4 vLight;
 
-uniform mat4 uWorld;
 uniform mat4 uView;
 uniform mat4 uProjection;
 
 void main()
 {
-	gl_Position = uProjection*uView*uWorld*vec4(inPosition, 1);
+	// Positions are baked world-space at mesh time (no per-chunk model matrix), so all chunks share one
+	// buffer set and draw with a single batched multidraw.
+	gl_Position = uProjection*uView*vec4(inPosition, 1);
 
 	vTexCoord = inTexCoord;
 	vNormal = inNormal;

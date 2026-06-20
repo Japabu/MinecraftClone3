@@ -36,7 +36,7 @@ namespace MinecraftClone3API.Util
         };
 
         public static void AddBlockToVao(WorldBase world, Vector3i blockPos, int x, int y, int z, Block block,
-            VertexArrayObject vao, VertexArrayObject transparentVao)
+            MeshBuffer vao, MeshBuffer transparentVao)
         {
             //If block is invisible or does not have a model for some reason ignore it
             if (!block.IsVisible(world, blockPos) || block.Model == null) return;
@@ -75,7 +75,7 @@ namespace MinecraftClone3API.Util
             }
         }
 
-        public static void AddFaceToVao(WorldBase world, Vector3i blockPos, int x, int y, int z, Block block, BlockFace face, BlockModel.FaceData data, VertexArrayObject vao, Matrix4 transform)
+        public static void AddFaceToVao(WorldBase world, Vector3i blockPos, int x, int y, int z, Block block, BlockFace face, BlockModel.FaceData data, MeshBuffer vao, Matrix4 transform)
         {
             var faceId = (int) face - 1;
             var baseVertex = vao.VertexCount;
@@ -100,7 +100,9 @@ namespace MinecraftClone3API.Util
             for (var j = 0; j < 4; j++)
             {
                 var vertexPosition = FacePositions[faceId * 4 + j];
-                var position = (new Vector4(vertexPosition, 1) * transform).Xyz + new Vector3(x, y, z);
+                // Bake WORLD-space position (chunk origin folded in) so the renderer needs no per-chunk model
+                // matrix — that's what lets every chunk's opaque mesh share one buffer + one batched multidraw.
+                var position = (new Vector4(vertexPosition, 1) * transform).Xyz + blockPos.ToVector3();
 
                 //tex coords are -1 if texture is null; texCoord z = texId, w = textureArrayId
                 var texCoord = texture == null ? new Vector4(-1) : new Vector4(texCoords[j]) {Z = texture.TextureId, W = texture.ArrayId};
@@ -121,8 +123,9 @@ namespace MinecraftClone3API.Util
 
             var flipped = (b0 + b3).LengthSquared > (b1 + b2).LengthSquared;
 
+            // position is already world-space, so the accumulated faceMiddle/4 is the world-space face centre.
             if (sorted)
-                faceMiddle = faceMiddle / 4 + blockPos.ToVector3() - new Vector3(x, y, z);
+                faceMiddle /= 4;
 
             vao.AddFace(baseVertex, flipped, faceMiddle);
         }

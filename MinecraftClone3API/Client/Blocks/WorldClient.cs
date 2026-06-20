@@ -71,6 +71,10 @@ namespace MinecraftClone3API.Client.Blocks
         public readonly ConcurrentDictionary<Vector3i, ChunkRenderData> RenderData =
             new ConcurrentDictionary<Vector3i, ChunkRenderData>();
 
+        // Shared vertex/index arena holding every chunk's OPAQUE mesh, drawn with one batched multidraw per
+        // pass (see ChunkMeshArena). Created/uploaded/freed/disposed on the main thread only.
+        public readonly ChunkMeshArena OpaqueArena;
+
         // Main-thread mirror of RenderData's values, iterated by the renderer each frame in place of
         // enumerating the ConcurrentDictionary (a per-frame O(bucket) scan + enumerator allocation a
         // trace showed dominating the render thread). Kept in sync O(1) on add (DrainRenderReady) and
@@ -157,6 +161,9 @@ namespace MinecraftClone3API.Client.Blocks
         {
             _connection = connection;
 
+            // GL: constructed on the main thread (StateWorld ctor runs in the state update with a live context).
+            OpaqueArena = new ChunkMeshArena();
+
             _applyThread = new Thread(ApplyThread) {Name = "Client Apply Thread", IsBackground = true};
             _applyThread.Start();
 
@@ -223,7 +230,7 @@ namespace MinecraftClone3API.Client.Blocks
                 // lock. That blocking wait was the per-edit frame-time spike. See ChunkRenderData.TryUpload.
                 if (RenderData.TryGetValue(pos, out var renderData))
                 {
-                    if (renderData.TryUpload())
+                    if (renderData.TryUpload(OpaqueArena))
                     {
                         ChunkTracer.Uploaded(pos);
                         uploadChunks++;
@@ -251,6 +258,7 @@ namespace MinecraftClone3API.Client.Blocks
             while (_disposeQueue.TryDequeue(out var disposed))
             {
                 Interlocked.Decrement(ref _disposeQueueDepth);
+                disposed.FreeArena(OpaqueArena);
                 disposed.Dispose();
             }
         }
@@ -324,6 +332,8 @@ namespace MinecraftClone3API.Client.Blocks
             _stopped = true;
             _applySignal.Set();
             _connection.Close();
+            // Main-thread GL teardown of the shared arena (the mesh/apply threads no longer touch it).
+            OpaqueArena.Dispose();
         }
 
         /// <summary>Runs on the main thread. Chunk streaming and block-change deltas are routed to the

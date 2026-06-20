@@ -272,7 +272,6 @@ namespace MinecraftClone3API.Graphics
 
             var shader = ClientResources.ShadowDepthShader;
             shader.Bind();
-            var uWorld = shader.GetUniformLocation("uWorld");
             var uLightViewProj = shader.GetUniformLocation("uLightViewProj");
 
             // Analytic bounding sphere of the whole [ShadowNear, ShadowDistance] frustum slice. Centre rides
@@ -302,9 +301,10 @@ namespace MinecraftClone3API.Graphics
             for (var i = 0; i < renderList.Count; i++)
             {
                 var renderData = renderList[i];
-                if (renderData.HasTransparency) continue;
-                var chunkMiddle = (renderData.Chunk.Position * Chunk.Size + new Vector3i(Chunk.Size / 2)).ToVector3();
-                if (!_shadowFrustum.SpehereIntersection(chunkMiddle, Chunk.Radius)) continue;
+                // Transparent chunks don't cast shadows (a solid shadow from translucent geometry is wrong);
+                // skip chunks with no opaque geometry entirely (they'd contribute zero-index sub-draws).
+                if (renderData.HasTransparency || !renderData.HasOpaque) continue;
+                if (!_shadowFrustum.SpehereIntersection(renderData.Middle, Chunk.Radius)) continue;
                 shadowChunks.Add(renderData);
             }
 
@@ -312,13 +312,8 @@ namespace MinecraftClone3API.Graphics
             GL.Clear(ClearBufferMask.DepthBufferBit);
             GL.UniformMatrix4(uLightViewProj, false, ref _lightViewProj);
 
-            foreach (var chunk in shadowChunks)
-            {
-                var worldMat = Matrix4.CreateTranslation(chunk.Chunk.Position.X * Chunk.Size, chunk.Chunk.Position.Y * Chunk.Size,
-                    chunk.Chunk.Position.Z * Chunk.Size);
-                GL.UniformMatrix4(uWorld, false, ref worldMat);
-                chunk.Draw();
-            }
+            // One batched multidraw over the shadow casters' shared arena sub-ranges (position-only VAO).
+            world.OpaqueArena.Draw(shadowChunks, true);
 
             GL.Disable(EnableCap.PolygonOffsetFill);
             ClientResources.ShadowFramebuffer.Unbind(ClientResources.Window.FramebufferSize.X, ClientResources.Window.FramebufferSize.Y);
@@ -386,7 +381,6 @@ namespace MinecraftClone3API.Graphics
             shader.Bind();
             // Uniform/sampler locations are queried by name (GLSL 4.10 has no explicit
             // layout(location=)/layout(binding=) for uniforms; macOS caps OpenGL at 4.1).
-            var uWorld = shader.GetUniformLocation("uWorld");
             var uCutoff = shader.GetUniformLocation("uCutoff");
             GL.UniformMatrix4(shader.GetUniformLocation("uView"), false, ref camera.View);
             GL.UniformMatrix4(shader.GetUniformLocation("uProjection"), false, ref projection);
@@ -399,15 +393,10 @@ namespace MinecraftClone3API.Graphics
             BlockTextureManager.Bind();
             Samplers.BindBlockTextureSampler();
 
-            //Draw opaque blocks front to back
+            // Draw all opaque chunk geometry (incl. the opaque faces of transparent chunks) front-to-back in
+            // ONE batched multidraw over the shared arena (positions are baked world-space → no per-chunk matrix).
             GraphicsDebug.PushGroup("Opaque");
-            foreach (var chunk in _chunksToDraw)
-            {
-                var worldMat = Matrix4.CreateTranslation(chunk.Chunk.Position.X * Chunk.Size, chunk.Chunk.Position.Y * Chunk.Size,
-                    chunk.Chunk.Position.Z * Chunk.Size);
-                GL.UniformMatrix4(uWorld, false, ref worldMat);
-                chunk.Draw();
-            }
+            world.OpaqueArena.Draw(_chunksToDraw, false);
             GraphicsDebug.PopGroup();
 
             RenderState.Set(new GlState
@@ -423,15 +412,10 @@ namespace MinecraftClone3API.Graphics
             GL.Disable(IndexedEnableCap.Blend, 2);
             GL.Uniform1(uCutoff, 0);
 
-            //Draw transparent blocks back to front
+            //Draw transparent blocks back to front (per-chunk: each needs its own back-to-front face sort)
             GraphicsDebug.PushGroup("Transparent");
             foreach (var chunk in _transparentChunks)
-            {
-                var worldMat = Matrix4.CreateTranslation(chunk.Chunk.Position.X * Chunk.Size, chunk.Chunk.Position.Y * Chunk.Size,
-                    chunk.Chunk.Position.Z * Chunk.Size);
-                GL.UniformMatrix4(uWorld, false, ref worldMat);
                 chunk.DrawTransparent();
-            }
             GraphicsDebug.PopGroup();
 
             GL.Enable(IndexedEnableCap.Blend, 1);
