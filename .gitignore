@@ -10,6 +10,9 @@ minecraft/
 # Local RenderDoc captures (large binaries, not source)
 renderdoc/
 
+# Proprietary Mojang assets extracted locally from the client jar (not redistributed)
+minecraft-assets/
+
 # Proprietary Mojang font assets (extracted locally, not redistributed)
 MinecraftClone3/Content/System/Assets/System/Font/default.json
 MinecraftClone3/Content/System/Assets/System/Textures/font/

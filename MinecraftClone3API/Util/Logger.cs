@@ -6,6 +6,7 @@ namespace MinecraftClone3API.Util
     {
         public static void Info(string message) => Log(ConsoleColor.White, "Info", message);
         public static void Debug(string message) => Log(ConsoleColor.Gray, "Debug", message);
+        public static void Warn(string message) => Log(ConsoleColor.DarkYellow, "Warn", message);
         public static void Error(string message) => Log(ConsoleColor.Red, "Error", message);
 
         public static void Exception(Exception ex)

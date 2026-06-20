@@ -8,7 +8,7 @@ namespace VanillaPlugin.Blocks
     {
         public BlockTorch() : base("Torch")
         {
-            Model = ResourceReader.ReadBlockModel("Vanilla/Models/Torch.json");
+            Model = ResourceReader.ReadBlockModel("minecraft:block/torch");
         }
 
         public override bool IsFullBlock(WorldBase world, Vector3i blockPos) => false;

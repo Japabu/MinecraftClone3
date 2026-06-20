@@ -7,7 +7,7 @@ namespace VanillaPlugin.Blocks
 {
     internal class BlockGrass : BlockBasic
     {
-        public BlockGrass() : base("Grass", "Vanilla/Models/GrassNormal.json", true)
+        public BlockGrass() : base("Grass", "minecraft:block/grass_block", true)
         {
         }
 

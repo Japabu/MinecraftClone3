@@ -14,10 +14,10 @@ namespace VanillaPlugin.Blocks
         private static readonly Keys[] BindKeys = {Keys.U, Keys.I, Keys.O, Keys.P};
         private static readonly string[] TextureNames =
         {
-            "Vanilla/Textures/Blocks/glass_black.png",
-            "Vanilla/Textures/Blocks/glass_blue.png",
-            "Vanilla/Textures/Blocks/glass_green.png",
-            "Vanilla/Textures/Blocks/glass_magenta.png"
+            "minecraft:block/black_stained_glass",
+            "minecraft:block/blue_stained_glass",
+            "minecraft:block/green_stained_glass",
+            "minecraft:block/magenta_stained_glass"
         };
 
         private static readonly int[,] LightFilters =

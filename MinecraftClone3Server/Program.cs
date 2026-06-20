@@ -62,6 +62,8 @@ namespace MinecraftClone3Server
             foreach (var file in pluginsDir.EnumerateFiles())
                 PluginManager.AddPlugin(new FileSystemCompressed(file));
 
+            PluginManager.AddResourcePacks();
+
             PluginManager.LoadResources((total, state, plugin) => Logger.Debug($"{state} {plugin}"));
             PluginManager.LoadPlugins((total, state, plugin) => Logger.Debug($"{state} {plugin}"));
         }

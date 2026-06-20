@@ -144,7 +144,7 @@ namespace MinecraftClone3API.Graphics
                 }
         }
 
-        private static List<string> GetRelativePaths(string root, string path, string extension)
+        internal static List<string> GetRelativePaths(string root, string path, string extension)
         {
             //Find parent file relatively
             var paths = new List<string> {path, path + extension};
@@ -159,6 +159,22 @@ namespace MinecraftClone3API.Graphics
 
             paths.Add(SystemRoot + path);
             paths.Add(SystemRoot + path + extension);
+
+            //Minecraft resource location ([ns:]category/path), e.g. "minecraft:block/cube_all" -> "minecraft/models/block/cube_all.json"
+            var category = extension == JsonExtension ? "models" : extension == PngExtension ? "textures" : null;
+            if (category != null)
+            {
+                var ns = "minecraft";
+                var loc = path;
+                var colon = path.IndexOf(':');
+                if (colon >= 0)
+                {
+                    ns = path.Substring(0, colon);
+                    loc = path.Substring(colon + 1);
+                }
+
+                paths.Add($"{ns}/{category}/{loc}{extension}");
+            }
 
             return paths;
         }

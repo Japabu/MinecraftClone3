@@ -3,6 +3,7 @@ using MinecraftClone3API.Util;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
@@ -56,6 +57,71 @@ namespace MinecraftClone3API.Plugins
                 progress(total, "system.loading.postLoad", plugin.Value.PluginAttribute.Name);
                 total += part;
                 plugin.Value.Plugin.PostLoad(plugin.Value);
+            }
+        }
+
+        private const string ResourcePacksReadme =
+            "Drop resource packs here.\n\n" +
+            "Each pack may be a folder, a .zip, or a Minecraft client .jar. The Vanilla plugin\n" +
+            "references the real Minecraft resource paths (block/stone, block/grass_block, ...),\n" +
+            "so a 1.13+ client jar dropped in this folder supplies its models and textures.\n\n" +
+            "Packs cascade in name order; a later-sorting pack overrides earlier sources.\n";
+
+        /// <summary>
+        /// Adds a resource pack: indexes its assets and language files into the cascade but does not
+        /// require a <c>PluginInfo.json</c> or load any DLL, so a plain Minecraft client jar can be
+        /// dropped in as a pack without logging the "no info file" error.
+        /// </summary>
+        public static void AddResourcePack(FileSystem fileSystem)
+        {
+            ResourceManager.AddFileSystem(fileSystem, fileSystem.GetFiles());
+        }
+
+        /// <summary>
+        /// Scans <see cref="GamePaths.ResourcePacksDir"/> and indexes every pack (folders,
+        /// <c>.zip</c>/<c>.jar</c> archives) in name order, so a later-sorting pack cascades over
+        /// earlier sources. Called after the plugins are added, so packs override plugin assets.
+        /// </summary>
+        public static void AddResourcePacks()
+        {
+            var dir = new DirectoryInfo(GamePaths.ResourcePacksDir);
+
+            var packs = new List<(string Name, Func<FileSystem> Create)>();
+            foreach (var sub in dir.EnumerateDirectories())
+            {
+                var captured = sub;
+                packs.Add((captured.Name, () => new FileSystemRaw(captured)));
+            }
+            foreach (var file in dir.EnumerateFiles())
+            {
+                var ext = file.Extension.ToLowerInvariant();
+                if (ext != ".zip" && ext != ".jar") continue;
+                var captured = file;
+                packs.Add((captured.Name, () => new FileSystemCompressed(captured)));
+            }
+
+            if (packs.Count == 0)
+            {
+                var readme = Path.Combine(dir.FullName, "README.txt");
+                if (!File.Exists(readme)) File.WriteAllText(readme, ResourcePacksReadme);
+                Logger.Warn($"No resource packs found in \"{dir.FullName}\" — blocks will render with " +
+                            "placeholder textures. Drop a Minecraft client jar (or any resource pack) there.");
+                return;
+            }
+
+            packs.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
+            foreach (var pack in packs)
+            {
+                try
+                {
+                    AddResourcePack(pack.Create());
+                    Logger.Info($"Resource pack \"{pack.Name}\" added");
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error($"Failed to load resource pack \"{pack.Name}\"");
+                    Logger.Exception(ex);
+                }
             }
         }
 

@@ -83,6 +83,9 @@ namespace MinecraftClone3.States
                     PluginManager.AddPlugin(new FileSystemRaw(dir));
                 foreach (var file in pluginsDir.EnumerateFiles())
                     PluginManager.AddPlugin(new FileSystemCompressed(file));
+
+                //Cascade user resource packs on top of the plugins
+                PluginManager.AddResourcePacks();
             }
 
             //Load resources

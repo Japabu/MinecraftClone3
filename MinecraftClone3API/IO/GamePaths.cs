@@ -47,5 +47,20 @@ namespace MinecraftClone3API.IO
 
         /// <summary>Per-user world-save directory.</summary>
         public static string WorldDir => Path.Combine(UserDataDir, "World");
+
+        /// <summary>
+        /// Per-user resource-pack directory. Created on access. Packs (folders, zips, or Minecraft
+        /// client jars) dropped here supply the assets the plugins reference; they cascade on top of
+        /// the shipped plugins (a later-sorting pack overrides earlier sources on key collision).
+        /// </summary>
+        public static string ResourcePacksDir
+        {
+            get
+            {
+                var dir = Path.Combine(UserDataDir, "ResourcePacks");
+                Directory.CreateDirectory(dir);
+                return dir;
+            }
+        }
     }
 }

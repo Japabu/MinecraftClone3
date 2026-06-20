@@ -5,7 +5,7 @@ namespace VanillaPlugin.Blocks
 {
     public class BlockGlass : BlockBasic
     {
-        public BlockGlass() : base("Glass", "Vanilla/Textures/Blocks/Glass.png", false)
+        public BlockGlass() : base("Glass", "minecraft:block/glass", false)
         {
         }
 

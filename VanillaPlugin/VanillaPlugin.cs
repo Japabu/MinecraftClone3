@@ -18,10 +18,9 @@ namespace VanillaPlugin
 
         public void Load(PluginContext context)
         {
-            context.Register(new BlockBasic("Stone", "Vanilla/Models/Stone.json", true));
-            context.Register(new BlockBasic("Dirt", "Vanilla/Models/Dirt.json", true));
-            context.Register(new BlockBasic("DirtStairs", "Vanilla/Models/DirtStairs.json", false));
-            context.Register(new BlockBasic("BrewingStand", "Vanilla/Models/BrewingStand.json", false));
+            context.Register(new BlockBasic("Stone", "minecraft:block/stone", true));
+            context.Register(new BlockBasic("Dirt", "minecraft:block/dirt", true));
+            context.Register(new BlockBasic("BrewingStand", "minecraft:block/brewing_stand", false));
 
             context.Register(new BlockGrass());
             context.Register(new BlockTorch());

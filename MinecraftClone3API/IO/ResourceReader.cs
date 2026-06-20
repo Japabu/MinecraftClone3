@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using MinecraftClone3API.Client;
 using MinecraftClone3API.Graphics;
@@ -35,9 +36,16 @@ namespace MinecraftClone3API.IO
 
         public static BlockTexture ReadBlockTexture(string path)
         {
-            if(_cachedTextures.TryGetValue(path, out var tex)) return tex;
-            tex = BlockTextureManager.LoadTexture(ReadTextureData(path));
-            _cachedTextures.Add(path, tex);
+            var resolved = BlockModel.GetRelativePaths(path, path, ".png").FirstOrDefault(Exists);
+            if (resolved == null)
+            {
+                Logger.Error($"Texture \"{path}\" could not be found!");
+                return ClientResources.MissingTexture;
+            }
+
+            if (_cachedTextures.TryGetValue(resolved, out var tex)) return tex;
+            tex = BlockTextureManager.LoadTexture(ReadTextureData(resolved));
+            _cachedTextures.Add(resolved, tex);
             return tex;
         }
 
@@ -45,15 +53,16 @@ namespace MinecraftClone3API.IO
 
         public static BlockModel ReadBlockModel(string path)
         {
-            if (!Exists(path))
+            var resolved = BlockModel.GetRelativePaths(path, path, ".json").FirstOrDefault(Exists);
+            if (resolved == null)
             {
                 Logger.Error($"Block model \"{path}\" could not be found!");
                 return ClientResources.MissingModel;
             }
 
-            if (_cachedModels.TryGetValue(path, out var model)) return model;
-            model = BlockModel.Parse(ReadString(path), path);
-            _cachedModels.Add(path, model);
+            if (_cachedModels.TryGetValue(resolved, out var model)) return model;
+            model = BlockModel.Parse(ReadString(resolved), resolved);
+            _cachedModels.Add(resolved, model);
             return model;
         }
     }

@@ -29,7 +29,19 @@ namespace MinecraftClone3API.IO
         private const string LangDir = "Lang/";
         private const string LangExt = ".lang";
 
-        private static readonly Dictionary<string, FileSystem> AssetIndices = new Dictionary<string, FileSystem>();
+        private struct AssetSource
+        {
+            public FileSystem FileSystem;
+            public string FullPath;
+
+            public AssetSource(FileSystem fileSystem, string fullPath)
+            {
+                FileSystem = fileSystem;
+                FullPath = fullPath;
+            }
+        }
+
+        private static readonly Dictionary<string, AssetSource> AssetIndices = new Dictionary<string, AssetSource>();
 
         internal static readonly List<LangLine> LangEntries = new List<LangLine>();
 
@@ -55,14 +67,14 @@ namespace MinecraftClone3API.IO
                 //Add asset index
                 if (f.StartsWith(AssetsDir, StringComparison.OrdinalIgnoreCase))
                 {
-                    f = f.Substring(AssetsDir.Length);
-                    if (AssetIndices.TryGetValue(f, out var fs))
+                    var key = f.Substring(AssetsDir.Length);
+                    if (AssetIndices.TryGetValue(key, out var existing))
                     {
-                        var otherIndex = resourceSettings.IndexOf(fs.Name);
+                        var otherIndex = resourceSettings.IndexOf(existing.FileSystem.Name);
                         if (otherIndex > index) return;
                     }
 
-                    AssetIndices[f] = fileSystem;
+                    AssetIndices[key] = new AssetSource(fileSystem, f);
                 }
                 //Import language
                 else if (f.StartsWith(LangDir, StringComparison.OrdinalIgnoreCase) &&
@@ -82,10 +94,10 @@ namespace MinecraftClone3API.IO
 
         internal static byte[] LoadAsset(string path)
         {
-            if (!AssetIndices.ContainsKey(path))
+            if (!AssetIndices.TryGetValue(path, out var source))
                 throw new FileNotFoundException("File could not be found in Resources!", path);
 
-            return AssetIndices[path].ReadFile(AssetsDir + path);
+            return source.FileSystem.ReadFile(source.FullPath);
         }
 
         internal static bool ExistsAsset(string path) => AssetIndices.ContainsKey(path);
