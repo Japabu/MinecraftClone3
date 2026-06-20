@@ -51,6 +51,15 @@ uniform float uDebugShadow;
 // black (bring a torch). Driven by the Brightness graphics option (GraphicsSettings.Brightness); 0 = pure black.
 uniform vec3 uMinLight;
 
+// Water shading (Tier B): a face flagged with normal.w ~ 0.75 (baked by the mesher) gets animated sine-wave
+// normals + a Fresnel reflection of an analytic sky + a sun specular glint, all here in the deferred pass (no
+// extra render pass). uCameraPos reconstructs the view vector, uSunDirection is the unit vector toward the
+// sun, uTime scrolls the waves. The reflection/specular are scaled by the baked sky factor and uSunFade, so
+// cave water and night water behave correctly with no special-casing.
+uniform vec3 uCameraPos;
+uniform vec3 uSunDirection;
+uniform float uTime;
+
 // Joint-bilateral upsample sharpness (in normalized-depth units, i.e. view depth / uShadowDistance). Larger
 // = a smaller depth difference rejects a tap, so the half-res shadow doesn't bleed across silhouette edges;
 // too large and same-surface taps get rejected too (the half-res shadow shows through as blocky). Tunable.
@@ -96,6 +105,63 @@ float UpsampleShadow(float fragNormDepth)
 	return sumWeight > 0.0 ? sumShadow/sumWeight : 1.0;
 }
 
+// --- Water look (Tier B) tunables ---
+// Detection band for the mesher's water flag in the G-buffer normal.w. The mesher writes normal.w = 0.5 for
+// water; EncodeNormal stores 0.5*0.5+0.5 = 0.75, which Rgba8 quantizes to a deterministic 191/255 ≈ 0.749
+// (the flag is a flat per-face attribute and attachment 1 is written with blending OFF, so there is no
+// interpolation/blend drift). The band is kept snug around that value: lit solid (input 0 → 0.502) and unlit
+// geometry (input 1 → 1.0) are far outside. Any future RenderMaterial given its own mesher w-mapping must
+// encode OUTSIDE this band (i.e. avoid input w in [0.4, 0.6)) or pick its own band.
+const float WaterFlagLo = 0.7;
+const float WaterFlagHi = 0.8;
+// Animated surface: three summed directional sine waves. WaveAmp = per-wave slope, WaveFreq = base spatial
+// frequency (per world block), WaveSpeed = scroll rate. Larger = choppier, smaller = glassier.
+const float WaveAmp = 0.05;
+const float WaveFreq = 0.9;
+const float WaveSpeed = 1.3;
+// Fresnel reflectance at normal incidence (water ~0.02): higher = more mirror-like looking straight down.
+const float WaterF0 = 0.02;
+// Sun specular glint: exponent (higher = tighter highlight) and gain.
+const float WaterSpecExp = 220.0;
+const float WaterSpecGain = 2.0;
+// Analytic sky reflection (no skybox exists): gradient gains over uSkyAmbient + a reflected sun disc, so the
+// reflection tracks the time of day (blue by day, warm at dusk, moon-dim at night).
+const float SkyHorizonGain = 5.0;
+const float SkyZenithGain = 3.0;
+const float SkyHorizonSunTint = 0.15;
+const float SunDiscExp = 350.0;
+const float SunDiscGain = 1.5;
+
+// Animated water normal from the analytic gradient of three summed directional sine waves, scrolled by time.
+// Purely in-shader (no remesh); p is the world-space XZ of the water surface so waves are seamless across chunks.
+vec3 WaveNormal(vec2 p, float t)
+{
+	vec2 d1 = normalize(vec2(1.0, 0.4));
+	vec2 d2 = normalize(vec2(-0.3, 1.0));
+	vec2 d3 = normalize(vec2(0.8, -0.6));
+	float k1 = WaveFreq;
+	float k2 = WaveFreq*1.7;
+	float k3 = WaveFreq*0.6;
+	vec2 g = vec2(0.0);
+	g += d1*(WaveAmp*k1*cos(dot(p, d1)*k1 + t*WaveSpeed));
+	g += d2*(WaveAmp*k2*cos(dot(p, d2)*k2 + t*WaveSpeed*0.8));
+	g += d3*(WaveAmp*k3*cos(dot(p, d3)*k3 + t*WaveSpeed*1.3));
+	return normalize(vec3(-g.x, 1.0, -g.y));
+}
+
+// Analytic sky colour in a given direction, built from the day/night uniforms (there is no skybox): a
+// horizon->zenith gradient over uSkyAmbient plus a sharp reflected sun disc, both faded by uSunFade.
+vec3 SkyColor(vec3 dir)
+{
+	float up = clamp(dir.y, 0.0, 1.0);
+	vec3 zenith = uSkyAmbient*SkyZenithGain;
+	vec3 horizon = uSkyAmbient*SkyHorizonGain + uSunColor*uSunFade*SkyHorizonSunTint;
+	vec3 sky = mix(horizon, zenith, up);
+	float sd = max(dot(dir, uSunDirection), 0.0);
+	sky += uSunColor*uSunFade*(pow(sd, SunDiscExp)*SunDiscGain);
+	return sky;
+}
+
 vec4 GetColor()
 {
 	vec4 diffuse = texture(uDiffuse, vTexCoord);
@@ -130,7 +196,27 @@ vec4 GetColor()
 	vec3 skyLight = lightSample.a*(litShadow*uSunColor*uSunFade + uSkyAmbient);
 	vec3 light = max(lightSample.rgb, skyLight);
 
-	return vec4(diffuse.rgb * max(light, uMinLight), diffuse.a);
+	vec3 baseColor = diffuse.rgb * max(light, uMinLight);
+
+	// Water surface (mesher-flagged normal.w ~ 0.75): add animated normals + a Fresnel reflection of the
+	// analytic sky + a sun specular glint on top of the Tier-A lit translucent water (baseColor). Everything
+	// is scaled by the baked sky factor and uSunFade, so cave/overhang water (lightSample.a ~ 0) and night
+	// water (uSunFade ~ 0) fall straight back to the plain look with no special-casing.
+	if (normal.w > WaterFlagLo && normal.w < WaterFlagHi)
+	{
+		vec3 worldPos = PositionFromDepth(texture(uDepth, vTexCoord).x*2 - 1);
+		vec3 faceN = normalize(normal.xyz*2.0 - 1.0);
+		vec3 N = faceN.y > 0.5 ? WaveNormal(worldPos.xz, uTime) : faceN;
+		vec3 V = normalize(uCameraPos - worldPos);
+		float fres = WaterF0 + (1.0 - WaterF0)*pow(1.0 - max(dot(N, V), 0.0), 5.0);
+		vec3 skyRefl = SkyColor(reflect(-V, N));
+		vec3 H = normalize(V + uSunDirection);
+		float spec = pow(max(dot(N, H), 0.0), WaterSpecExp)*uSunFade*shadow*lightSample.a*WaterSpecGain;
+		vec3 col = mix(baseColor, skyRefl, fres*lightSample.a) + uSunColor*spec;
+		return vec4(col, diffuse.a);
+	}
+
+	return vec4(baseColor, diffuse.a);
 }
 
 void main()

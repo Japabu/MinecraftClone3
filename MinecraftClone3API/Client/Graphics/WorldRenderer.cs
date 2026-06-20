@@ -400,6 +400,12 @@ namespace MinecraftClone3API.Graphics
                 CullFace = true, DepthTest = true, DepthFunc = DepthFunction.Lequal,
                 Blend = true, BlendFunc = (BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha)
             });
+            // Blend only the diffuse attachment (translucency); the normal+light attachments must be written
+            // cleanly by the front-most transparent surface so the water flag (normal.w) and the surface's own
+            // light survive instead of blending toward the background and becoming unreadable in composition.
+            // Restored right after so RenderState's single Blend bool stays the whole per-buffer description.
+            GL.Disable(IndexedEnableCap.Blend, 1);
+            GL.Disable(IndexedEnableCap.Blend, 2);
             GL.Uniform1(uCutoff, 0);
 
             //Draw transparent blocks back to front
@@ -412,6 +418,9 @@ namespace MinecraftClone3API.Graphics
                 chunk.DrawTransparent();
             }
             GraphicsDebug.PopGroup();
+
+            GL.Enable(IndexedEnableCap.Blend, 1);
+            GL.Enable(IndexedEnableCap.Blend, 2);
 
             RenderState.Set(new GlState {CullFace = true, DepthTest = true, DepthFunc = DepthFunction.Lequal});
 
@@ -533,6 +542,13 @@ namespace MinecraftClone3API.Graphics
             GL.Uniform3(comp.GetUniformLocation("uSunColor"), sun.X, sun.Y, sun.Z);
             var skyAmbient = SkyAmbient();
             GL.Uniform3(comp.GetUniformLocation("uSkyAmbient"), skyAmbient.X, skyAmbient.Y, skyAmbient.Z);
+            // Water shading (Fresnel sky reflection + sun specular + animated normals) reconstructs the view
+            // vector and reflects an analytic sky, so it needs the camera position, the sun direction, and a
+            // time for the wave scroll. uTime wraps at 3600 s to keep float precision in the wave phase.
+            var toSun = SunDirection();
+            GL.Uniform3(comp.GetUniformLocation("uCameraPos"), camera.Position.X, camera.Position.Y, camera.Position.Z);
+            GL.Uniform3(comp.GetUniformLocation("uSunDirection"), toSun.X, toSun.Y, toSun.Z);
+            GL.Uniform1(comp.GetUniformLocation("uTime"), (float) (_dayClock.Elapsed.TotalSeconds % 3600.0));
             ClientResources.ScreenRectVao.Draw();
             GraphicsDebug.PopGroup();
 

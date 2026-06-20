@@ -20,6 +20,18 @@ namespace MinecraftClone3API.Blocks
         Disconnected
     }
 
+    /// <summary>
+    /// A hint for how the deferred composition shader should shade a block's surface, baked into the G-buffer
+    /// normal.w by the mesher (see <c>ChunkMesher.WaterNormalW</c>). A new value needs both a mesher w-mapping
+    /// and a matching detection band in <c>Composition.fs</c>; values without their own mapping fall back to
+    /// <see cref="Solid"/> (lit normally).
+    /// </summary>
+    public enum RenderMaterial
+    {
+        Solid,
+        Water
+    }
+
     public class Block : RegistryEntry
     {
         public static readonly AxisAlignedBoundingBox DefaultAlignedBoundingBox =
@@ -36,6 +48,8 @@ namespace MinecraftClone3API.Blocks
         public virtual bool IsVisible(WorldBase world, Vector3i blockPos) => true;
         public virtual bool IsFullBlock(WorldBase world, Vector3i blockPos) => true;
         public virtual TransparencyType IsTransparent(WorldBase world, Vector3i blockPos) => TransparencyType.None;
+
+        public virtual RenderMaterial GetRenderMaterial(WorldBase world, Vector3i blockPos) => RenderMaterial.Solid;
 
         public virtual ConnectionType ConnectsToBlock(WorldBase world, Vector3i blockPos, Vector3i otherBlockPos,
             Block otherBlock) => ConnectionType.Undefined;

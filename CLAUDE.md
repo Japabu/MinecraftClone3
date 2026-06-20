@@ -546,6 +546,37 @@ composition already early-outs shadow sampling exactly where `_anyShadowReceiver
 `uLight.a≈0`, past `ShadowDistance`, or `uSunFade≈0`) **or where the Shadows option is off** (`uShadowsEnabled=0`,
 which forces `shadow=1` so a sky-lit surface stays fully sun-lit instead of sampling the stale map).
 
+**Water surface — Tier B (animated normals + Fresnel sky reflection + sun specular, no extra pass).** Water
+is shaded specially **in `Composition.fs`** — deferred-correct, since composition already reconstructs world
+position from depth and holds the sun/sky/shadow terms. No new render pass, framebuffer, or vertex attribute.
+The chain: `BlockWater.GetRenderMaterial → RenderMaterial.Water` (an engine-level hint mirroring
+`TransparencyType`); `ChunkMesher.AddFaceToVao` bakes that into the face **`normal.w = 0.5f`** (`WaterNormalW`),
+which `EncodeNormal` stores as **0.75** (≈191/255 in Rgba8) in the G-buffer normal alpha — distinct from lit
+solid (0.5) and the unlit flag (1.0). Composition detects a water pixel by a snug band around it
+(`WaterFlagLo/Hi`, 0.7–0.8 — the flag is flat per-face and attachment 1 is written blend-off, so the stored
+value is deterministic; a future `RenderMaterial` must encode outside this band) and, on top of the
+existing Tier-A lit translucent water (`baseColor`), adds: animated **`WaveNormal`** (analytic gradient of
+three summed directional sine waves over the surface's world XZ, scrolled by `uTime` — only the **top** face,
+`faceN.y > 0.5`, is perturbed), a **Fresnel** mix toward an analytic **`SkyColor`** (horizon→zenith gradient
+over `uSkyAmbient` + a reflected sun disc — there is no skybox, so the reflection is synthesized from the same
+day/night uniforms and tracks time of day), and a **Blinn-Phong sun specular** glint. New composition uniforms:
+`uCameraPos`, `uSunDirection`, `uTime` (set in `DrawComposition`). Reflection and specular are scaled by the
+baked sky factor (`uLight.a`) and `uSunFade` (and the glint by `shadow`), so cave/overhang water and night
+water fall straight back to the plain look — the gating is free, no special cases. Look knobs are shader
+`const`s (wave amp/freq/speed, `WaterF0`, `WaterSpecExp/Gain`, the `Sky*Gain`/`SunDisc*`).
+
+The one subtlety this needs: composition must *identify* water pixels, but the transparent pass blends **all
+three** MRT attachments, so a flag in `normal.w` would blend with the background and become unreadable. Fix:
+during the transparent draw, **blend only attachment 0 (diffuse)** and disable blending on attachments **1
+(normal)** and **2 (light)** via `GL.Disable(IndexedEnableCap.Blend, 1/2)`, restored to `Enable` right after
+the pass. Diffuse still alpha-blends (translucency preserved); the front-most transparent surface writes its
+normal + water-flag + light **cleanly** (overwrite, not blend). This needs **no `RenderState` change** — the
+explicit restore keeps RenderState's single `Blend` bool the whole per-buffer description. Side effect
+(intentional, arguably more correct): glass also writes its front pane's own normal/light instead of blending
+them — diffuse translucency is unchanged, and it actually removes a latent `normal.w` corruption when glass
+overlapped an unlit pixel. **`WorldGeometry.vs/.fs` are untouched** — the flag rides the existing
+`EncodeNormal`, and water (input `w = 0.5`, not the unlit `1`) still samples its texture normally.
+
 OpenGL is capped at **4.1 Core / GLSL 4.10** (macOS limit). Consequences: **uniform and sampler locations
 are queried by name** (no `layout(location=)`/`layout(binding=)` on uniforms); vertex-attribute and
 fragment-output locations *do* use `layout(location=)`.
@@ -671,8 +702,10 @@ renderer), and `water_still.png` is a grey **tint-mask** (vanilla multiplies it 
 So `VanillaPlugin` authors a minimal cube model (`Vanilla/Models/Water.json`, parent `System/Models/Block`)
 that references the **real** `minecraft:block/water_still` texture with `tintindex 0`, and `BlockWater`
 returns the vanilla default water blue from `GetTintColor` (the mesher drops tint *alpha*, so the
-translucency comes from the texture's own alpha, ~0.7). This is Tier-A static water; an animated/reflective
-surface is deferred (see "Known rough edges").
+translucency comes from the texture's own alpha, ~0.7). The block is decoupled from its *look*: the animated
+surface + Fresnel sky reflection + sun specular (**Tier B**) live entirely in the deferred composition shader,
+flagged by `BlockWater.GetRenderMaterial` (see "Water surface — Tier B" in the rendering section). A refractive
+forward water pass (Tier C) is still deferred (see "Known rough edges").
 
 Because server-side light simulation calls `Block.GetLightLevel`, **block code that runs on the server must
 not touch client/GL/window state** (this is what crashed `BlockTorch` — it read the keyboard).
@@ -1085,24 +1118,33 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
   doesn't collide. Bounded in practice: the join handshake pre-streams the spawn column, and the client cache
   distance (240) stays well ahead of the server view distance (160), so terrain is normally resident before
   you reach it. A fast clip into ungenerated space could still drop the player; accepted for now.
-- **Water is Tier-A static (no animated/reflective surface).** The block is present and translucent (real
-  `water_still` frame-0 texture, tinted blue), but the surface doesn't move or reflect. The agreed next step is
-  Tier B (procedural sine-wave normals + Fresnel **sky** reflection + sun specular — no pipeline change) then
-  optionally Tier C (a **forward water pass after composition** reading the opaque scene colour/depth for
-  refraction + depth absorption). Water is also **not a fluid**: it doesn't flow, level, or fill — it's a
-  static block placed by gen below sea level. The block (`Vanilla:Water`) is decoupled from its shader, so the
-  look is a self-contained follow-up.
+- **Water is Tier B (animated normals + Fresnel sky reflection + sun specular); Tier C is deferred.** Tier B
+  is **done** — see "Water surface — Tier B" in the rendering section for the full design (in-shader, no extra
+  pass; flagged via `normal.w`; per-attachment blend so the flag survives; analytic — **not** cubemap — sky
+  reflection). Residual edges accepted for now: the sky reflection is **analytic** (synthesized from the
+  day/night uniforms, no real environment cubemap), so it doesn't reflect terrain or clouds, only a sky
+  gradient + sun disc; there is **no refraction or depth-based absorption** (looking down still shows the
+  Tier-A tint over the bottom, just Fresnel-mixed) — that's **Tier C** (a **forward water pass after
+  composition** reading the opaque scene colour/depth), still the deferred next step. Water is also **not a
+  fluid**: it doesn't flow, level, or fill — it's a static block placed by gen below sea level. Look knobs are
+  shader `const`s (wave amp/freq/speed, `WaterF0`, `WaterSpecExp/Gain`, `Sky*Gain`/`SunDisc*`).
 - **Animated textures show frame 0 only.** Strip textures are sliced and *all* frames are uploaded +
   retained (`BlockTextureManager.AnimatedTextures` with `frametime`), but nothing cycles them yet. Adding the
   animator (advance the sampled layer over time, by remesh-free means — a per-animated-texture uniform/layer
   swap) is the deferred future path. The `.mcmeta` `frames`/`width`/`height` reorder fields are ignored (only
   square top-to-bottom strips at default order are handled — covers water/lava/fire).
-- **Biome height is climate-driven with hard borders (no height blend).** Each column picks one biome and
-  applies its `HeightBias`/`HeightVariation`, so adjacent biomes with very different bias (only Mountains is
-  large) leave a foothill cliff at the border rather than a smooth blend — Minecraft pre-1.18 had this too.
-  Blending would need sampling several biomes per column. Ocean/Beach are **height-derived overrides** on the
-  base height, so an ocean-*variant* biome from a plugin isn't selectable (the climate source only sees
-  land-tagged climate biomes); supporting plugin ocean biomes needs a small extension. Deferred.
+- **Biome height blends; surface *blocks* and climate selection don't.** Terrain height is bilinearly
+  blended across biome borders (see pipeline step 1 — `HeightBlendSpacing` lattice), so Mountains↔Plains is a
+  foothill, not a cliff. Three accepted residual edges: (1) **surface blocks still snap** at the border
+  (grass↔sand) — only height blends, intended (matches MC); (2) **thin-biome skipping** — a biome strip
+  narrower than `HeightBlendSpacing` may touch no lattice corner and contribute nothing to the height blend
+  (rare here — climate biomes span ≫ the spacing; mitigated by a smaller spacing); (3) **mountain-on-coast
+  sand shelf (cosmetic)** — if a high-bias land corner within the spacing lifts an ocean-classified column's
+  blended height above `SeaLevel`, that column's hard Ocean skin (sand) shows a small shelf above water
+  (`ocean`/water follow the blended `surf`, so no flooding/voids — just the shelf). Tune `HeightBlendSpacing`
+  (16 steeper / 32 gentler). Ocean/Beach are **height-derived overrides** on the base height, so an
+  ocean-*variant* biome from a plugin isn't selectable (the climate source only sees land-tagged climate
+  biomes); supporting plugin ocean biomes needs a small extension. Deferred.
 - **Gen skips the light BFS, so some sky/light is approximate** (self-corrects on the first nearby edit, which
   triggers the real BFS): no lateral sky spill into cave mouths or under overhangs, dense canopy doesn't shadow
   the ground (leaves keep their seeded sky 15), deep water dims by a simple per-block gradient not a flood.
