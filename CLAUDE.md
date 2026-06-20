@@ -949,8 +949,10 @@ is wiped+regenerated each run (`Worlds/__benchmark__`), the camera path is a pur
 sun-up so the shadow passes run — the heavy case). Settings are **pinned in-memory** (render distance / shadow
 quality / FOV / brightness) and **`GraphicsSettings.SuppressSave` keeps the user's `GraphicsSettings.json`
 untouched** (verified byte-identical after a run). The report (also written to `benchmark-report.txt`) gives
-overall + per-phase avg / 1%-low / 0.1%-low FPS, frame-ms percentiles, the GPU per-pass split
-(shadow/geom/comp), CPU update/render ms, drawn chunks, and GC/alloc.
+overall + per-phase avg / 1%-low / 0.1%-low FPS, **an UNCAPPED FPS = 1000/max(gpu,cpu) work time** (the
+present-independent throughput — observed FPS is otherwise capped at the ~120 Hz display refresh, see the
+findings below), frame-ms percentiles, the GPU per-pass split (shadow/geom/comp), CPU update/render ms, drawn
+chunks, and GC/alloc.
 
 > ⚠️ **Benchmark only on an idle machine.** The UHD 630 is an integrated GPU sharing the CPU package's
 > thermal/power budget, so concurrent CPU load (a parallel build, another process, an agent workflow doing
@@ -964,10 +966,18 @@ overall + per-phase avg / 1%-low / 0.1%-low FPS, frame-ms percentiles, the GPU p
 Measured with the flythrough at the pinned defaults (RD 8, Medium shadows). These are the load-bearing facts
 for anyone trying to make the renderer faster — read them before optimizing, they save dead ends.
 
-- **Steady-state (cruising over terrain) is GPU-bound at ~9 ms/frame ≈ 106 FPS.** The whole-frame
-  `GL_TIME_ELAPSED` ≈ frame time, and the same-frame per-pass timers sum to it: **shadow ~3.4, geom ~4.5,
-  comp ~1.1 ms**. CPU is not the wall (`updateMs` ~0.5, `renderMs` ~2 ms). Confirmed GPU-bound under X11 +
-  `vblank_mode=0` (true uncapped vsync-off): frame stays ~9.5 ms, so it is not Wayland present-pacing either.
+- **There is a hard ~8.3 ms present cap (≈120 Hz display refresh) that SwapBuffers obeys regardless of
+  vsync settings** — neither GLFW swap-interval-0, Wayland, X11, nor `vblank_mode=0` escapes it (all measured).
+  So **observed FPS can never exceed ~118 in this windowed setup**, no matter how fast the engine is: at
+  shadows-off + RD 4 the frame *work* is ~2 ms (≈500 FPS of capability) yet observed FPS is pinned at 118 with
+  p95/p99 flat at 8.3 ms. This is THE reason the game was "not reliably profilable" — the headline FPS measured
+  the monitor, not the engine. The benchmark therefore reports an **UNCAPPED FPS = 1000 / max(gpu work, cpu
+  work)** (present-independent), which is the metric to optimize against and compare across machines.
+- **Steady-state at full quality (Medium shadows, RD 8) is GPU-bound: ~9–9.5 ms of frame work ≈ 100–108 FPS
+  uncapped.** The whole-frame `GL_TIME_ELAPSED` ≈ frame work, and the same-frame per-pass timers sum to it:
+  **shadow ~3.4, geom ~4.5, comp ~1.1 ms**. CPU is not the wall (`updateMs` ~0.5, `renderMs` ~2 ms). Confirmed
+  by interleaved A/B: shadows-off drops GPU 9.2→5.1 ms (the shadow pass is real, ~3.4 ms), and the UNCAPPED
+  curve is Medium/RD8 ≈ 100, shadows-off ≈ 145, shadows-off+RD4 ≈ 390–650 FPS.
 - **The bottleneck is per-pixel fragment + depth-raster + vertex-shading fill, NOT draw-call overhead,
   overdraw, vertex-fetch bandwidth, or present pacing.** Each was tested and ruled out: (1) batching all
   ~238 opaque draws into one `glMultiDrawElementsBaseVertex` cut `renderMs` ~3.7→2.0 but left GPU time

@@ -471,6 +471,18 @@ namespace MinecraftClone3API.Util
             var gpu = Collect(phase, s => s.GpuMs);
             var upd = Collect(phase, s => s.UpdateMs);
             var rnd = Collect(phase, s => s.RenderMs);
+
+            // Uncapped (present-independent) throughput: the engine produces a frame in max(gpu work, cpu work)
+            // ms — the bottleneck of the pipelined CPU/GPU. The observed avgFPS above is throttled by the
+            // display's present cap (~120 Hz here) whenever frame work < the refresh interval, so THIS is the
+            // metric that actually reflects how fast the engine is and is comparable across machines/displays.
+            var uncapped = Collect(phase, s => MathF.Max(s.GpuMs, s.UpdateMs + s.RenderMs));
+            Array.Sort(uncapped);
+            var avgUncappedMs = Mean(uncapped);
+            var uncappedFps = avgUncappedMs > 0 ? 1000.0 / avgUncappedMs : 0;
+            var uncappedLow1 = LowFps(uncapped, 0.01);
+            sb.AppendLine($"{"",12}  UNCAPPED avgFPS {uncappedFps,6:0.0}  1%low {uncappedLow1,6:0.0}  " +
+                          $"(frame work {avgUncappedMs,5:0.00} ms = max of gpu {Mean(gpu),4:0.00} / cpu {Mean(upd) + Mean(rnd),4:0.00})");
             var shadow = Collect(phase, s => s.ShadowMs);
             var geom = Collect(phase, s => s.GeomMs);
             var comp = Collect(phase, s => s.CompMs);
