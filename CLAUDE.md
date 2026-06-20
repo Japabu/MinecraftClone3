@@ -125,11 +125,11 @@ separate client-only `ChunkRenderData`. This split is the backbone of the whole 
      - 3 background threads                    - mesh-thread pool + 1 apply thread
 
    Chunk  (Blocks/Chunk.cs)            ChunkRenderData  (Client/Graphics/ChunkRenderData.cs)
-   - PaletteStorage block ids          - holds a Chunk + two VertexArrayObjects (opaque + transparent)
-   - PaletteStorage light (RGB)        - Update() : CPU meshing (ChunkMesher) — safe off-thread
-   - PaletteStorage sky (0..15)        - Upload()/Draw()/Dispose() : GL — main thread ONLY
-   - block data, min/max bounds        - Upload() gated on `Updated` (see invariants)
-   - Write(BinaryWriter)
+   - PaletteStorage block ids          - holds a Chunk + a CPU opaque MeshBuffer (→ shared ChunkMeshArena)
+   - PaletteStorage light (RGB)          + a per-chunk transparent SortedVertexArrayObject
+   - PaletteStorage sky (0..15)        - Update() : CPU meshing (ChunkMesher) — safe off-thread
+   - block data, min/max bounds        - TryUpload(arena) / DrawTransparent / Dispose : GL — main thread ONLY
+   - Write(BinaryWriter)               - Update() gated on `Updated` (see invariants)
 ```
 
 **Storage is bit-packed paletted, not dense arrays** (`Blocks/PaletteStorage.cs`). A `Chunk` holds three
@@ -435,7 +435,8 @@ needs hardening, ship `GameRegistry.Save/Load` (a `registry.bin` exchange) — i
     └─ DrawGeometryFramebuffer → GeometryFramebuffer (MRT G-buffer)
          attachment 0: diffuse   1: normal (w=1 ⇒ "unlit, pass through")
          2: RGBA8 light (rgb = baked block light, a = baked sky-light factor 0..1)   + depth
-         · opaque chunks front-to-back, then transparent back-to-front (per-chunk sorted VAO)
+         · opaque chunks front-to-back via ONE batched multidraw (shared ChunkMeshArena), then
+           transparent back-to-front (per-chunk sorted VAO)
          · EntityRenderer  : remote players as solid placeholder cubes (BlockOutline shader, unlit)
          · PlayerController : block-targeting outline
     └─ DrawShadowResolve (same gate as DrawShadowMap) → ShadowResolveFramebuffer (HALF-res RGBA8)
@@ -533,6 +534,24 @@ emits only air-exposed faces, so a buried chunk's mesh is near-empty and costs a
 dominant surface GPU cost is the shadow pass + composition fill, not buried-chunk draws. (A per-chunk
 visibility-graph BFS "cave cull" was tried and removed — it over-drew on open vistas, didn't reliably win in
 caves, and the connectivity graph + BFS were complexity the simple scan doesn't need.)
+
+**Opaque + shadow geometry is batched through one shared vertex arena (`ChunkMeshArena`).** Every chunk's
+**opaque** mesh is built (mesh thread) into a CPU `MeshBuffer` and uploaded (main thread) into a sub-range of a
+shared set of GL buffers — 5 vertex VBOs + 1 index buffer — managed by a coalescing first-fit `RangeAllocator`
+(grows by reallocating + `glCopyBufferSubData`). Positions are **baked world-space at mesh time**
+(`ChunkMesher` adds `chunk.Position*16`), so no per-chunk model matrix is needed (`uWorld` was dropped from
+`WorldGeometry.vs`/`ShadowDepth.vs`); that's the precondition that lets many chunks share one buffer. The whole
+visible opaque set then draws with **one `glMultiDrawElementsBaseVertex`** (GL 3.2 core, the 4.1 cap allows it)
+per pass — geometry uses the full-attribute VAO, the shadow depth pass a **position-only VAO** over the same
+buffers. Per-chunk indices are 0-relative; the arena passes each chunk's vertex-range start as the sub-draw's
+`baseVertex`. **Transparent meshes stay per-chunk** (`SortedVertexArrayObject`) — they need an independent
+per-frame back-to-front index sort. The arena is touched main-thread only (upload in the client upload loop,
+free in its dispose drain), so no locking; GL stays on the main thread (Invariant 1). **Measured effect:** this
+**halves CPU draw submission** (`renderMs` ~3.7→~2.0 ms — one bind + one multidraw call instead of ~238
+bind+uniform+draw triples per pass) but **does NOT reduce GPU time** on Mesa, because non-indirect
+`glMultiDrawElements` is a driver-side CPU loop (the GPU still sees N sub-draws). It's kept for the CPU win
+(helps the CPU-bound streaming case) + future GL 4.3 indirect-draw + cleaner architecture; see the performance
+findings below for why the GPU, not the CPU, is the steady-state wall.
 
 **The visible set gates the shadow passes.** `BuildVisibleSet` sets `_anyShadowReceiver` iff a visible chunk
 within `ShadowDistance` is **sky-exposed** (`ChunkRenderData.SkyExposed = Chunk.HasAnySkyLight()`), and the
@@ -939,6 +958,38 @@ overall + per-phase avg / 1%-low / 0.1%-low FPS, frame-ms percentiles, the GPU p
 > fixed-cost fullscreen composition pass (a tell-tale: a constant-work pass getting slower ⇒ the clock
 > dropped, not the work). Run baseline and optimized builds back-to-back on a quiet machine to control for
 > thermal state; a single confounded run is worthless for an A/B.
+
+### Performance findings (UHD 630, 1280×720, what the benchmark established)
+
+Measured with the flythrough at the pinned defaults (RD 8, Medium shadows). These are the load-bearing facts
+for anyone trying to make the renderer faster — read them before optimizing, they save dead ends.
+
+- **Steady-state (cruising over terrain) is GPU-bound at ~9 ms/frame ≈ 106 FPS.** The whole-frame
+  `GL_TIME_ELAPSED` ≈ frame time, and the same-frame per-pass timers sum to it: **shadow ~3.4, geom ~4.5,
+  comp ~1.1 ms**. CPU is not the wall (`updateMs` ~0.5, `renderMs` ~2 ms). Confirmed GPU-bound under X11 +
+  `vblank_mode=0` (true uncapped vsync-off): frame stays ~9.5 ms, so it is not Wayland present-pacing either.
+- **The bottleneck is per-pixel fragment + depth-raster + vertex-shading fill, NOT draw-call overhead,
+  overdraw, vertex-fetch bandwidth, or present pacing.** Each was tested and ruled out: (1) batching all
+  ~238 opaque draws into one `glMultiDrawElementsBaseVertex` cut `renderMs` ~3.7→2.0 but left GPU time
+  **unchanged** (Mesa's non-indirect multidraw is a CPU loop → GPU still does N sub-draws); (2) removing the
+  cutout `discard` to enable early-Z changed `geomMs` ~5 % (so occluded-fragment overdraw is negligible — the
+  exposed-face mesher already keeps it low); (3) a position-only shadow VAO (12 B vs 72 B/vertex) did not move
+  `shadowMs` (so it is not vertex-fetch bound — it is triangle/primitive + depth-raster bound).
+- **Therefore 500 FPS (2 ms) is NOT achievable on this hardware at 720p with shadows without degrading
+  quality/features.** It needs a ~5× GPU reduction; the irreducible deferred-lighting composition pass alone is
+  ~1.1 ms, and `geom`+`shadow` (~8 ms) are real fragment/raster work, not waste. Every remaining GPU lever
+  trades quality: temporal shadow re-use (staleness/coverage or resolution loss — and the ahead-projected,
+  camera-following shadow map forces a rebuild on rotation, so the win is situational), a 3→2-attachment
+  G-buffer (~1 ms, repack risk), or greedy meshing (cuts triangles → helps shadow + geom vertex/raster, but
+  merging faces loses the per-vertex smooth-lighting/AO → an AO quality regression). The benchmark's
+  `--benchmark-shadows`/`--benchmark-rd` sweep quantifies the tradeoff curve so the **player** can choose where
+  500 FPS lives (lower RD, shadows Low/Off) — but those are settings, not a lossless engine win.
+- **What WAS won losslessly:** `renderMs` (CPU draw submission) roughly halved via the arena batching + cached
+  uniform locations + cached chunk centres; this does not raise steady-state FPS (GPU-bound) but reclaims CPU
+  headroom and helps the CPU-bound streaming/orbit case. **Open lossless work:** the orbit/streaming phase
+  still has frame-time **hitches** (1%-low ~13 FPS, ~40–80 ms spikes) from main-thread allocation + GC during
+  the chunk-fill burst — that is a real, lossless smoothness win still on the table (pool `ChunkRenderData`,
+  time-budget `DrainRenderReady`, cut the ~4 MB/frame fill allocation), independent of the GPU ceiling.
 
 ## Conventions
 
