@@ -19,12 +19,17 @@ namespace MinecraftClone3API.Client
 
         public static GeometryFramebuffer GeometryFramebuffer;
         public static TextureFramebuffer LightFramebuffer;
+        public static ShadowFramebuffer ShadowFramebuffer;
+        // Half-resolution resolved sun shadow (the cascaded PCF runs into this, then composition upsamples).
+        public static TextureFramebuffer ShadowResolveFramebuffer;
 
         public static Shader WorldGeometryShader;
         public static Shader CompositionShader;
         public static Shader PointLightShader;
         public static Shader BlockOutlineShader;
         public static Shader SpriteShader;
+        public static Shader ShadowDepthShader;
+        public static Shader ShadowResolveShader;
 
         public static SpriteVertexArrayObject ScreenRectVao;
 
@@ -48,6 +53,11 @@ namespace MinecraftClone3API.Client
             PointLightShader = ResourceReader.ReadShader(PluginDir + "Shaders/PointLight");
             BlockOutlineShader = ResourceReader.ReadShader(PluginDir + "Shaders/BlockOutline");
             SpriteShader = ResourceReader.ReadShader(PluginDir + "Shaders/Sprite");
+            ShadowDepthShader = ResourceReader.ReadShader(PluginDir + "Shaders/ShadowDepth");
+            ShadowResolveShader = ResourceReader.ReadShader(PluginDir + "Shaders/ShadowResolve");
+
+            // Fixed-size shadow map (not window-sized), so created once here rather than in ResizeFrameBuffers.
+            ShadowFramebuffer = new ShadowFramebuffer(ShadowFramebuffer.ShadowMapSize);
 
             ScreenRectVao = new SpriteVertexArrayObject();
             ScreenRectVao.Add(new Vector2(-1, +1), Vector2.Zero, Vector3.Zero);
@@ -95,6 +105,13 @@ namespace MinecraftClone3API.Client
 
             LightFramebuffer?.Dispose();
             LightFramebuffer = new TextureFramebuffer(Window.FramebufferSize.X, Window.FramebufferSize.Y, false);
+
+            // Half the framebuffer resolution (rounded up): the resolved sun shadow runs the cascaded PCF at
+            // quarter the pixel count, then the composition pass depth-aware-upsamples it back to full res.
+            ShadowResolveFramebuffer?.Dispose();
+            ShadowResolveFramebuffer = new TextureFramebuffer(
+                Math.Max(1, (Window.FramebufferSize.X + 1) / 2),
+                Math.Max(1, (Window.FramebufferSize.Y + 1) / 2), false);
         }
     }
 }

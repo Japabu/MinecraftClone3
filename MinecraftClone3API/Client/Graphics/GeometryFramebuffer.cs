@@ -49,6 +49,12 @@ namespace MinecraftClone3API.Graphics
             GL.DrawBuffers(3, new []{DrawBuffersEnum.ColorAttachment0, DrawBuffersEnum.ColorAttachment1, DrawBuffersEnum.ColorAttachment2});
             CheckFramebufferStatus();
 
+            GraphicsDebug.Label(ObjectLabelIdentifier.Framebuffer, _id, "GBuffer.FBO");
+            GraphicsDebug.Label(ObjectLabelIdentifier.Texture, _diffuse, "GBuffer.Diffuse");
+            GraphicsDebug.Label(ObjectLabelIdentifier.Texture, _normal, "GBuffer.Normal");
+            GraphicsDebug.Label(ObjectLabelIdentifier.Texture, _light, "GBuffer.Light");
+            GraphicsDebug.Label(ObjectLabelIdentifier.Texture, _depth, "GBuffer.Depth");
+
             Unbind(ClientResources.Window.FramebufferSize.X, ClientResources.Window.FramebufferSize.Y);
         }
 

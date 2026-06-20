@@ -170,6 +170,10 @@ namespace MinecraftClone3API.Blocks
 
         public int GetSkyLight(Vector3i blockPos) => _skyStorage.Get(Index(blockPos.X, blockPos.Y, blockPos.Z));
 
+        /// <summary>True iff any cell in the chunk carries sky light. Drives <see cref="Graphics.ChunkRenderData.SkyExposed"/>,
+        /// which gates the sun shadow passes (skipped when no visible chunk is sky-exposed).</summary>
+        public bool HasAnySkyLight() => _skyStorage.ContainsNonZero();
+
         public void Write(BinaryWriter writer)
         {
             writer.Write(_min.X);

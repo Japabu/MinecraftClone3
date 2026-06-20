@@ -33,8 +33,8 @@ namespace MinecraftClone3.States
             var step = ButtonHeight + ButtonGap;
 
             Elements.Add(new GuiButton(Rectangle.FromSize(x, y, ButtonWidth, ButtonHeight), "Back to Game", Close));
-            Elements.Add(new GuiButton(Rectangle.FromSize(x, y + step, ButtonWidth, ButtonHeight), "Options", null)
-                {Enabled = false});
+            Elements.Add(new GuiButton(Rectangle.FromSize(x, y + step, ButtonWidth, ButtonHeight), "Options",
+                () => StateEngine.AddOverlay(new GuiGraphicsOptions(_window))));
             Elements.Add(new GuiButton(Rectangle.FromSize(x, y + 2 * step, ButtonWidth, ButtonHeight),
                 "Save and Quit to Title", () => StateEngine.ReplaceState(new GuiMainMenu(_window))));
         }

@@ -2,7 +2,9 @@ using System;
 using System.Diagnostics;
 using System.Globalization;
 using MinecraftClone3.States;
+using MinecraftClone3API.Client;
 using MinecraftClone3API.Client.Graphics;
+using MinecraftClone3API.Graphics;
 using MinecraftClone3API.Client.StateSystem;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Util;
@@ -10,6 +12,7 @@ using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
+using OpenTK.Windowing.GraphicsLibraryFramework;
 
 namespace MinecraftClone3
 {
@@ -60,12 +63,18 @@ namespace MinecraftClone3
         private double _lastGapMs;
         private int _updateCalls;
 
-        // GL_TIME_ELAPSED timer queries (ping-pong so the result is read a frame later, never stalling):
-        // measures the actual GPU time for the render commands, separating "GPU genuinely slow" from
-        // "GPU fast, the wait is vsync/present/event overhead". Created lazily once the GL context exists.
-        private int _gpuQueryA, _gpuQueryB;
+        // GL_TIME_ELAPSED whole-frame timer queries: the actual GPU time for the render commands, separating
+        // "GPU genuinely slow" from "GPU fast, the wait is vsync/present/event overhead". Created lazily once
+        // the GL context exists. A ring (not a 1-frame ping-pong) harvested newest-ready, because with vsync
+        // off the CPU runs several frames ahead of the GPU, so last frame's query usually isn't done yet — a
+        // 1-frame read would perpetually miss and freeze gpuMs at a stale value. See GpuTimers for the detail.
+        private const int GpuRing = 8;
+        private int[] _gpuQueries;
+        private bool[] _gpuPending;
+        private long[] _gpuQueryFrame;
         private bool _gpuQueriesReady;
         private long _gpuFrame;
+        private long _gpuLastHarvested = -1;
         private double _lastGpuMs;
 
         protected override void OnUpdateFrame(FrameEventArgs e)
@@ -86,33 +95,50 @@ namespace MinecraftClone3
 
             if (!_gpuQueriesReady)
             {
-                _gpuQueryA = GL.GenQuery();
-                _gpuQueryB = GL.GenQuery();
+                _gpuQueries = new int[GpuRing];
+                _gpuPending = new bool[GpuRing];
+                _gpuQueryFrame = new long[GpuRing];
+                for (var i = 0; i < GpuRing; i++) _gpuQueries[i] = GL.GenQuery();
                 _gpuQueriesReady = true;
             }
 
-            var writeQuery = (_gpuFrame & 1) == 0 ? _gpuQueryA : _gpuQueryB;
-            var readQuery = (_gpuFrame & 1) == 0 ? _gpuQueryB : _gpuQueryA;
+            // Harvest the newest ring slot whose result has arrived (only reads when available, so no stall).
+            var best = -1;
+            var bestFrame = _gpuLastHarvested;
+            for (var i = 0; i < GpuRing; i++)
+            {
+                if (!_gpuPending[i]) continue;
+                if (_gpuQueryFrame[i] <= _gpuLastHarvested) { _gpuPending[i] = false; continue; }
+                GL.GetQueryObject(_gpuQueries[i], GetQueryObjectParam.QueryResultAvailable, out int available);
+                if (available != 0 && _gpuQueryFrame[i] > bestFrame) { best = i; bestFrame = _gpuQueryFrame[i]; }
+            }
+            if (best >= 0)
+            {
+                GL.GetQueryObject(_gpuQueries[best], GetQueryObjectParam.QueryResult, out long elapsedNs);
+                _lastGpuMs = elapsedNs / 1_000_000.0;
+                _gpuPending[best] = false;
+                _gpuLastHarvested = bestFrame;
+            }
 
+            var writeQuery = (int) (_gpuFrame % GpuRing);
             var allocBefore = GC.GetAllocatedBytesForCurrentThread();
             _workTimer.Restart();
-            GL.BeginQuery(QueryTarget.TimeElapsed, writeQuery);
+            GL.BeginQuery(QueryTarget.TimeElapsed, _gpuQueries[writeQuery]);
             StateEngine.Render();
             GL.EndQuery(QueryTarget.TimeElapsed);
             var renderMs = _workTimer.Elapsed.TotalMilliseconds;
             var renderAlloc = GC.GetAllocatedBytesForCurrentThread() - allocBefore;
 
-            // Read the previous frame's GPU time (its result is ready by now, so no stall).
-            if (_gpuFrame > 0)
-            {
-                GL.GetQueryObject(readQuery, GetQueryObjectParam.QueryResultAvailable, out int available);
-                if (available != 0)
-                {
-                    GL.GetQueryObject(readQuery, GetQueryObjectParam.QueryResult, out long elapsedNs);
-                    _lastGpuMs = elapsedNs / 1_000_000.0;
-                }
-            }
+            _gpuQueryFrame[writeQuery] = _gpuFrame;
+            _gpuPending[writeQuery] = true;
             _gpuFrame++;
+
+            // Mirror the frame timings for the on-screen diagnostics overlay (F3). It is drawn inside the
+            // StateEngine.Render above, so it reads the previous frame's values — invisible for a HUD. Frame
+            // time is EMA-smoothed so the displayed FPS doesn't jitter.
+            RenderDebug.FrameMs = RenderDebug.FrameMs <= 0 ? e.Time * 1000 : RenderDebug.FrameMs * 0.92 + e.Time * 1000 * 0.08;
+            RenderDebug.GpuMs = _lastGpuMs;
+            RenderDebug.UpdateMs = _lastUpdateMs;
 
             // e.Time is the wall-clock interval since the last render frame (catches real fps drops).
             // renderMs/updateMs are CPU work; swapMs is the SwapBuffers call; gapMs is OpenTK's
@@ -147,6 +173,17 @@ namespace MinecraftClone3
             //Make exceptions be english (wtf microsoft???)
             System.Threading.Thread.CurrentThread.CurrentUICulture = CultureInfo.InvariantCulture;
 
+            // RenderDoc can only hook our GL context over GLX (X11); under native Wayland GLFW makes an EGL
+            // context it can't capture ("unknown window"). Force the X11 backend when launched under RenderDoc
+            // (it sets RENDERDOC_CAPOPTS) or when MC3_FORCE_X11=1; normal runs keep native Wayland.
+            if (Environment.GetEnvironmentVariable("RENDERDOC_CAPOPTS") != null ||
+                Environment.GetEnvironmentVariable("MC3_FORCE_X11") == "1")
+                GLFW.InitHint(InitHintPlatform.Platform, Platform.X11);
+
+            // Saved graphics options seed the window so it opens with the user's vsync/fullscreen choice;
+            // runtime changes go through the GraphicsSettings setters (which push onto the live window).
+            GraphicsSettings.Load();
+
             var nativeWindowSettings = new NativeWindowSettings
             {
                 ClientSize = new Vector2i(1280, 720),
@@ -154,7 +191,8 @@ namespace MinecraftClone3
                 Profile = ContextProfile.Core,
                 // macOS only exposes OpenGL up to 4.1 Core.
                 APIVersion = new Version(4, 1),
-                Vsync = VSyncMode.On
+                Vsync = GraphicsSettings.VSync,
+                WindowState = GraphicsSettings.Fullscreen ? WindowState.Fullscreen : WindowState.Normal
             };
 
             var gameWindowSettings = new GameWindowSettings

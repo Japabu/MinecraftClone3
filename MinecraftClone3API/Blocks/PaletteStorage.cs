@@ -110,6 +110,16 @@ namespace MinecraftClone3API.Blocks
             return grown;
         }
 
+        /// <summary>True iff any entry is non-zero — a palette scan (O(palette), so O(1) for the common
+        /// single-value-0 container, e.g. an underground chunk's all-zero sky light).</summary>
+        public bool ContainsNonZero()
+        {
+            for (var i = 0; i < _paletteCount; i++)
+                if (_palette[i] != 0)
+                    return true;
+            return false;
+        }
+
         private int IndexOf(ushort value)
         {
             for (var i = 0; i < _paletteCount; i++)

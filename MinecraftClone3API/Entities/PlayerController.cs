@@ -53,8 +53,13 @@ namespace MinecraftClone3API.Entities
                 if (ks.IsKeyDown(keybinding.Key)) _currentBlock = keybinding.Value;
             }
 
-            if (ks.IsKeyPressed(Keys.F3)) Profiler.Toggle();
+            if (ks.IsKeyPressed(Keys.F1)) RenderDebug.ShowControls = !RenderDebug.ShowControls;
+            if (ks.IsKeyPressed(Keys.F3)) RenderDebug.ShowDiagnostics = !RenderDebug.ShowDiagnostics;
             if (ks.IsKeyPressed(Keys.F4)) ChunkBorderRenderer.Enabled = !ChunkBorderRenderer.Enabled;
+            if (ks.IsKeyPressed(Keys.F5)) RenderDebug.DisableOcclusionCulling = !RenderDebug.DisableOcclusionCulling;
+            if (ks.IsKeyPressed(Keys.F6)) RenderDebug.CascadeTint = !RenderDebug.CascadeTint;
+            if (ks.IsKeyPressed(Keys.F7)) RenderDebug.ShadowFactor = !RenderDebug.ShadowFactor;
+            if (ks.IsKeyPressed(Keys.F10)) Profiler.Toggle();
 
             var ms = window.MouseState;
             var delta = ms.Delta;

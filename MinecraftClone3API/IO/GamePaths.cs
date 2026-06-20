@@ -42,6 +42,9 @@ namespace MinecraftClone3API.IO
         /// <summary>Per-user resource settings file (which plugins are enabled and their order).</summary>
         public static string ResourceSettingsFile => Path.Combine(UserDataDir, "ResourceSettings.json");
 
+        /// <summary>Per-user graphics options file (vsync, shadows, fullscreen).</summary>
+        public static string GraphicsSettingsFile => Path.Combine(UserDataDir, "GraphicsSettings.json");
+
         /// <summary>Per-user world-save directory.</summary>
         public static string WorldDir => Path.Combine(UserDataDir, "World");
     }

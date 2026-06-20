@@ -6,6 +6,7 @@ using System.Text;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Client.Blocks;
 using MinecraftClone3API.Entities;
+using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Networking;
 using OpenTK.Mathematics;
@@ -75,7 +76,7 @@ namespace MinecraftClone3API.Util
 
             OutputPath = Path.Combine(GamePaths.UserDataDir, "profiling.csv");
             _writer = new StreamWriter(OutputPath, false);
-            _writer.WriteLine("t,frameMs,fps,updateMs,renderMs,swapMs,gapMs,gpuMs,updCalls,gen0,gen1,gen2," +
+            _writer.WriteLine("t,frameMs,fps,updateMs,renderMs,swapMs,gapMs,gpuMs,shadowMs,geomMs,compMs,updCalls,gen0,gen1,gen2," +
                               "dGen0,dGen1,dGen2,heapMB,allocMB,srvMB,netMB,cliMB,rndMB,loadMB,lightMB,unloadMB,meshMB,applyMB," +
                               "chunks,renderData,pendingMesh,entities,pcx,pcy,pcz,borderCross," +
                               "srvMs,netMs,cliMs,streamMs,flushMs,chStreamed,chDrained,chPkts," +
@@ -154,6 +155,9 @@ namespace MinecraftClone3API.Util
             Field(swapMs, "0.00");
             Field(gapMs, "0.00");
             Field(gpuMs, "0.00");
+            Field(GpuTimers.Ms(GpuTimers.Pass.Shadow), "0.00");
+            Field(GpuTimers.Ms(GpuTimers.Pass.Geometry), "0.00");
+            Field(GpuTimers.Ms(GpuTimers.Pass.Composition), "0.00");
             Field((long) updateCalls);
             Field(gen0);
             Field(gen1);

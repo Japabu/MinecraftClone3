@@ -132,14 +132,86 @@ namespace MinecraftClone3.States
             var projection = Matrix4.CreatePerspectiveFieldOfView(MathHelper.DegreesToRadians(60), aspect, 0.01f, 512);
             WorldRenderer.RenderWorld(_world, projection);
 
+            if (!Profiler.Recording && !RenderDebug.ShowDiagnostics && !RenderDebug.ShowControls) return;
+
+            RenderState.Set(new GlState
+            {
+                Blend = true,
+                BlendFunc = (BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha)
+            });
+
+            var y = 4;
             if (Profiler.Recording)
             {
-                RenderState.Set(new GlState
+                Font.DrawString("● REC", 4, y, 2, new Color4(1f, 0.3f, 0.3f, 1f));
+                y += Font.LineHeight(2) + 4;
+            }
+
+            if (RenderDebug.ShowDiagnostics) y = DrawDiagnostics(y);
+            if (RenderDebug.ShowControls) DrawControls(y);
+        }
+
+        private static readonly Color4 OverlayText = new Color4(1f, 1f, 1f, 1f);
+        private static readonly Color4 OverlayHeader = new Color4(0.55f, 0.8f, 1f, 1f);
+
+        // Fixed keybinds for the F1 controls overlay (key column, description column).
+        private static readonly (string Key, string Desc)[] ControlsRows =
+        {
+            ("Move", "WASD"),
+            ("Up / Down", "Space / Shift"),
+            ("Look", "Mouse"),
+            ("Break / Place", "Left / Right Click"),
+            ("Blocks", "number keys (keybindings.txt)"),
+            ("Pause", "Esc"),
+            ("", ""),
+            ("F1", "controls (this)"),
+            ("F3", "debug overlay"),
+            ("F4", "chunk borders"),
+            ("F5", "occlusion culling on/off"),
+            ("F6", "cascade tint"),
+            ("F7", "shadow factor"),
+            ("F10", "profiler record (CSV)")
+        };
+
+        private int DrawDiagnostics(int y)
+        {
+            const int scale = 2;
+            var lh = Font.LineHeight(scale) + 2;
+
+            var frameMs = RenderDebug.FrameMs;
+            var fps = frameMs > 0 ? 1000.0 / frameMs : 0;
+            Font.DrawString($"FPS {fps:0}  ({frameMs:0.0} ms)", 4, y, scale, OverlayText); y += lh;
+            Font.DrawString($"gpu {RenderDebug.GpuMs:0.0} ms   cpu upd {RenderDebug.UpdateMs:0.0} ms", 4, y, scale, OverlayText); y += lh;
+
+            var occlusion = RenderDebug.DisableOcclusionCulling ? "off" : "on";
+            Font.DrawString($"chunks drawn {RenderDebug.DrawnChunks} / {_world.RenderList.Count}" +
+                            $"   visited {RenderDebug.VisitedChunks}   (cull {occlusion})", 4, y, scale, OverlayText); y += lh;
+
+            var shadows = RenderDebug.ShadowPass ? $"on ({WorldRenderer.CascadeCount} csm)" : "off";
+            Font.DrawString($"shadows {shadows}   loaded {_world.LoadedChunkCount}" +
+                            $"   mesh {_world.MeshQueueDepth}   upload {_world.UploadQueueDepth}", 4, y, scale, OverlayText); y += lh;
+
+            var p = _player.Position;
+            var c = WorldBase.ChunkInWorld(p.ToVector3i());
+            Font.DrawString($"pos {p.X:0.0} {p.Y:0.0} {p.Z:0.0}   chunk {c.X} {c.Y} {c.Z}", 4, y, scale, OverlayText); y += lh;
+
+            return y + 6;
+        }
+
+        private void DrawControls(int y)
+        {
+            const int scale = 2;
+            var lh = Font.LineHeight(scale) + 2;
+
+            Font.DrawString("Controls", 4, y, scale, OverlayHeader); y += lh;
+            foreach (var row in ControlsRows)
+            {
+                if (row.Key.Length > 0)
                 {
-                    Blend = true,
-                    BlendFunc = (BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha)
-                });
-                Font.DrawString("● REC", 4, 4, 2, new Color4(1f, 0.3f, 0.3f, 1f));
+                    Font.DrawString(row.Key, 8, y, scale, OverlayText);
+                    Font.DrawString(row.Desc, 260, y, scale, OverlayText);
+                }
+                y += lh;
             }
         }
 
