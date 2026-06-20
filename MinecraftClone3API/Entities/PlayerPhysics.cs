@@ -106,10 +106,13 @@ namespace MinecraftClone3API.Entities
             var resVelX = blockedX ? 0f : velX;
             var resVelZ = blockedZ ? 0f : velZ;
 
-            // Auto-step: when grounded and a horizontal axis was blocked, retry the full horizontal move
-            // raised by StepHeight (up → horizontal → drop back down) and keep it if it advanced farther.
-            // StepHeight 0.6 = Minecraft: climbs slabs/partial blocks, still needs a jump for a full cube.
-            if (grounded && (blockedX || blockedZ))
+            // Auto-step: when grounded, NOT rising, and a horizontal axis was blocked, retry the full
+            // horizontal move raised by StepHeight (up → horizontal → drop back down) and keep it if it
+            // advanced farther. StepHeight 0.6 = Minecraft: climbs slabs/partial blocks. The velY <= 0 gate
+            // is essential — without it the step fires on the jump tick (velY = +0.42), stacking StepHeight
+            // on top of the jump's rise and clipping the player straight up a full block. Stepping only while
+            // settling onto the ground means the jump arc alone (apex ~1.25) decides if a 1-block is cleared.
+            if (grounded && velY <= 0f && (blockedX || blockedZ))
             {
                 var up = ClipYFrom(world, afterY, StepHeight);
                 var stepped = new Vector3(afterY.X, afterY.Y + up, afterY.Z);

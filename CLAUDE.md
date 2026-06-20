@@ -629,9 +629,12 @@ smooth at the frame rate. Two modes, toggled by **double-tapping Space**:
   integer coords, ±0.5) and zeroes the blocked component. `OnGround` is then a **velocity-independent
   downward probe** (`ClipY(box, −GroundProbe)` clipped ⇒ grounded), not the Y-clip outcome — so a tick that
   enters with `Velocity.Y==0` (spawn, just un-flew) or lands exactly flush doesn't read airborne for a tick.
-  **Auto-step:** when grounded and a horizontal axis is blocked, the move is retried raised by `StepHeight`
-  (0.6 = MC: up → horizontal → drop back down) and kept only if it advanced farther — climbs slabs/partial
-  blocks, still needs a jump for a full cube.
+  **Auto-step:** when grounded, **not rising** (`velY ≤ 0`), and a horizontal axis is blocked, the move is
+  retried raised by `StepHeight` (0.6 = MC: up → horizontal → drop back down) and kept only if it advanced
+  farther — climbs slabs/partial blocks, still needs a jump for a full cube. The not-rising gate matters: on
+  the jump tick `velY = +0.42`, and stepping then would stack `StepHeight` on the jump's rise and clip the
+  player straight up a full block — so stepping only happens while settling onto the ground, and the jump
+  arc alone (apex ~1.25) decides whether a 1-block ledge is cleared.
 - **Swim (in water):** when the body overlaps a `Block.IsLiquid` block (`PlayerPhysics.IsInLiquid` samples
   the lower + mid body), the walk tick takes the water branch instead — gentle water accel, all velocity
   damped by `WaterDrag`, **Space buoys up** (`SwimImpulse`), otherwise a slow sink (`WaterGravity` ≪ land
