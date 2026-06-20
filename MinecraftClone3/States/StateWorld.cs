@@ -167,7 +167,6 @@ namespace MinecraftClone3.States
             ("F1", "controls (this)"),
             ("F3", "debug overlay"),
             ("F4", "chunk borders"),
-            ("F5", "occlusion culling on/off"),
             ("F7", "shadow factor"),
             ("F10", "profiler record (CSV)")
         };
@@ -182,9 +181,7 @@ namespace MinecraftClone3.States
             Font.DrawString($"FPS {fps:0}  ({frameMs:0.0} ms)", 4, y, scale, OverlayText); y += lh;
             Font.DrawString($"gpu {RenderDebug.GpuMs:0.0} ms   cpu upd {RenderDebug.UpdateMs:0.0} ms", 4, y, scale, OverlayText); y += lh;
 
-            var occlusion = RenderDebug.DisableOcclusionCulling ? "off" : "on";
-            Font.DrawString($"chunks drawn {RenderDebug.DrawnChunks} / {_world.RenderList.Count}" +
-                            $"   visited {RenderDebug.VisitedChunks}   (cull {occlusion})", 4, y, scale, OverlayText); y += lh;
+            Font.DrawString($"chunks drawn {RenderDebug.DrawnChunks} / {_world.RenderList.Count}", 4, y, scale, OverlayText); y += lh;
 
             var shadows = RenderDebug.ShadowPass ? "on" : "off";
             Font.DrawString($"shadows {shadows}   loaded {_world.LoadedChunkCount}" +

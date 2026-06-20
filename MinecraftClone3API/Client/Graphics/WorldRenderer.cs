@@ -73,26 +73,12 @@ namespace MinecraftClone3API.Graphics
 
         // Set by BuildVisibleSet: true iff a visible chunk within ShadowDistance is sky-exposed. Gates the
         // sun shadow passes — deep in a cave no visible chunk is sky-lit, so the shadow depth pass (a fixed
-        // per-frame cost, see CLAUDE.md) is skipped; at a cave mouth the BFS reaches the sky-lit terrain and
-        // it runs again.
+        // per-frame cost, see CLAUDE.md) is skipped; look toward the surface and it runs again.
         private static bool _anyShadowReceiver;
 
         // Distance past which a sky-exposed chunk no longer forces the shadow passes (matches the shadow-resolve
         // shader, which early-outs shadow sampling past the shadow distance).
         public const float ShadowDistanceSq = ShadowDistance * ShadowDistance;
-
-        // Render-time visibility BFS scratch (main-thread only, reused → zero per-frame alloc). Visited is
-        // keyed on chunk position only, so the reached set is a strict superset of the truly-visible set
-        // (it can over-draw, never hide). The queue element is a struct, so no per-node GC.
-        private static readonly HashSet<Vector3i> _bfsVisited = new HashSet<Vector3i>();
-        private static readonly Queue<(Vector3i Pos, int EntryFace)> _bfsQueue =
-            new Queue<(Vector3i, int)>();
-        private static readonly Vector3i[] _bfsOffsets =
-        {
-            new Vector3i(-1, 0, 0), new Vector3i(+1, 0, 0),
-            new Vector3i(0, -1, 0), new Vector3i(0, +1, 0),
-            new Vector3i(0, 0, -1), new Vector3i(0, 0, +1)
-        };
 
         // Client-side day/night clock. The sun colour drives the sky-light term in the composition shader,
         // so the whole world brightens/dims over the cycle with no remesh. Real-time based (frame-rate
@@ -172,8 +158,8 @@ namespace MinecraftClone3API.Graphics
             GpuTimers.Enabled = Profiler.Recording;
             GpuTimers.BeginFrame();
 
-            // Occlusion cull from the camera chunk first: it fills the draw lists and flags whether any
-            // visible chunk is sky-exposed, so the shadow passes can be skipped when none is (deep cave).
+            // Build the visible set (frustum + render-distance scan): fills the draw lists and flags whether
+            // any visible chunk is sky-exposed, so the shadow passes can be skipped when none is (deep cave).
             BuildVisibleSet(world, PlayerController.Camera, viewFrustum);
 
             RenderDebug.ShadowPass = sunUp && _anyShadowReceiver && GraphicsSettings.Shadows;
@@ -288,9 +274,9 @@ namespace MinecraftClone3API.Graphics
             GraphicsDebug.PopGroup();
         }
 
-        /// <summary>Fills the opaque/transparent draw lists for this frame and flags whether the sun shadow
-        /// passes are needed (<see cref="_anyShadowReceiver"/>). Runs the camera visibility BFS, or — with
-        /// occlusion culling disabled (F8) — the old linear all-chunks scan.</summary>
+        /// <summary>Fills the opaque/transparent draw lists for this frame — a linear scan of every loaded
+        /// chunk, frustum- and render-distance-culled — and flags whether the sun shadow passes are needed
+        /// (<see cref="_anyShadowReceiver"/>: true iff a visible sky-exposed chunk is within ShadowDistance).</summary>
         private static void BuildVisibleSet(WorldClient world, Camera camera, Frustum viewFrustum)
         {
             _chunksToDraw.Clear();
@@ -298,8 +284,28 @@ namespace MinecraftClone3API.Graphics
             _transparentChunks.Clear();
             _anyShadowReceiver = false;
 
-            if (RenderDebug.DisableOcclusionCulling) BuildVisibleSetLinear(world, camera, viewFrustum);
-            else BuildVisibleSetBfs(world, camera, viewFrustum);
+            var renderList = world.RenderList;
+            for (var i = 0; i < renderList.Count; i++)
+            {
+                var renderData = renderList[i];
+                var chunkMiddle = (renderData.Chunk.Position * Chunk.Size + new Vector3i(Chunk.Size / 2)).ToVector3();
+                if (!viewFrustum.SpehereIntersection(chunkMiddle, Chunk.Radius)) continue;
+                var lengthSq = (camera.Position - chunkMiddle).LengthSquared;
+                if (lengthSq > RenderDistanceSq) continue;
+
+                if (renderData.HasTransparency)
+                {
+                    if (lengthSq < SortDistanceSq)
+                    {
+                        renderData.SortTransparentFaces();
+                        _transparentSortedChunks.Add(renderData);
+                    }
+                    else _transparentChunks.Add(renderData);
+                }
+                else _chunksToDraw.Add(renderData);
+
+                if (renderData.SkyExposed && lengthSq <= ShadowDistanceSq) _anyShadowReceiver = true;
+            }
 
             // Sort the near transparent chunks back-to-front, then build the final opaque draw list as
             // opaque + all transparent (so a transparent chunk's opaque faces are drawn in the opaque pass).
@@ -309,115 +315,6 @@ namespace MinecraftClone3API.Graphics
             _chunksToDraw.AddRange(_transparentChunks);
 
             RenderDebug.DrawnChunks = _chunksToDraw.Count;
-            RenderDebug.VisitedChunks = RenderDebug.DisableOcclusionCulling ? world.RenderList.Count : _bfsVisited.Count;
-        }
-
-        /// <summary>Buckets one visible chunk into the opaque/near-transparent/far-transparent draw lists
-        /// (shared by both visibility paths) and flags it as a shadow receiver if it is sky-exposed and
-        /// within the shadow distance.</summary>
-        private static void Classify(ChunkRenderData renderData, float lengthSq)
-        {
-            if (renderData.HasTransparency)
-            {
-                if (lengthSq < SortDistanceSq)
-                {
-                    renderData.SortTransparentFaces();
-                    _transparentSortedChunks.Add(renderData);
-                }
-                else _transparentChunks.Add(renderData);
-            }
-            else _chunksToDraw.Add(renderData);
-
-            if (renderData.SkyExposed && lengthSq <= ShadowDistanceSq) _anyShadowReceiver = true;
-        }
-
-        /// <summary>Occlusion culling: a BFS from the camera chunk that cannot cross a solid chunk (its
-        /// <see cref="ChunkRenderData.Connectivity"/> graph gates which exit faces are reachable from the
-        /// face the BFS entered through), so geometry behind rock is never queued. Visited is keyed on
-        /// position only and there is no accumulated direction mask, so the reached set is a strict superset
-        /// of the visible set — it can over-draw (e.g. around an L-bend) but never hides visible geometry.
-        /// Traversal is frustum- and render-distance-culled (the camera's own chunk is exempt from the frustum
-        /// test so the root never dies), which bounds the flood to the view cone. That is still correct for
-        /// genuinely-visible chunks — see the convexity argument inline. BFS order is ~front-to-back.</summary>
-        private static void BuildVisibleSetBfs(WorldClient world, Camera camera, Frustum viewFrustum)
-        {
-            var visited = _bfsVisited;
-            var queue = _bfsQueue;
-            visited.Clear();
-            queue.Clear();
-
-            var cameraChunk = WorldBase.ChunkInWorld(camera.Position.ToVector3i());
-            visited.Add(cameraChunk);
-            queue.Enqueue((cameraChunk, -1));
-
-            var renderData = world.RenderData;
-            while (queue.Count > 0)
-            {
-                var node = queue.Dequeue();
-                var pos = node.Pos;
-                var entryFace = node.EntryFace;
-
-                var center = (pos * Chunk.Size + new Vector3i(Chunk.Size / 2)).ToVector3();
-                var lengthSq = (camera.Position - center).LengthSquared;
-                if (lengthSq > RenderDistanceSq) continue;
-
-                // Frustum-cull traversal — but never the camera's own chunk (entryFace < 0), whose centre can
-                // sit behind the near plane (sphere fully outside) so culling the root would kill the BFS (black
-                // screen). This is cheap (the flood is bounded to the view cone, not the whole render-distance
-                // sphere) AND correct for genuinely-visible chunks: the frustum is convex with the camera at its
-                // apex, so a straight unobstructed sight-line to any visible chunk stays inside the frustum, and
-                // every chunk it crosses both passes the (conservative bounding-sphere) frustum test and connects
-                // entry-face to exit-face through the air the ray travels — so the BFS reaches it. (Frustum-gating
-                // can only drop chunks reachable solely via a bent, occluded path, which are not visible anyway.)
-                if (entryFace >= 0 && !viewFrustum.SpehereIntersection(center, Chunk.Radius)) continue;
-
-                int conn;
-                if (renderData.TryGetValue(pos, out var rd) && rd.Uploaded)
-                {
-                    Classify(rd, lengthSq);
-                    // The camera's own chunk lets the BFS exit any face (entryFace < 0); otherwise the
-                    // chunk's connectivity graph decides which faces a sight-line entering this face reaches.
-                    conn = entryFace < 0 ? ChunkRenderData.AllConnected : rd.Connectivity;
-                }
-                else
-                {
-                    // Missing (air / not-yet-streamed) or loaded-but-not-yet-meshed: passthrough, so an
-                    // unstreamed gap never breaks connectivity and a missing chunk simply draws nothing.
-                    conn = ChunkRenderData.AllConnected;
-                }
-
-                for (var f = 0; f < 6; f++)
-                {
-                    if (entryFace >= 0)
-                    {
-                        if (f == (entryFace ^ 1)) continue;
-                        if ((conn & ChunkRenderData.PairBit(entryFace, f)) == 0) continue;
-                    }
-
-                    var np = pos + _bfsOffsets[f];
-                    if (!visited.Add(np)) continue;
-                    queue.Enqueue((np, f ^ 1));
-                }
-            }
-        }
-
-        /// <summary>Occlusion culling disabled (F8): the old linear scan of every loaded chunk, frustum +
-        /// render-distance culled. Forces the shadow passes on whenever the sun is up, matching the
-        /// pre-occlusion behaviour for A/B comparison.</summary>
-        private static void BuildVisibleSetLinear(WorldClient world, Camera camera, Frustum viewFrustum)
-        {
-            var renderList = world.RenderList;
-            for (var i = 0; i < renderList.Count; i++)
-            {
-                var renderData = renderList[i];
-                var chunkMiddle = (renderData.Chunk.Position * Chunk.Size + new Vector3i(Chunk.Size / 2)).ToVector3();
-                if (!viewFrustum.SpehereIntersection(chunkMiddle, Chunk.Radius)) continue;
-                var lengthSq = (camera.Position - chunkMiddle).LengthSquared;
-                if (lengthSq > RenderDistanceSq) continue;
-                Classify(renderData, lengthSq);
-            }
-
-            _anyShadowReceiver = true;
         }
 
         private static void DrawGeometryFramebuffer(WorldClient world, Camera camera, Matrix4 projection)

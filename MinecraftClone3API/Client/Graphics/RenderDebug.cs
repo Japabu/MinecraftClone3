@@ -15,15 +15,11 @@ namespace MinecraftClone3API.Graphics
         /// <summary>F3: live diagnostics overlay (fps, gpu, draw counts, position).</summary>
         public static bool ShowDiagnostics;
 
-        /// <summary>F5: disable occlusion culling (linear all-chunks scan + shadows always on) for A/B.</summary>
-        public static bool DisableOcclusionCulling;
-
         /// <summary>F7: output the raw shadow factor as greyscale (drives composition uDebugShadow).</summary>
         public static bool ShadowFactor;
 
         // Per-frame stats written by WorldRenderer.BuildVisibleSet / RenderWorld, read by the overlay.
         public static int DrawnChunks;
-        public static int VisitedChunks;
         public static bool ShadowPass;
 
         // Per-frame timings written by the game loop (GameClient.OnRenderFrame), read by the overlay.

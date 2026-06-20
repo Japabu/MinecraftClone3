@@ -248,12 +248,12 @@ at `MaxChunksPerTick` per session per tick — no unload pass) → **flush block
                  _renderReady. NO GL. Sleeps on _applySignal when idle.
    MeshThread    drains the mesh queues → ChunkRenderData.Update()  (CPU vertex lists only, NO GL;
                  holds the VAO locks for the whole remesh, so the main-thread upload must not block on them);
-                 also computes the chunk's occlusion Connectivity graph + SkyExposed flag (plain-field writes,
-                 read lock-free on the main thread by the visibility BFS — benign torn read self-corrects next remesh)
+                 also computes the chunk's SkyExposed flag (plain-field write, read lock-free on the main
+                 thread by the shadow gate — benign torn read self-corrects next remesh)
    Update()      (MAIN thread) pumps packets (routing ChunkData/BlockChanges to _applyQueue, handling
                  entity/login inline), DrainRenderReady → creates ChunkRenderData (GL) + queues meshing,
                  TryUploads meshed chunks (GL, non-blocking — requeues a chunk being remeshed), evicts, disposes
-   RenderWorld() (MAIN thread) BuildVisibleSet runs the camera-chunk visibility BFS (reads Connectivity), then
+   RenderWorld() (MAIN thread) BuildVisibleSet runs the frustum + render-distance scan of RenderList, then
                  the shadow + geometry + composition passes
 
  Client game loop (MinecraftClone3/Program.cs, 120 Hz, MAIN thread):
@@ -311,8 +311,8 @@ needs hardening, ship `GameRegistry.Save/Load` (a `registry.bin` exchange) — i
 
 ```
   WorldRenderer.RenderWorld(WorldClient, projection)
-    └─ BuildVisibleSet → occlusion-cull from the camera chunk (visibility-graph BFS, see below); fills the
-         opaque/transparent draw lists ~front-to-back and flags _anyShadowReceiver (a visible sky-exposed chunk)
+    └─ BuildVisibleSet → frustum + render-distance scan of every loaded chunk; fills the
+         opaque/transparent draw lists and flags _anyShadowReceiver (a visible sky-exposed chunk)
     └─ DrawShadowMap (only while the sun is up AND _anyShadowReceiver) → ShadowFramebuffer (depth-only)
          one depth map (Texture2D); opaque chunks re-drawn from the sun's orthographic POV
          (ShadowDepth shader, no colour output)
@@ -409,57 +409,26 @@ fill to **moonlight** (`SkyAmbient`) — with no brightening pop; the sun shadow
 other pass (Invariant 1 holds — it only re-draws existing VAOs, allocates nothing per frame, and does no
 meshing).
 
-**Occlusion culling — per-chunk visibility graph + a camera-chunk BFS ("Minecraft cave culling").** The
-geometry pass does **not** linearly scan every loaded chunk; it draws only what a sight-line from the camera
-can actually reach. Two halves:
-
-- *Connectivity graph (mesh thread, `ChunkRenderData.ComputeConnectivity`).* At remesh time a 16³
-  connected-component flood over the chunk's **see-through** cells (air, or any non-`IsOpaqueFullBlock` —
-  glass/torches/slabs pass) records which of the 6 chunk faces are mutually reachable: an `int` of **15
-  unordered face-pair bits** (faces `0=-X 1=+X 2=-Y 3=+Y 4=-Z 5=+Z`, `opposite=f^1`; two faces connect iff
-  one see-through component touches both). Fast paths: an all-air chunk (`IsEmpty`) is `AllConnected`, a
-  fully-solid chunk connects nothing — together almost every chunk in the thin-heightmap world. Reused
-  static flood buffers (mesh-thread-only) → zero per-remesh alloc. `ChunkRenderData.PairBit` is the **single
-  source of truth** for the bit layout (producer + BFS consumer both go through it).
-- *Visibility BFS (main thread, `WorldRenderer.BuildVisibleSetBfs`).* A breadth-first flood from the camera
-  chunk that **cannot cross a solid chunk**: a node carries the face it was entered through, and may only
-  exit faces the entered face connects to in that chunk's graph (plus the camera's own chunk and any
-  missing/not-yet-meshed chunk are **passthrough**, so an unstreamed air gap never breaks connectivity).
-  **Visited is keyed on chunk position only and there is no accumulated direction mask**, so the reached set
-  is a strict **superset** of the truly-visible set — it can over-draw (e.g. around an L/U-bend cave) but
-  **never hides** visible geometry.
-  - **Traversal is frustum- + render-distance-culled** (the camera's own chunk is **exempt** from the frustum
-    test, else the root could be culled — its centre can sit behind the near plane — and the whole BFS dies =
-    black screen). Frustum-gating keeps the flood bounded to the view cone (~hundreds of `visited`); without it
-    the BFS floods the entire air-connected sphere — looking at a half-sky vista that was **~11 k visited**
-    (vs ~2 k for the linear scan) and a **net −10 fps**, because it did 5× the visibility work to discover an
-    open vista has nothing to occlude. Frustum-gating is **still correct** for genuinely-visible chunks: the
-    frustum is convex with the camera at its apex, so a straight unobstructed sight-line to a visible chunk
-    stays inside it; every chunk the ray crosses passes the (conservative bounding-sphere) frustum test and
-    connects entry-face→exit-face through the air the ray travels, so the BFS reaches it. It can only drop
-    chunks reachable *solely* via a bent, occluded path — which are not visible anyway. (The earlier
-    render-distance-only variant was an over-correction; the popping it chased was the root-cull bug, fixed by
-    the camera-chunk exemption.)
-  - BFS order is ~front-to-back (free early-Z). **On an open surface vista almost nothing is occluded, so the
-    cull legitimately draws nearly everything in frustum** (≈ the linear scan, e.g. 480 vs 510) — correct, not
-    a bug; and since the saved draws are mostly *empty-mesh* buried chunks (the mesher emits only air-exposed
-    faces), the GPU win there is near-zero. The cull pays off underground / behind walls / valley-into-hillside,
-    where most of the frustum is solid-blocked. The dominant surface GPU cost is the **shadow passes**, which
-    occlusion can't reduce (a directional light's casters aren't camera-occluded). **F5 toggles it off**
-    (`BuildVisibleSetLinear`) for A/B; watch the F3 `drawn / total`.
+**Visible set — a linear frustum + render-distance scan (no occlusion culling).** `BuildVisibleSet` iterates
+`WorldClient.RenderList` (a plain main-thread `List<ChunkRenderData>` mirroring the `RenderData` dictionary's
+values — see the performance note), keeps each chunk whose bounding sphere is in the view frustum and within
+`RenderDistance`, and buckets it into the opaque / near-transparent / far-transparent draw lists. The mesher
+emits only air-exposed faces, so a buried chunk's mesh is near-empty and costs almost nothing to submit; the
+dominant surface GPU cost is the shadow pass + composition fill, not buried-chunk draws. (A per-chunk
+visibility-graph BFS "cave cull" was tried and removed — it over-drew on open vistas, didn't reliably win in
+caves, and the connectivity graph + BFS were complexity the simple scan doesn't need.)
 
 **The visible set gates the shadow passes.** `BuildVisibleSet` sets `_anyShadowReceiver` iff a visible chunk
 within `ShadowDistance` is **sky-exposed** (`ChunkRenderData.SkyExposed = Chunk.HasAnySkyLight()`), and the
 shadow depth pass runs only when `sunUp && _anyShadowReceiver && GraphicsSettings.Shadows` (the last is
 the user's **Shadows** graphics option — see the state-system section). Deep in a cave nothing visible is
-sky-lit, so the passes (a fixed per-frame GPU cost) are skipped entirely; look out a cave mouth and the BFS
-reaches the sunlit terrain, so they run again. The sun is a *directional* viewer, so this can only decide
-**whether to run the passes**, not prune casters — `DrawShadowMap` keeps its light-frustum caster
+sky-lit, so the passes (a fixed per-frame GPU cost) are skipped entirely; look toward the surface and a
+sky-exposed chunk comes into view, so they run again. The sun is a *directional* viewer, so this can only
+decide **whether to run the passes**, not prune casters — `DrawShadowMap` keeps its light-frustum caster
 cull. When the passes are skipped the **stale** shadow map is left bound; it is never sampled, because the
 composition already early-outs shadow sampling exactly where `_anyShadowReceiver` is false (sky-occluded
 `uLight.a≈0`, past `ShadowDistance`, or `uSunFade≈0`) **or where the Shadows option is off** (`uShadowsEnabled=0`,
-which forces `shadow=1` so a sky-lit surface stays fully sun-lit instead of sampling the stale map). If a cave-mouth artifact ever appears, the follow-up
-is a `uShadowValid` uniform forcing those pixels lit; not needed so far.
+which forces `shadow=1` so a sky-lit surface stays fully sun-lit instead of sampling the stale map).
 
 OpenGL is capped at **4.1 Core / GLSL 4.10** (macOS limit). Consequences: **uniform and sampler locations
 are queried by name** (no `layout(location=)`/`layout(binding=)` on uniforms); vertex-attribute and
@@ -528,17 +497,13 @@ overlays, and `GameClient` writes the frame timings. F4 chunk borders are the on
 - **F1** — toggle the controls/help overlay: a fixed keybind list (movement, mouse, break/place, the
   debug keys) drawn top-left. `RenderDebug.ShowControls`, drawn in `StateWorld.DrawControls`.
 - **F3** — toggle the on-screen diagnostics overlay: FPS + smoothed frame ms, `gpu`/`cpu upd` ms, **chunks
-  drawn / total + visited** (the occlusion-cull readout — drawn drops far below total in a cave; `visited`
-  is the BFS reach), shadows on/off, loaded/mesh/upload queue depths, player pos + chunk.
+  drawn / total** (frustum-cull readout), shadows on/off, loaded/mesh/upload queue depths, player pos + chunk.
   `RenderDebug.ShowDiagnostics`, drawn in `StateWorld.DrawDiagnostics` from `RenderDebug` fields
-  (`DrawnChunks`/`VisitedChunks`/`ShadowPass` written by `WorldRenderer`; `FrameMs`/`GpuMs`/`UpdateMs` by
+  (`DrawnChunks`/`ShadowPass` written by `WorldRenderer`; `FrameMs`/`GpuMs`/`UpdateMs` by
   `GameClient`). This is the cheap, always-available live HUD; the CSV profiler (F10) is the heavy tool.
 - **F4** — toggle chunk-border wireframes around the player (current chunk red, neighbours yellow).
-  Code: `Client/Graphics/ChunkBorderRenderer.cs`, drawn in the geometry pass (depth-tested).
-- **F5** — toggle occlusion culling **off** (default on): falls back to the linear all-chunks scan
-  (`BuildVisibleSetLinear`) and forces the shadow passes on whenever the sun is up, so visible geometry ON
-  vs OFF should be identical (only draw order + drawn-chunk count differ — anything that appears only with it
-  OFF is a hidden-geometry bug; watch the F3 `drawn / total` readout for the win). `RenderDebug.DisableOcclusionCulling`.
+  Code: `Client/Graphics/ChunkBorderRenderer.cs`, drawn in the geometry pass (depth-tested). (F5/F6 are
+  unused — F5 was the occlusion-cull A/B toggle, removed with the cave cull; F6 was the cascade tint.)
 - **F7** — toggle the raw shadow-factor view: composition outputs the per-pixel shadow term as greyscale
   (white = lit, black = shadowed), isolating the shadow test from lighting to spot acne/peter-panning.
   `RenderDebug.ShadowFactor` → `uDebugShadow` (`Composition.fs`). (F6 is unused — it was the cascade-tint
@@ -627,8 +592,8 @@ and the G-buffer/shadow targets and shader programs get names. Every call is a n
 (same `RENDERDOC_CAPOPTS`/`MC3_FORCE_X11` detection, or `MC3_GL_DEBUG=1`), so normal runs and macOS (no
 `KHR_debug`) never touch the entry points. **A depth-only pass being the GPU bottleneck means
 geometry/draw-call-bound, not fill/shader-bound** — the shadow pass redraws all in-range opaque chunks from
-the sun's POV, so the fix is reducing geometry submitted to it (occlusion culling, a shorter `ShadowDistance`),
-not shader work.
+the sun's POV, so the fix is reducing geometry submitted to it (a shorter `ShadowDistance`, a smaller
+`ShadowMapSize`), not shader work.
 
 ## Conventions
 
@@ -812,11 +777,10 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
   enumerator), which dominates once the rendered set is large. Now `WorldClient.RenderList`
   (a plain `List<ChunkRenderData>`, main-thread only) mirrors `RenderData`'s values — appended in
   `DrainRenderReady`, **swap-removed** in `UnloadChunk` via `ChunkRenderData.RenderListIndex` (O(1), no
-  scan) — and the `BuildVisibleSetLinear` fallback (F5) + the shadow caster cull iterate it by index
-  (contiguous, cache-friendly, zero allocation). The default occlusion BFS (`BuildVisibleSetBfs`) instead does
-  lock-free **by-position `RenderData.TryGetValue` lookups** (never an enumeration), so the no-enumeration
-  property holds there too. `RenderData` stays a `ConcurrentDictionary` purely for those by-position lookups
-  (`DrainRenderReady`, the upload loop, the mesh thread's `TryGetValue`, the BFS, `UnloadChunk`). The
+  scan) — and `BuildVisibleSet` + the shadow caster cull iterate it by index
+  (contiguous, cache-friendly, zero allocation, never an enumeration). `RenderData` stays a
+  `ConcurrentDictionary` purely for by-position lookups
+  (`DrainRenderReady`, the upload loop, the mesh thread's `TryGetValue`, `UnloadChunk`). The
   profiler's `renderData` column now reads
   `RenderList.Count` (a field read) instead of `RenderData.Count` (which acquires **all** of the
   dictionary's locks) — that `.Count` ran every frame in `Profiler.Record`, *after* the `renderMs`
@@ -841,8 +805,8 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
   caves.** It redraws all in-range opaque geometry from the sun's POV every frame regardless of window size, so
   it hits hardest at *low* framerate headroom, not specifically at fullscreen (the fullscreen drop is the
   resolution-scaled G-buffer + composition fill; the composition early-outs above target that). It is **gated
-  on `_anyShadowReceiver`** (a visible sky-exposed chunk within `ShadowDistance`, set by the occlusion BFS —
-  see the rendering section), so deep in a cave it's skipped entirely; above ground it still runs every frame
+  on `_anyShadowReceiver`** (a visible sky-exposed chunk within `ShadowDistance`, set by the visible-set scan
+  — see the rendering section), so deep in a cave it's skipped entirely; above ground it still runs every frame
   and can't be skipped/cached there because the sun moves every frame (the light matrix changes). The
   immediate knobs are a shorter `ShadowDistance` (less geometry per pass) or a smaller `ShadowMapSize`; deeper
   optimization (e.g. re-rendering the map every N frames with a slightly stale sun) is deferred.
