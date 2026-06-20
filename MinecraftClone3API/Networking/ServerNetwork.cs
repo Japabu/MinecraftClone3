@@ -40,6 +40,10 @@ namespace MinecraftClone3API.Networking
         /// the same chunks/second streaming throughput.</summary>
         private const int MaxChunksPerTick = 48;
 
+        // World-clock broadcast cadence (in ticks) — ~1 s at 20 tps; clients advance time locally between.
+        private const int TimeSyncTicks = 20;
+        private long _lastTimeSync = long.MinValue;
+
         // Resolved once from the generator (it spirals out for a land column, so cache it).
         private Vector3 _spawnPoint;
         private bool _spawnResolved;
@@ -139,12 +143,22 @@ namespace MinecraftClone3API.Networking
             LastStreamMs = _pumpTimer.Elapsed.TotalMilliseconds;
 
             SendReadySignals();
+            SendTimeSync();
 
             _pumpTimer.Restart();
             FlushBlockChanges();
             LastFlushMs = _pumpTimer.Elapsed.TotalMilliseconds;
 
             ResendDirtyChunks();
+        }
+
+        // Periodically broadcast the authoritative world clock so clients' day/night cycles stay in sync
+        // (they advance it locally between packets). Once a second is plenty for a 4-minute day.
+        private void SendTimeSync()
+        {
+            if (_world.TickCount - _lastTimeSync < TimeSyncTicks) return;
+            _lastTimeSync = _world.TickCount;
+            Broadcast(new WorldTimePacket {WorldSeconds = _world.WorldTimeSeconds}, null);
         }
 
         // Once the spawn column (the spawn chunk and the one below it, which the player stands on) has
@@ -203,6 +217,7 @@ namespace MinecraftClone3API.Networking
             _world.AddPlayer(session.Player);
 
             session.Connection.Send(new LoginAcceptPacket {EntityId = session.EntityId, Spawn = SpawnPosition});
+            session.Connection.Send(new WorldTimePacket {WorldSeconds = _world.WorldTimeSeconds});
 
             //Tell the new client about everyone already present, and everyone else about the newcomer.
             foreach (var other in _sessions)

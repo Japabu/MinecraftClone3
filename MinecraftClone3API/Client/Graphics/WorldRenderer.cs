@@ -103,18 +103,19 @@ namespace MinecraftClone3API.Graphics
         // shader, which early-outs shadow sampling past the shadow distance).
         public static float ShadowDistanceSq => ShadowDistance * ShadowDistance;
 
-        // Client-side day/night clock. The sun colour drives the sky-light term in the composition shader,
-        // so the whole world brightens/dims over the cycle with no remesh. Real-time based (frame-rate
-        // independent); multiplayer clients are not yet time-synced (see CLAUDE.md). Starts at noon.
+        // Day/night clock. The sun colour drives the sky-light term in the composition shader, so the whole
+        // world brightens/dims over the cycle with no remesh. The time is server-authoritative
+        // (WorldClient.WorldTimeSeconds, synced from WorldTimePacket and advanced locally), so multiplayer
+        // clients share one time of day. Set once at the top of RenderWorld. Starts at noon (the 0.25 phase).
         private const float DayLengthSeconds = 240f;
-        private static readonly System.Diagnostics.Stopwatch _dayClock = System.Diagnostics.Stopwatch.StartNew();
+        private static double _dayTimeSeconds;
 
         /// <summary>Sun colour/intensity for the current time of day: bright warm white at noon, orange at
         /// the horizon (sunrise/sunset), a dim blue at night. Multiplied by the baked sky factor in the
         /// composition shader.</summary>
         private static Vector3 SunColor()
         {
-            var t = 0.25f + (float) (_dayClock.Elapsed.TotalSeconds / DayLengthSeconds);
+            var t = 0.25f + (float) (_dayTimeSeconds / DayLengthSeconds);
             var sunHeight = MathF.Sin(t * MathHelper.TwoPi);
 
             var day = MathHelper.Clamp((sunHeight + 0.2f) / 0.4f, 0f, 1f);
@@ -134,7 +135,7 @@ namespace MinecraftClone3API.Graphics
         /// caves — those stay dark unless a block light reaches them. Tune for darker/brighter ambient.</summary>
         private static Vector3 SkyAmbient()
         {
-            var t = 0.25f + (float) (_dayClock.Elapsed.TotalSeconds / DayLengthSeconds);
+            var t = 0.25f + (float) (_dayTimeSeconds / DayLengthSeconds);
             var sunHeight = MathF.Sin(t * MathHelper.TwoPi);
             var day = MathHelper.Clamp((sunHeight + 0.2f) / 0.4f, 0f, 1f);
 
@@ -149,7 +150,7 @@ namespace MinecraftClone3API.Graphics
         /// horizon, shadow pass skipped). The small Z tilt keeps shadows off the world axes.</summary>
         private static Vector3 SunDirection()
         {
-            var t = 0.25f + (float) (_dayClock.Elapsed.TotalSeconds / DayLengthSeconds);
+            var t = 0.25f + (float) (_dayTimeSeconds / DayLengthSeconds);
             var angle = t * MathHelper.TwoPi;
             return Vector3.Normalize(new Vector3(MathF.Cos(angle), MathF.Sin(angle), 0.35f));
         }
@@ -165,6 +166,9 @@ namespace MinecraftClone3API.Graphics
 
         public static void RenderWorld(WorldClient world, Matrix4 projection)
         {
+            // Server-authoritative time of day; sampled once so every sun term this frame is consistent.
+            _dayTimeSeconds = world.WorldTimeSeconds;
+
             var viewProjection = PlayerController.Camera.View * projection;
             var viewProjectionInv = viewProjection.Inverted();
             _viewFrustum.Set(viewProjection);

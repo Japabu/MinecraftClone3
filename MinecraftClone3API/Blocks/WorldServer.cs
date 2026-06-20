@@ -17,6 +17,12 @@ namespace MinecraftClone3API.Blocks
         /// day/night time sync. Single writer (the tick thread); a plain field read elsewhere is fine.</summary>
         public long TickCount { get; private set; }
 
+        public const double SecondsPerTick = PlayerPhysics.TickSeconds;
+
+        /// <summary>The world clock in seconds (<see cref="TickCount"/> · <see cref="SecondsPerTick"/>);
+        /// shipped in <c>WorldTimePacket</c> to drive the client day/night cycle.</summary>
+        public double WorldTimeSeconds => TickCount * SecondsPerTick;
+
         public static readonly TimeSpan ChunkLifetime = TimeSpan.FromSeconds(30);
         private readonly Dictionary<Vector3i, CachedChunk> _chunksReadyToAdd = new Dictionary<Vector3i, CachedChunk>();
         private readonly HashSet<Vector3i> _chunksReadyToRemove = new HashSet<Vector3i>();

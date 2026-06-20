@@ -16,7 +16,8 @@ namespace MinecraftClone3API.Networking
         PlaceBlockRequest,
         EntityMove,
         EntitySpawn,
-        EntityDespawn
+        EntityDespawn,
+        WorldTime
     }
 
     /// <summary>
@@ -37,7 +38,8 @@ namespace MinecraftClone3API.Networking
             {PacketId.PlaceBlockRequest, () => new PlaceBlockRequestPacket()},
             {PacketId.EntityMove, () => new EntityMovePacket()},
             {PacketId.EntitySpawn, () => new EntitySpawnPacket()},
-            {PacketId.EntityDespawn, () => new EntityDespawnPacket()}
+            {PacketId.EntityDespawn, () => new EntityDespawnPacket()},
+            {PacketId.WorldTime, () => new WorldTimePacket()}
         };
 
         public abstract PacketId Id { get; }

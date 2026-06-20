@@ -267,6 +267,7 @@ old server-side `Chunk.Write` already had, made safe by the palette copy-on-grow
   C→S  PlaceBlockRequest     pos + block id (id 0 = break) + placement metadata (computed client-side, see below)
   C→S/S→C  EntityMove         own player up; relayed to others down
   S→C  EntitySpawn/EntityDespawn   remote players appearing/leaving
+  S→C  WorldTime             world clock in seconds (TickCount·SecondsPerTick); on join + ~1/s, drives day/night
 ```
 
 **Placement metadata is computed client-side, never read on the server.** `Block.OnPlaced(world, pos, player,
@@ -468,8 +469,10 @@ noon, orange at the horizon, faded out at night) **plus an ambient sky term** (`
 unless a block light reaches them; only a tiny `MinLight` floor (≈ 0, tunable; the old global `Ambient = 0.2`
 that lit everything is **gone**) keeps unlit surfaces from being a literal void. The whole thing animates
 **with no remesh** (the sky channel is baked into the chunk mesh, so geometry/occlusion is static; only the
-sun/moon *colour/intensity* animate). The clock is client-local — MP clients are not yet time-synced; see
-"Known rough edges". **Moonlight is non-directional ambient** (no moon shadow pass) — deferred.
+sun/moon *colour/intensity* animate). The clock is **server-authoritative**: `WorldRenderer` reads
+`WorldClient.WorldTimeSeconds` (synced from the periodic `WorldTime` packet — the server's
+`TickCount·SecondsPerTick` — and advanced locally between packets), so all MP clients share one time of day.
+**Moonlight is non-directional ambient** (no moon shadow pass) — deferred.
 
 **Directional sun shadows — one low-res shadow map (no cascades).** `DrawShadowMap` renders a **single**
 orthographic depth map into `ShadowFramebuffer` — one `Texture2D` of `ShadowFramebuffer.ShadowMapSize` (1024).
@@ -1208,9 +1211,6 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
   client. `WorldClient.GetSkyLight` returns `LightLevel.SkyMax` for any unloaded chunk (treat unloaded space
   as open sky) so surface tops still light up. Side effect: the bottom face of a block whose neighbour chunk
   is merely *not-yet-loaded* (not actually open sky) briefly samples 15 until that chunk streams in.
-- **Day/night sun time is client-local (MP desync).** `WorldRenderer`'s clock advances in real time per
-  client, so two MP clients see different times of day and the server has no authoritative time. SP is fine.
-  Fix later via a server time packet. `DayLengthSeconds` (240) sets the cycle length.
 - `StateWorld` connects synchronously on the main thread; a far/unreachable MP host briefly blocks.
 - `ClientSession.SentChunks` shrinks only on `ChunkRelease`/dirty resend, so a misbehaving or crashed client
   could leave stale entries until it disconnects. Bounded in practice by client `CacheDistance` eviction;

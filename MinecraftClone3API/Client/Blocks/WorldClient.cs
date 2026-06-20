@@ -86,6 +86,13 @@ namespace MinecraftClone3API.Client.Blocks
         public bool SpawnReceived;
         public bool Ready;
 
+        // Server-authoritative world clock: the last received world time plus the wall-clock since it
+        // arrived, so the day/night cycle advances smoothly between the periodic WorldTime packets and is
+        // shared across multiplayer clients (WorldRenderer reads this).
+        private double _serverTimeSeconds;
+        private readonly Stopwatch _timeSyncClock = Stopwatch.StartNew();
+        public double WorldTimeSeconds => _serverTimeSeconds + _timeSyncClock.Elapsed.TotalSeconds;
+
         // Per-Update phase timings + GL upload volume, surfaced to the profiler so a frame spike can be
         // split into packet-handling / render-data creation / GL upload / eviction — isolating whether the
         // cost is the update path or the GPU upload (the re-BufferData of edited chunks).
@@ -373,6 +380,10 @@ namespace MinecraftClone3API.Client.Blocks
                     break;
                 case EntityDespawnPacket despawn:
                     Entities.Remove(despawn.EntityId);
+                    break;
+                case WorldTimePacket time:
+                    _serverTimeSeconds = time.WorldSeconds;
+                    _timeSyncClock.Restart();
                     break;
             }
         }
