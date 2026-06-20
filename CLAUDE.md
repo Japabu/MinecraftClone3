@@ -610,7 +610,11 @@ smooth at the frame rate. Two modes, toggled by **double-tapping Space**:
 
 The block-target raytrace uses the **eye** (`RenderPosition + EyeOffset`); `SendMove` ships the **feet**
 position, so remote players (drawn by `EntityRenderer` as 0.6×1.8 boxes, offset up by half-height to stand
-on their feet) line up.
+on their feet) line up. **Remote entities are render-interpolated:** their positions arrive at 20 tps, so
+`Entity.SetInterpTarget` (on each `EntityMove`) aims a lerp from the current visual position toward the new
+target, advanced per display frame by `WorldClient.UpdateEntityInterpolation`, and `Entity.RenderPosition`
+returns the lerp — so they glide instead of snapping. (The local player overrides `RenderPosition` with its
+own accumulator-driven interpolation.)
 
 **Graphics options.** `GuiGraphicsOptions` (reachable from both `GuiMainMenu` and the `GuiPauseMenu` overlay
 via their "Options" button) is an **overlay** — it draws over whichever screen opened it and closing it
@@ -1073,10 +1077,9 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
   ledges** (climbs slabs/partial blocks, still jump for a full cube). **Not** implemented: sprint-jump forward
   boost, sneaking (no crouch/edge-stop), per-block slipperiness (no ice/slime blocks exist),
   **collision for creative flight** (flight is deliberately noclip, to keep the
-  original free-fly), per-block non-cube collision shapes (every solid block collides as a full cube — fine
-  today since none define a custom `GetBoundingBox`), and remote-player movement interpolation (they still
-  snap). The exact-constant *ordering* (gravity-before-move vs after) may be a tick off MC and is tunable in
-  `PlayerPhysics.Tick`.
+  original free-fly), and per-block non-cube collision shapes (every solid block collides as a full cube —
+  fine today since none define a custom `GetBoundingBox`). The exact-constant *ordering* (gravity-before-move
+  vs after) may be a tick off MC and is tunable in `PlayerPhysics.Tick`.
 - **Walking into a not-yet-streamed chunk reads as air (could fall through an edge).** Collision uses
   `WorldBase.GetBlock`, which returns air for unloaded chunks, so a solid block in an un-streamed chunk
   doesn't collide. Bounded in practice: the join handshake pre-streams the spawn column, and the client cache
@@ -1208,7 +1211,6 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
 - **Day/night sun time is client-local (MP desync).** `WorldRenderer`'s clock advances in real time per
   client, so two MP clients see different times of day and the server has no authoritative time. SP is fine.
   Fix later via a server time packet. `DayLengthSeconds` (240) sets the cycle length.
-- No movement interpolation for remote players (they snap to the last received position).
 - `StateWorld` connects synchronously on the main thread; a far/unreachable MP host briefly blocks.
 - `ClientSession.SentChunks` shrinks only on `ChunkRelease`/dirty resend, so a misbehaving or crashed client
   could leave stale entries until it disconnects. Bounded in practice by client `CacheDistance` eviction;

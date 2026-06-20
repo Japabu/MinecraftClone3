@@ -115,6 +115,7 @@ namespace MinecraftClone3API.Client.Blocks
         public int DisposeQueueDepth => _disposeQueueDepth;
 
         private readonly Stopwatch _phaseTimer = new Stopwatch();
+        private readonly Stopwatch _entityInterpTimer = Stopwatch.StartNew();
 
         private readonly IConnection _connection;
         private readonly Thread[] _meshThreads;
@@ -253,6 +254,11 @@ namespace MinecraftClone3API.Client.Blocks
                 Interlocked.Decrement(ref _disposeQueueDepth);
                 disposed.Dispose();
             }
+
+            // Advance remote-entity interpolation at the display rate (positions arrive at 20 tps).
+            var interpDt = (float) _entityInterpTimer.Elapsed.TotalSeconds;
+            _entityInterpTimer.Restart();
+            foreach (var entity in Entities.Values) entity.UpdateInterpolation(interpDt);
         }
 
         /// <summary>Creates the GL render data (a GL call, hence main-thread only) for chunks the apply
@@ -362,10 +368,8 @@ namespace MinecraftClone3API.Client.Blocks
                     break;
                 case EntityMovePacket move when move.EntityId != LocalEntityId:
                     if (!Entities.TryGetValue(move.EntityId, out var entity))
-                        Entities[move.EntityId] = entity = new Entity();
-                    entity.Position = move.Position;
-                    entity.Pitch = move.Pitch;
-                    entity.Yaw = move.Yaw;
+                        Entities[move.EntityId] = entity = new Entity {Position = move.Position};
+                    entity.SetInterpTarget(move.Position, move.Pitch, move.Yaw);
                     break;
                 case EntityDespawnPacket despawn:
                     Entities.Remove(despawn.EntityId);
