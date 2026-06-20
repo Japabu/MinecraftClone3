@@ -148,6 +148,7 @@ namespace MinecraftClone3
             Profiler.Record(e.Time, _lastUpdateMs, renderMs, _lastSwapMs, _lastGapMs, _lastGpuMs,
                 _updateCalls, renderAlloc);
             Benchmark.Tick(e.Time, _lastUpdateMs, renderMs, _lastGpuMs);
+            Benchmark.CaptureFrame(FramebufferSize.X, FramebufferSize.Y);
             _updateCalls = 0;
 
             _swapTimer.Restart();

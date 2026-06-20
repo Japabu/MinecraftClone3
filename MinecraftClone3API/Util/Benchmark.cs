@@ -95,6 +95,14 @@ namespace MinecraftClone3API.Util
 
         private static readonly List<Sample> _samples = new List<Sample>(64 * 1024);
 
+        // Frames to snapshot to PNG (recorded-elapsed fraction → name), so a render change can be checked
+        // visually, not just by FPS. Taken once each when the recorded clock passes the fraction.
+        private static readonly (double Frac, string Name)[] _captureSchedule =
+        {
+            (0.16, "streaming"), (0.62, "return"), (0.90, "edit")
+        };
+        private static readonly bool[] _captureTaken = new bool[3];
+
         /// <summary>Applies CLI/env config. Call once before the window is created.</summary>
         public static void Configure(string[] args)
         {
@@ -317,6 +325,26 @@ namespace MinecraftClone3API.Util
             // Authoritative end-of-run: fires exactly once (DriveCamera may already have flipped _phase to
             // Done for the camera path, so guard on Finished, not _phase).
             if (rt >= DurationSeconds && !Finished) Finish();
+        }
+
+        /// <summary>Main-thread GL: snapshots the back buffer to a PNG when the recorded clock passes a
+        /// scheduled point. Called from the render loop after the frame is drawn, before SwapBuffers.</summary>
+        public static void CaptureFrame(int width, int height)
+        {
+            if (!Active || !_recording) return;
+            var rt = RecordedElapsed;
+            for (var i = 0; i < _captureSchedule.Length; i++)
+            {
+                if (_captureTaken[i] || rt < _captureSchedule[i].Frac * DurationSeconds) continue;
+                _captureTaken[i] = true;
+                try
+                {
+                    var path = Path.Combine(GamePaths.UserDataDir, $"benchmark-{_captureSchedule[i].Name}.png");
+                    Screenshot.CaptureBackBuffer(path, width, height);
+                    Logger.Info($"[benchmark] captured frame -> {path}");
+                }
+                catch (Exception e) { Logger.Warn("[benchmark] capture failed: " + e.Message); }
+            }
         }
 
         private static void Finish()
