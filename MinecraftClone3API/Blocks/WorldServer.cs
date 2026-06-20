@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Util;
@@ -68,14 +69,21 @@ namespace MinecraftClone3API.Blocks
         // Reused by the unload scan (sole user) so the per-second sweep allocates no result list.
         private readonly List<Chunk> _unloadScratch = new List<Chunk>();
 
-        // Horizontal radius (in chunks) of the load band; matches ServerNetwork.ViewDistance /
-        // RenderDistance (256 ≈ 16 chunks) so the streamer never wants a chunk the load thread hasn't
-        // loaded. The full BedrockY..WorldTop vertical column is loaded within this radius.
-        private const int TerrainRadius = 16;
+        // Horizontal radius (in chunks) of the load band; kept one chunk past ServerNetwork.ViewDistance
+        // (≈ RenderDistance) so the streamer never wants a chunk the load thread hasn't loaded. Default 10
+        // (≈ 160 blocks); in singleplayer StateWorld drives it from the render-distance slider, on a dedicated
+        // server it stays the default. Read live each scan by the load thread (volatile so a runtime change is
+        // seen promptly). The full BedrockY..WorldTop vertical column is loaded within this radius.
+        public volatile int TerrainRadius = 10;
 
         // The active world generator (resolved from the Vanilla:Overworld dimension, or a void fallback if
         // no dimension is registered). Sole writer of generated chunks runs on the load thread.
         private readonly IChunkGenerator _generator;
+
+        // Disk persistence bound to this world's directory. Per-instance (dir + index caches) rather than
+        // static so each world saves to its own folder; safe because exactly one WorldServer exists per
+        // process and only it touches the serializer (the threading model's single-server assumption).
+        private readonly WorldSerializer _serializer;
 
         // Per-block authoritative changes (edits + light propagation) queued for the network layer to
         // flush as compact BlockChanges packets instead of resending whole GZip'd chunks. Fed by the
@@ -103,12 +111,20 @@ namespace MinecraftClone3API.Blocks
 
         private bool _unloaded;
 
+        // Lock-free mirror of _chunksReadyToAdd.Count, updated under lock(_chunksReadyToAdd) on the load
+        // thread (stage) and the main thread (drain), so the profiler reads the staging-queue depth
+        // without taking the lock or Dictionary.Count.
+        private volatile int _stageQueueDepth;
+        public int StageQueueDepth => _stageQueueDepth;
+
         private const string OverworldDimensionKey = "Vanilla:Overworld";
 
         public Vector3 SpawnPosition => _generator.Spawn().ToVector3();
 
-        public WorldServer(long seed)
+        public WorldServer(long seed, string worldDir)
         {
+            _serializer = new WorldSerializer(worldDir);
+
             _generator = GameRegistry.TryGetDimension(OverworldDimensionKey, out var dimension)
                 ? dimension.CreateGenerator(seed)
                 : CreateFallbackGenerator();
@@ -312,11 +328,14 @@ namespace MinecraftClone3API.Blocks
                 {
                     if (LoadedChunks.TryRemove(chunkPos, out _))
                         _populatedChunks.TryRemove(chunkPos, out _);
+                    ChunkTracer.Abandon(chunkPos);
                 }
 
                 _chunksReadyToRemove.Clear();
             }
 
+            var drainStart = Stopwatch.GetTimestamp();
+            var drained = 0;
             lock (_chunksReadyToAdd)
             {
                 foreach (var entry in _chunksReadyToAdd)
@@ -326,10 +345,15 @@ namespace MinecraftClone3API.Blocks
                     else
                         LoadedChunks[entry.Key] = new Chunk(entry.Value);
                     _populatedChunks[entry.Key] = 0;
+                    ChunkTracer.Published(entry.Key);
+                    drained++;
                 }
 
                 _chunksReadyToAdd.Clear();
+                _stageQueueDepth = 0;
             }
+            Profiler.AddDrainAddTime((Stopwatch.GetTimestamp() - drainStart) * 1000.0 / Stopwatch.Frequency);
+            Profiler.AddDrainAddCount(drained);
         }
 
         public void Unload()
@@ -342,7 +366,7 @@ namespace MinecraftClone3API.Blocks
 
             Logger.Info("Saving world...");
             foreach (var entry in LoadedChunks)
-                WorldSerializer.SaveChunk(entry.Value);
+                _serializer.SaveChunk(entry.Value);
             Logger.Info("World saved");
         }
 
@@ -391,7 +415,7 @@ namespace MinecraftClone3API.Blocks
                     lock (_chunksReadyToRemove)
                         if (!_chunksReadyToRemove.Add(chunk.Position)) continue;
 
-                    WorldSerializer.SaveChunk(chunk);
+                    _serializer.SaveChunk(chunk);
                 }
 
                 Profiler.AddUnloadAlloc(GC.GetAllocatedBytesForCurrentThread() - allocStart);
@@ -454,19 +478,24 @@ namespace MinecraftClone3API.Blocks
                     lock (_chunksReadyToAdd)
                         if (_chunksReadyToAdd.ContainsKey(chunkPos)) continue;
 
+                    ChunkTracer.Born(chunkPos);
                     var cachedChunk = LoadChunk(chunkPos);
 
                     if (cachedChunk.IsEmpty)
                     {
                         //Empty chunks dont need to be added to LoadedChunks
                         _populatedChunks[chunkPos] = 0;
+                        ChunkTracer.Abandon(chunkPos);
                     }
                     else
                     {
                         lock (_chunksReadyToAdd)
                         {
                             _chunksReadyToAdd[chunkPos] = cachedChunk;
+                            _stageQueueDepth = _chunksReadyToAdd.Count;
                         }
+
+                        ChunkTracer.Staged(chunkPos);
                     }
                 }
 
@@ -775,11 +804,22 @@ namespace MinecraftClone3API.Blocks
 
         private CachedChunk LoadChunk(Vector3i position)
         {
-            var chunk = WorldSerializer.LoadChunk(this, position);
-            if (chunk != null) return chunk;
+            var diskStart = Stopwatch.GetTimestamp();
+            var chunk = _serializer.LoadChunk(this, position);
+            Profiler.AddDiskTicks(Stopwatch.GetTimestamp() - diskStart);
+            if (chunk != null)
+            {
+                Profiler.IncFromDisk();
+                ChunkTracer.Loaded(position, ChunkSource.Disk);
+                return chunk;
+            }
 
             chunk = new CachedChunk(this, position);
+            var genStart = Stopwatch.GetTimestamp();
             _generator.Generate(chunk, position);
+            Profiler.AddGenTicks(Stopwatch.GetTimestamp() - genStart);
+            Profiler.IncGenerated();
+            ChunkTracer.Loaded(position, ChunkSource.Gen);
             return chunk;
         }
     }

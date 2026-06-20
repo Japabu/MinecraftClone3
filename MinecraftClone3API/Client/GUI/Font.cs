@@ -18,7 +18,7 @@ namespace MinecraftClone3API.Client.GUI
     public static class Font
     {
         private const int Em = 8;
-        private const string DefinitionPath = "System/Font/default.json";
+        private const string DefinitionPath = "minecraft/font/default.json";
 
         private struct Glyph
         {

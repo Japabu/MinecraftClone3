@@ -45,11 +45,24 @@ namespace MinecraftClone3API.IO
         /// <summary>Per-user graphics options file (vsync, shadows, fullscreen).</summary>
         public static string GraphicsSettingsFile => Path.Combine(UserDataDir, "GraphicsSettings.json");
 
-        /// <summary>Per-user world-save directory.</summary>
+        /// <summary>
+        /// The dedicated server's fixed world-save directory. Singleplayer worlds instead each live in
+        /// their own subfolder under <see cref="WorldsDir"/>; the server keeps using this single folder.
+        /// </summary>
         public static string WorldDir => Path.Combine(UserDataDir, "World");
 
-        /// <summary>World metadata file (persisted seed) inside <see cref="WorldDir"/>.</summary>
-        public static string LevelFile => Path.Combine(WorldDir, "level.dat");
+        /// <summary>
+        /// Per-user directory holding the singleplayer worlds, one subfolder per world. Created on access.
+        /// </summary>
+        public static string WorldsDir
+        {
+            get
+            {
+                var dir = Path.Combine(UserDataDir, "Worlds");
+                Directory.CreateDirectory(dir);
+                return dir;
+            }
+        }
 
         /// <summary>
         /// Per-user resource-pack directory. Created on access. Packs (folders, zips, or Minecraft

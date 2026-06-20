@@ -46,7 +46,7 @@ namespace MinecraftClone3.States
             GuiButton shadows = null;
             shadows = new GuiButton(Rectangle.FromSize(x, y + step, ButtonWidth, ButtonHeight), ShadowsLabel(), () =>
             {
-                GraphicsSettings.Shadows = !GraphicsSettings.Shadows;
+                GraphicsSettings.ShadowQuality = NextShadowQuality(GraphicsSettings.ShadowQuality);
                 shadows.Label = ShadowsLabel();
             });
             Elements.Add(shadows);
@@ -87,7 +87,18 @@ namespace MinecraftClone3.States
             }
         }
 
-        private static string ShadowsLabel() => "Shadows: " + (GraphicsSettings.Shadows ? "On" : "Off");
+        private static ShadowQuality NextShadowQuality(ShadowQuality quality)
+        {
+            switch (quality)
+            {
+                case ShadowQuality.Off: return ShadowQuality.Low;
+                case ShadowQuality.Low: return ShadowQuality.Medium;
+                case ShadowQuality.Medium: return ShadowQuality.High;
+                default: return ShadowQuality.Off;
+            }
+        }
+
+        private static string ShadowsLabel() => "Shadows: " + GraphicsSettings.ShadowQuality;
         private static string FullscreenLabel() => "Fullscreen: " + (GraphicsSettings.Fullscreen ? "On" : "Off");
 
         public override void Update(bool focused)

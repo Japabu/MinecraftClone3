@@ -37,7 +37,7 @@ namespace MinecraftClone3.States
             var step = ButtonHeight + ButtonGap;
 
             Elements.Add(new GuiButton(Rectangle.FromSize(x, y, ButtonWidth, ButtonHeight), "Singleplayer",
-                () => StateEngine.ReplaceState(new StateWorld(_window, multiplayer: false))));
+                () => StateEngine.ReplaceState(new GuiWorldSelection(_window))));
             Elements.Add(new GuiButton(Rectangle.FromSize(x, y + step, ButtonWidth, ButtonHeight), "Multiplayer",
                 () => StateEngine.ReplaceState(new StateWorld(_window, multiplayer: true))));
             Elements.Add(new GuiButton(Rectangle.FromSize(x, y + 2 * step, ButtonWidth, ButtonHeight), "Options",
