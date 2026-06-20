@@ -86,9 +86,9 @@ namespace MinecraftClone3API.Graphics
             public int IndexCount;
         }
 
-        // 5 parallel vertex streams (must mirror VertexArrayObject's attribute layout) + 1 index stream.
-        private static readonly int[] AttribSizes = {3, 4, 4, 3, 4};
-        private static readonly int[] AttribBytes = {12, 16, 16, 12, 16};
+        // 5 parallel vertex streams (must mirror MeshBuffer's packed layout) + 1 index stream:
+        // 0 pos float3 (12), 1 uv float2 (8), 2 packed uint (4), 3 tint RGBA8 (4), 4 light RGBA8 (4).
+        private static readonly int[] AttribBytes = {12, 8, 4, 4, 4};
 
         private readonly int[] _vbo = new int[5];
         private int _ibo;
@@ -131,12 +131,7 @@ namespace MinecraftClone3API.Graphics
         private void SetupVaos()
         {
             GL.BindVertexArray(_geometryVao);
-            for (var i = 0; i < 5; i++)
-            {
-                GL.BindBuffer(BufferTarget.ArrayBuffer, _vbo[i]);
-                GL.EnableVertexAttribArray(i);
-                GL.VertexAttribPointer(i, AttribSizes[i], VertexAttribPointerType.Float, false, 0, 0);
-            }
+            BindVertexFormat();
             GL.BindBuffer(BufferTarget.ElementArrayBuffer, _ibo);
 
             GL.BindVertexArray(_shadowVao);
@@ -147,6 +142,34 @@ namespace MinecraftClone3API.Graphics
 
             GL.BindVertexArray(0);
         }
+
+        /// <summary>Wires the 5 packed attribute streams to the currently-bound VAO (shared by
+        /// <see cref="VertexArrayObject"/> for the transparent path — keep the two in sync).</summary>
+        internal static void BindVertexFormat(int posVbo, int uvVbo, int packedVbo, int colorVbo, int lightVbo)
+        {
+            GL.BindBuffer(BufferTarget.ArrayBuffer, posVbo);
+            GL.EnableVertexAttribArray(0);
+            GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 0, 0);
+
+            GL.BindBuffer(BufferTarget.ArrayBuffer, uvVbo);
+            GL.EnableVertexAttribArray(1);
+            GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, 0, 0);
+
+            GL.BindBuffer(BufferTarget.ArrayBuffer, packedVbo);
+            GL.EnableVertexAttribArray(2);
+            GL.VertexAttribIPointer(2, 1, VertexAttribIntegerType.UnsignedInt, 0, 0);
+
+            GL.BindBuffer(BufferTarget.ArrayBuffer, colorVbo);
+            GL.EnableVertexAttribArray(3);
+            GL.VertexAttribPointer(3, 4, VertexAttribPointerType.UnsignedByte, true, 0, 0);
+
+            GL.BindBuffer(BufferTarget.ArrayBuffer, lightVbo);
+            GL.EnableVertexAttribArray(4);
+            GL.VertexAttribPointer(4, 4, VertexAttribPointerType.UnsignedByte, true, 0, 0);
+        }
+
+        private void BindVertexFormat() =>
+            BindVertexFormat(_vbo[0], _vbo[1], _vbo[2], _vbo[3], _vbo[4]);
 
         /// <summary>Uploads a chunk's freshly-meshed opaque CPU buffers into the arena, (re)allocating its
         /// sub-range as needed, and returns the updated allocation handle. Main-thread GL.</summary>
@@ -175,8 +198,8 @@ namespace MinecraftClone3API.Graphics
             }
 
             UploadList(_vbo[0], existing.VertexOffset, AttribBytes[0], mesh.Positions);
-            UploadList(_vbo[1], existing.VertexOffset, AttribBytes[1], mesh.TexCoords);
-            UploadList(_vbo[2], existing.VertexOffset, AttribBytes[2], mesh.Normals);
+            UploadList(_vbo[1], existing.VertexOffset, AttribBytes[1], mesh.Uvs);
+            UploadList(_vbo[2], existing.VertexOffset, AttribBytes[2], mesh.Packed);
             UploadList(_vbo[3], existing.VertexOffset, AttribBytes[3], mesh.Colors);
             UploadList(_vbo[4], existing.VertexOffset, AttribBytes[4], mesh.Lights);
 
