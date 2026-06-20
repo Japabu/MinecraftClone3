@@ -19,7 +19,7 @@ const vec3 Normals[6] = vec3[6](
 	vec3( 1, 0, 0), vec3(-1, 0, 0),
 	vec3( 0, 1, 0), vec3( 0,-1, 0),
 	vec3( 0, 0, 1), vec3( 0, 0,-1));
-// Material → the old normal.w flag (0 lit, 0.5 water, 1 unlit), kept so EncodeNormal/Composition are unchanged.
+// Material -> the old normal.w flag (0 lit, 0.5 water, 1 unlit), kept so EncodeNormal/Composition are unchanged.
 const float Material[3] = float[3](0.0, 0.5, 1.0);
 
 void main()
