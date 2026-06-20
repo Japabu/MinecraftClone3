@@ -7,6 +7,13 @@ namespace MinecraftClone3API.Util
 {
     internal static class ChunkMesher
     {
+        // Baked into a water face's normal.w; EncodeNormal (n*0.5+0.5) stores it as 0.75 (≈191/255 in Rgba8)
+        // in the G-buffer normal alpha — distinct from lit solid (0 → 0.5) and the unlit flag (1 → 1.0) — so
+        // Composition.fs can shade water specially. Must stay inside that shader's WaterFlagLo/Hi band; the
+        // two constants are a matched pair (see Composition.fs).
+        private const float WaterNormalW = 0.5f;
+
+
         private static readonly Vector3[] FacePositions = {
             //left
             new Vector3(-0.5f, +0.5f, -0.5f), new Vector3(-0.5f, +0.5f, +0.5f),
@@ -82,6 +89,7 @@ namespace MinecraftClone3API.Util
             var texCoords = data.GetTexCoords();
             var color = data.TintIndex == -1 ? new Vector4(1) : block.GetTintColor(world, blockPos, data.TintIndex).ToVector4();
             var normal = new Vector4(face.GetNormal());
+            if (block.GetRenderMaterial(world, blockPos) == RenderMaterial.Water) normal.W = WaterNormalW;
             var colorXyz = color.Xyz;
 
             if (texCoords.Length != 4) throw new Exception($"\"{block}\" invalid texture coords array length!");

@@ -19,6 +19,7 @@ namespace MinecraftClone3API.WorldGen
         public int SeaLevel = 8;
         public int BedrockY = -32;
         public int WorldTop = 96;
+        public int HeightBlendSpacing = 24;
 
         private const float ContinentalScale = 0.0035f;
         private const float HillScale = 0.013f;
@@ -93,17 +94,48 @@ namespace MinecraftClone3API.WorldGen
             return _biomeSource.Get(t, hum) ?? _beach;
         }
 
-        public int SurfaceHeight(int wx, int wz) => SurfaceHeightFor(wx, wz, BiomeAt(wx, wz));
-
-        private int SurfaceHeightFor(int wx, int wz, Biome biome)
+        public int SurfaceHeight(int wx, int wz)
         {
+            BlendedHeightParams(wx, wz, out var bias, out var variation);
             var bh = BaseHeight(wx, wz);
             var p = _peaks.Generate(wx * PeakScale, wz * PeakScale);
-            var s = (int) MathF.Round(bh + biome.HeightBias + p * biome.HeightVariation);
+            var s = (int) MathF.Round(bh + bias + p * variation);
             if (s < BedrockY + 1) s = BedrockY + 1;
             if (s > WorldTop) s = WorldTop;
             return s;
         }
+
+        /// <summary>
+        /// Bilinearly blends the four surrounding biomes' <see cref="Biome.HeightBias"/>/
+        /// <see cref="Biome.HeightVariation"/> over a world-aligned lattice of spacing
+        /// <see cref="HeightBlendSpacing"/> (smoothstep weights), so terrain height crosses a biome border
+        /// as a foothill instead of a cliff. A pure function of (wx,wz), so every height consumer agrees.
+        /// </summary>
+        private void BlendedHeightParams(int wx, int wz, out float bias, out float variation)
+        {
+            var s = HeightBlendSpacing;
+            var x0 = FloorDiv(wx, s) * s;
+            var z0 = FloorDiv(wz, s) * s;
+            var x1 = x0 + s;
+            var z1 = z0 + s;
+
+            var tx = (wx - x0) / (float) s;
+            var tz = (wz - z0) / (float) s;
+            tx = tx * tx * (3f - 2f * tx);
+            tz = tz * tz * (3f - 2f * tz);
+
+            var b00 = BiomeAt(x0, z0);
+            var b10 = BiomeAt(x1, z0);
+            var b01 = BiomeAt(x0, z1);
+            var b11 = BiomeAt(x1, z1);
+
+            bias = Lerp(Lerp(b00.HeightBias, b10.HeightBias, tx),
+                Lerp(b01.HeightBias, b11.HeightBias, tx), tz);
+            variation = Lerp(Lerp(b00.HeightVariation, b10.HeightVariation, tx),
+                Lerp(b01.HeightVariation, b11.HeightVariation, tx), tz);
+        }
+
+        private static float Lerp(float a, float b, float t) => a + (b - a) * t;
 
         public void Generate(CachedChunk chunk, Vector3i chunkPos)
         {
@@ -115,7 +147,7 @@ namespace MinecraftClone3API.WorldGen
             {
                 var idx = x * Chunk.Size + z;
                 var biome = BiomeAt(min.X + x, min.Z + z);
-                var surf = SurfaceHeightFor(min.X + x, min.Z + z, biome);
+                var surf = SurfaceHeight(min.X + x, min.Z + z);
                 _colBiome[idx] = biome;
                 _surf[idx] = surf;
                 if (surf > colTopMax) colTopMax = surf;
@@ -158,7 +190,7 @@ namespace MinecraftClone3API.WorldGen
                 }
             }
 
-            foreach (var carver in _carvers) carver.Carve(chunk, chunkPos, this);
+            foreach (var carver in _carvers) carver.Carve(chunk, chunkPos, this, _surf);
 
             // Seed sky light above the solid surface. Open air is full sky; the water column dims one
             // level per block of depth so the surface is bright and the deep is dark (no BFS at gen).
@@ -227,7 +259,7 @@ namespace MinecraftClone3API.WorldGen
                 var biome = BiomeAt(dx, dz);
                 if (biome == _ocean) continue;
 
-                var surf = SurfaceHeightFor(dx, dz, biome);
+                var surf = SurfaceHeight(dx, dz);
                 if (surf >= SeaLevel) return new Vector3i(dx, surf + 2, dz);
             }
 

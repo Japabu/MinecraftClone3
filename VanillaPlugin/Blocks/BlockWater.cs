@@ -27,6 +27,7 @@ namespace VanillaPlugin.Blocks
 
         public override bool IsFullBlock(WorldBase world, Vector3i blockPos) => false;
         public override TransparencyType IsTransparent(WorldBase world, Vector3i blockPos) => TransparencyType.Transparent;
+        public override RenderMaterial GetRenderMaterial(WorldBase world, Vector3i blockPos) => RenderMaterial.Water;
         public override bool CanPassThrough(WorldBase world, Vector3i blockPos) => true;
         public override bool CanTarget(WorldBase world, Vector3i blockPos) => false;
         public override bool IsLiquid => true;

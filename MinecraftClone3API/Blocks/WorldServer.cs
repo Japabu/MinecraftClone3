@@ -463,7 +463,12 @@ namespace MinecraftClone3API.Blocks
                             {
                                 var chunkPos = new Vector3i(playerChunk.X + x, y, playerChunk.Z + z);
                                 if (!_loadDedup.Add(chunkPos)) continue;
-                                if (_populatedChunks.ContainsKey(chunkPos) || _chunksReadyToAdd.ContainsKey(chunkPos))
+
+                                var known = _populatedChunks.ContainsKey(chunkPos);
+                                if (!known)
+                                    lock (_chunksReadyToAdd) known = _chunksReadyToAdd.ContainsKey(chunkPos);
+
+                                if (known)
                                 {
                                     //Reset chunk time so it will not be unloaded
                                     if (LoadedChunks.TryGetValue(chunkPos, out var chunk)) chunk.Time = DateTime.Now;
