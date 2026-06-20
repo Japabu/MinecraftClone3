@@ -48,8 +48,8 @@ uniform float uShadowsEnabled;
 uniform float uDebugShadow;
 
 // Floor so a surface reached by no light at all isn't a literal void: a cave with no torch reads as nearly
-// black (bring a torch). Raise for a brighter global ambient; 0 = pure black.
-const vec3 MinLight = vec3(0.01);
+// black (bring a torch). Driven by the Brightness graphics option (GraphicsSettings.Brightness); 0 = pure black.
+uniform vec3 uMinLight;
 
 // Joint-bilateral upsample sharpness (in normalized-depth units, i.e. view depth / uShadowDistance). Larger
 // = a smaller depth difference rejects a tap, so the half-res shadow doesn't bleed across silhouette edges;
@@ -130,7 +130,7 @@ vec4 GetColor()
 	vec3 skyLight = lightSample.a*(litShadow*uSunColor*uSunFade + uSkyAmbient);
 	vec3 light = max(lightSample.rgb, skyLight);
 
-	return vec4(diffuse.rgb * max(light, MinLight), diffuse.a);
+	return vec4(diffuse.rgb * max(light, uMinLight), diffuse.a);
 }
 
 void main()

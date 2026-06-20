@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
-using MinecraftClone3API.Client.GUI;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
@@ -70,7 +69,6 @@ namespace MinecraftClone3API.Client
             Samplers.Load();
 
             WhitePixel = new Texture(new TextureData(new byte[] {255, 255, 255, 255}, 1, 1));
-            Font.Load();
 
             MissingModel = ResourceReader.ReadBlockModel("System/Models/MissingModel.json");
             MissingTexture = ResourceReader.ReadBlockTexture("System/Textures/Blocks/MissingTexture.png");

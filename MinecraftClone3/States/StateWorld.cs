@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Net.Sockets;
 using MinecraftClone3API.Blocks;
+using MinecraftClone3API.Client;
 using MinecraftClone3API.Client.Blocks;
 using MinecraftClone3API.Client.GUI;
 using MinecraftClone3API.Client.Graphics;
@@ -43,6 +44,7 @@ namespace MinecraftClone3.States
 
         private bool _loading = true;
         private bool _spawnApplied;
+        private int _lastRenderDistanceChunks = -1;
         private readonly Stopwatch _loadingTimer = Stopwatch.StartNew();
         private Texture _loadingBackground;
 
@@ -91,6 +93,26 @@ namespace MinecraftClone3.States
 
             Profiler.World = _world;
             Profiler.Network = _network;
+            Profiler.Server = _integratedServer;
+            ChunkTracer.Multiplayer = multiplayer;
+
+            ApplyRenderDistance();
+        }
+
+        /// <summary>Pushes the render-distance setting through the coupled radius chain. In singleplayer the
+        /// client owns the integrated server, so the slider drives the server view/load radius and the client
+        /// cache too; in multiplayer only the client DRAW distance follows it (WorldRenderer reads the setting
+        /// live), and the cache stays at its safe default since the client can't know the remote view distance.</summary>
+        private void ApplyRenderDistance()
+        {
+            var chunks = GraphicsSettings.RenderDistanceChunks;
+            _lastRenderDistanceChunks = chunks;
+
+            if (_integratedServer == null) return;
+
+            _network.ViewDistance = chunks * Chunk.Size;
+            _integratedServer.TerrainRadius = chunks + 1;
+            _world.CacheDistance = chunks * Chunk.Size + WorldClient.CacheHysteresis;
         }
 
         public override void Update(bool focused)
@@ -106,6 +128,9 @@ namespace MinecraftClone3.States
                 UpdateLoading();
                 return;
             }
+
+            if (GraphicsSettings.RenderDistanceChunks != _lastRenderDistanceChunks)
+                ApplyRenderDistance();
 
             if (focused)
             {
@@ -192,7 +217,8 @@ namespace MinecraftClone3.States
             }
 
             var aspect = (float)_window.FramebufferSize.X / _window.FramebufferSize.Y;
-            var projection = Matrix4.CreatePerspectiveFieldOfView(MathHelper.DegreesToRadians(60), aspect, 0.01f, 512);
+            var projection = Matrix4.CreatePerspectiveFieldOfView(
+                MathHelper.DegreesToRadians(GraphicsSettings.Fov), aspect, 0.01f, 512);
             WorldRenderer.RenderWorld(_world, projection);
 
             if (!Profiler.Recording && !RenderDebug.ShowDiagnostics && !RenderDebug.ShowControls) return;
@@ -266,6 +292,10 @@ namespace MinecraftClone3.States
             Font.DrawString($"shadows {shadows}   loaded {_world.LoadedChunkCount}" +
                             $"   mesh {_world.MeshQueueDepth}   upload {_world.UploadQueueDepth}", 4, y, scale, OverlayText); y += lh;
 
+            var stage = _integratedServer != null ? $"   stage {_integratedServer.StageQueueDepth}" : "";
+            Font.DrawString($"apply {_world.ApplyQueueDepth}   ready {_world.RenderReadyQueueDepth}" +
+                            $"   dispose {_world.DisposeQueueDepth}{stage}", 4, y, scale, OverlayText); y += lh;
+
             var p = _player.Position;
             var c = WorldBase.ChunkInWorld(p.ToVector3i());
             Font.DrawString($"pos {p.X:0.0} {p.Y:0.0} {p.Z:0.0}   chunk {c.X} {c.Y} {c.Z}", 4, y, scale, OverlayText); y += lh;
@@ -295,6 +325,7 @@ namespace MinecraftClone3.States
             Profiler.Stop();
             Profiler.World = null;
             Profiler.Network = null;
+            Profiler.Server = null;
             _world?.Disconnect();
             _network?.Stop();
             _integratedServer?.Unload();

@@ -29,10 +29,18 @@ namespace MinecraftClone3API.Util
         /// server Pump's per-tick cost into chunk streaming vs block-change flushing.</summary>
         public static ServerNetwork Network;
 
+        /// <summary>Set by the active world state (singleplayer only) so the profiler can sample the
+        /// server-side staging-queue depth (the chunks waiting for the main-thread drain).</summary>
+        public static WorldServer Server;
+
         public static string OutputPath { get; private set; }
 
+        /// <summary>Seconds since recording started, shared with <see cref="ChunkTracer"/> so the per-frame
+        /// and per-chunk CSVs correlate on one clock. Zero when not recording.</summary>
+        public static double ElapsedSeconds => _clock.Elapsed.TotalSeconds;
+
         private static StreamWriter _writer;
-        private static readonly StringBuilder _row = new StringBuilder(256);
+        private static readonly StringBuilder _row = new StringBuilder(384);
         private static readonly Stopwatch _clock = new Stopwatch();
         private static long _lastGen0, _lastGen1, _lastGen2, _lastAlloc;
         private static int _rowsSinceFlush;
@@ -64,6 +72,29 @@ namespace MinecraftClone3API.Util
         public static void AddMeshAlloc(long bytes) => System.Threading.Interlocked.Add(ref _bgMesh, bytes);
         public static void AddApplyAlloc(long bytes) => System.Threading.Interlocked.Add(ref _bgApply, bytes);
 
+        // Per-pipeline-stage wall-clock, attributed to the producing thread. The background stages store
+        // raw Stopwatch.GetTimestamp() tick deltas via Interlocked (called off the main thread) and are
+        // converted to ms in Record; the server stage-drain is main-thread. Measured unconditionally (a
+        // GetTimestamp pair is cheap) like the alloc brackets, so no recording gate on the producers.
+        private static long _tDisk, _tGen, _tApply, _tMesh;
+        private static double _drainAddMs;
+
+        public static void AddDiskTicks(long ticks) => System.Threading.Interlocked.Add(ref _tDisk, ticks);
+        public static void AddGenTicks(long ticks) => System.Threading.Interlocked.Add(ref _tGen, ticks);
+        public static void AddApplyTicks(long ticks) => System.Threading.Interlocked.Add(ref _tApply, ticks);
+        public static void AddMeshTicks(long ticks) => System.Threading.Interlocked.Add(ref _tMesh, ticks);
+        public static void AddDrainAddTime(double ms) => _drainAddMs += ms;
+
+        // Per-pipeline-stage throughput counts per render-frame interval (chunks crossing each stage).
+        // Background stages via Interlocked; the server stage-drain count is main-thread.
+        private static long _cFromDisk, _cGenerated, _cApplied, _cMeshed, _cDrainedAdd;
+
+        public static void IncFromDisk() => System.Threading.Interlocked.Increment(ref _cFromDisk);
+        public static void IncGenerated() => System.Threading.Interlocked.Increment(ref _cGenerated);
+        public static void IncApplied() => System.Threading.Interlocked.Increment(ref _cApplied);
+        public static void IncMeshed() => System.Threading.Interlocked.Increment(ref _cMeshed);
+        public static void AddDrainAddCount(long n) => _cDrainedAdd += n;
+
         public static void Toggle()
         {
             if (Recording) Stop();
@@ -80,7 +111,10 @@ namespace MinecraftClone3API.Util
                               "dGen0,dGen1,dGen2,heapMB,allocMB,srvMB,netMB,cliMB,rndMB,loadMB,lightMB,unloadMB,meshMB,applyMB," +
                               "chunks,renderData,pendingMesh,entities,pcx,pcy,pcz,borderCross," +
                               "srvMs,netMs,cliMs,streamMs,flushMs,chStreamed,chDrained,chPkts," +
-                              "pktMs,drainMs,upMs,evictMs,upChunks,upIndices,upQ");
+                              "pktMs,drainMs,upMs,evictMs,upChunks,upIndices,upQ," +
+                              "diskMs,genMs,applyMs,meshMs,drainAddMs," +
+                              "chFromDisk,chGenerated,chApplied,chMeshed,chDrainedAdd," +
+                              "srvStageQ,applyQ,renderReadyQ,disposeQ,drawnChunks");
 
             _lastGen0 = GC.CollectionCount(0);
             _lastGen1 = GC.CollectionCount(1);
@@ -99,6 +133,18 @@ namespace MinecraftClone3API.Util
             System.Threading.Interlocked.Exchange(ref _bgUnload, 0);
             System.Threading.Interlocked.Exchange(ref _bgMesh, 0);
             System.Threading.Interlocked.Exchange(ref _bgApply, 0);
+            System.Threading.Interlocked.Exchange(ref _tDisk, 0);
+            System.Threading.Interlocked.Exchange(ref _tGen, 0);
+            System.Threading.Interlocked.Exchange(ref _tApply, 0);
+            System.Threading.Interlocked.Exchange(ref _tMesh, 0);
+            System.Threading.Interlocked.Exchange(ref _cFromDisk, 0);
+            System.Threading.Interlocked.Exchange(ref _cGenerated, 0);
+            System.Threading.Interlocked.Exchange(ref _cApplied, 0);
+            System.Threading.Interlocked.Exchange(ref _cMeshed, 0);
+            _drainAddMs = 0;
+            _cDrainedAdd = 0;
+
+            ChunkTracer.Start();
 
             _clock.Restart();
             Recording = true;
@@ -114,6 +160,7 @@ namespace MinecraftClone3API.Util
             _writer.Flush();
             _writer.Dispose();
             _writer = null;
+            ChunkTracer.Stop();
             Logger.Info($"Profiling stopped -> {OutputPath}");
         }
 
@@ -199,6 +246,22 @@ namespace MinecraftClone3API.Util
             Field((long) (World?.LastUploadChunks ?? 0));
             Field((long) (World?.LastUploadIndices ?? 0));
             Field((long) (World?.UploadQueueDepth ?? 0));
+            var msPerTick = 1000.0 / Stopwatch.Frequency;
+            Field(System.Threading.Interlocked.Exchange(ref _tDisk, 0) * msPerTick, "0.00");
+            Field(System.Threading.Interlocked.Exchange(ref _tGen, 0) * msPerTick, "0.00");
+            Field(System.Threading.Interlocked.Exchange(ref _tApply, 0) * msPerTick, "0.00");
+            Field(System.Threading.Interlocked.Exchange(ref _tMesh, 0) * msPerTick, "0.00");
+            Field(_drainAddMs, "0.00");
+            Field(System.Threading.Interlocked.Exchange(ref _cFromDisk, 0));
+            Field(System.Threading.Interlocked.Exchange(ref _cGenerated, 0));
+            Field(System.Threading.Interlocked.Exchange(ref _cApplied, 0));
+            Field(System.Threading.Interlocked.Exchange(ref _cMeshed, 0));
+            Field(_cDrainedAdd);
+            Field((long) (Server?.StageQueueDepth ?? 0));
+            Field((long) (World?.ApplyQueueDepth ?? 0));
+            Field((long) (World?.RenderReadyQueueDepth ?? 0));
+            Field((long) (World?.DisposeQueueDepth ?? 0));
+            Field((long) RenderDebug.DrawnChunks);
             _writer.WriteLine(_row);
 
             _phServer = 0;
@@ -207,6 +270,8 @@ namespace MinecraftClone3API.Util
             _phServerMs = 0;
             _phNetworkMs = 0;
             _phClientMs = 0;
+            _drainAddMs = 0;
+            _cDrainedAdd = 0;
 
             if (++_rowsSinceFlush >= 120)
             {
