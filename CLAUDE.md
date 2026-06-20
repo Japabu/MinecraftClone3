@@ -29,7 +29,7 @@ MinecraftClone3.sln
 │   │   ├── GUI/            GuiBase, GuiButton, GuiSlider, widgets
 │   │   └── StateSystem/    StateEngine, StateBase, GuiBase
 │   ├── Entities/           Entity, EntityPlayer, PlayerController
-│   ├── IO/                 GamePaths, FileSystem*, ResourceReader, CommonResources, plugin file systems
+│   ├── IO/                 GamePaths, WorldManager (+WorldInfo), FileSystem*, ResourceReader, CommonResources, plugin file systems
 │   ├── Networking/         IConnection, Packet(s), Loopback/Tcp connections, ServerNetwork, ClientSession
 │   ├── Plugins/            PluginManager, IPlugin, PluginContext
 │   ├── WorldGen/           Dimension, Biome, Feature, Carver, BiomeSource, NoiseChunkGenerator, region, RNG
@@ -55,10 +55,13 @@ dotnet run --project MinecraftClone3Server -c Debug # run the dedicated server (
 ```
 
 The server listens on **127.0.0.1:25565** (`ServerNetwork.DefaultPort`); the client's multiplayer button
-connects there (`StateWorld.ServerAddress`). World saves live in `~/.local/share/MinecraftClone3/World`
-(see `GamePaths`); the generation seed is persisted to `World/level.dat`. **After a worldgen change, delete
-`~/.local/share/MinecraftClone3/World`** — chunks load disk-first, so old saves would otherwise mask the new
-generator (and mint a fresh random seed). Block textures come from a resource pack (a 1.13+ Minecraft client
+connects there (`StateWorld.ServerAddress`). **Singleplayer worlds** each live in their own folder under
+`~/.local/share/MinecraftClone3/Worlds/<name>/` (created/listed/deleted via the world-selection screen, see
+the state section); the **dedicated server** uses one fixed `~/.local/share/MinecraftClone3/World/` (see
+`GamePaths.WorldsDir`/`WorldDir`). Each world's name, generation seed, and last-played time are persisted to
+`<worldDir>/level.dat` (`WorldMetadata`). **After a worldgen change, delete the affected world folder under
+`Worlds/`** (and `World/` for the dedicated server) — chunks load disk-first, so old saves would otherwise
+mask the new generator. Block textures come from a resource pack (a 1.13+ Minecraft client
 jar) dropped in `~/.local/share/MinecraftClone3/ResourcePacks/`; with none, blocks render with placeholders.
 
 ---
@@ -215,9 +218,11 @@ auto-participates.
 Yates perm from a SplitMix64 stream), `WorldGenRandom` is a struct SplitMix64 PRNG, and `Feature.Salt` is an
 **FNV-1a** hash of the registry key (never `string.GetHashCode`, which is per-run randomized). `Generate`
 runs only on the server **LoadThread** (single writer — Invariant 5 holds; the generator's column scratch is
-a plain reused field). The **seed is persisted** to `level.dat` (`WorldMetadata.LoadOrCreateSeed`,
-`GamePaths.LevelFile`); both call sites (`StateWorld` singleplayer, `MinecraftClone3Server`) pass it to
-`new WorldServer(long seed)`, and both resolve the same `WorldDir`, so they agree automatically. The
+a plain reused field). The **seed is persisted** to each world's `level.dat` (`WorldMetadata`, alongside its
+name + last-played); both call sites construct `new WorldServer(long seed, string worldDir)` — `StateWorld`
+singleplayer with the chosen `WorldInfo.Seed`/`Directory`, `MinecraftClone3Server` via
+`WorldMetadata.LoadOrCreate(GamePaths.WorldDir, …)`. `WorldServer` owns a per-instance `WorldSerializer(worldDir)`
+(its own dir + index caches), safe because exactly one `WorldServer` exists per process. The
 generator resolves `GameRegistry.GetDimension("Vanilla:Overworld")`; if absent it logs and falls back to a
 `FlatChunkGenerator` (empty void) so the engine still runs without Vanilla. **Generation is server-only** —
 clients receive baked chunks, so there is no wire/client change (the new registries load client-side too but
@@ -574,18 +579,41 @@ removed layer — that's how a world saves on "Save and Quit to Title" and on wi
 (`GameClient.OnUnload → StateEngine.Exit`). State flow:
 
 ```
-GuiResourceLoading ──(done)──▶ GuiMainMenu ──Singleplayer/Multiplayer──▶ StateWorld
-                                    ▲ │ Options                              │ Esc
-                                    │ ▼                                      ▼
-                                    │ GuiGraphicsOptions (overlay) ◀── Options ── GuiPauseMenu (overlay)
-                                    └────────── Save & Quit ◀──────────────────┘
+GuiResourceLoading ──(done)──▶ GuiMainMenu ──Multiplayer──────────────────────────▶ StateWorld(window, multiplayer:true)
+                                    ▲ │ │ Options                                        │ Esc
+                                    │ │ ▼                                                ▼
+                                    │ │ GuiGraphicsOptions (overlay) ◀── Options ── GuiPauseMenu (overlay)
+                                    │ └────────── Save & Quit ◀──────────────────────────┘
+                                    │ Singleplayer
+                                    ▼                  Create New World
+                              GuiWorldSelection ◀──────────────────────▶ GuiCreateWorld
+                                    │  │  ▲ Back/Esc                          │ Create / Cancel/Esc
+                       Play/dbl-click│  │ Delete                             ▼
+                                    ▼  │ (GuiConfirm overlay ── Yes ──▶ delete + rebuild)
+                              StateWorld(window, world)  ◀──────────────────┘
 ```
 
-`StateWorld(window, multiplayer)` builds the connection (loopback+integrated `WorldServer` for SP, or a
-`TcpConnection` for MP), creates the `WorldClient`, and logs in. On a failed MP connect it flips back to
-the main menu. It then sits in a `_loading` phase (pumping server/network/world + drawing a loading screen)
-until the join handshake completes (see "Join handshake" in the networking section) before running player
-input.
+`StateWorld` has two public ctors over a shared private one: `StateWorld(window, WorldInfo)` (singleplayer —
+runs that world's folder in a loopback+integrated `WorldServer(seed, worldDir)`) and
+`StateWorld(window, multiplayer)` (a `TcpConnection` for MP). It creates the `WorldClient` and logs in; on a
+failed MP connect it flips back to the main menu. It then sits in a `_loading` phase (pumping
+server/network/world + drawing a loading screen) until the join handshake completes (see "Join handshake" in
+the networking section) before running player input.
+
+**World selection (singleplayer).** The "Singleplayer" button opens `GuiWorldSelection` (lists the worlds
+under `Worlds/`, sorted last-played-first via `WorldManager`), from which the player plays, creates, or
+deletes a world. `GuiCreateWorld` takes a name + optional seed (blank → random, numeric → used directly,
+else `WorldGenRandom.StableHash`) and `WorldManager.CreateWorld`s it. These are **states** (navigated by
+`ReplaceState`), not overlays, because `GuiCreateWorld` owns `GuiTextInput`s that subscribe to the window's
+`TextInput` event and must `Detach()` in `Exit()` — and `ReplaceState` calls `Exit()` on removed layers
+while dead **overlays** are dropped *without* `Exit()` ([StateEngine.cs](MinecraftClone3API/Client/StateSystem/StateEngine.cs)).
+The delete confirmation (`GuiConfirm`, a Yes/No) owns no text input, so it is a safe overlay.
+
+**`GuiTextInput`** ([MinecraftClone3API/Client/GUI/GuiTextInput.cs](MinecraftClone3API/Client/GUI/GuiTextInput.cs))
+is the reusable single-line text field: chars arrive via the window `TextInput` event (OS handles
+layout/shift), a left click sets focus by whether it landed inside (so clicking elsewhere defocuses, no
+cross-field coordination), Backspace deletes via `IsKeyPressed`. **Held-key repeat is not implemented** (one
+char per key press); the owning state must call `Detach()` from `Exit()` to unsubscribe.
 
 **Player movement & physics** (`Entities/PlayerController.cs` + `PlayerPhysics.cs`, client-only, main
 thread). The player is a **0.6 × 1.8 AABB**; `Entity.Position` is the **feet** and the camera renders at
@@ -882,7 +910,8 @@ the sun's POV, so the fix is reducing geometry submitted to it (a shorter `Shado
 - Match the surrounding code's style, naming, and comment density.
 - **No backwards compatibility.** The project is in rapid development with no shipped users. Do **not**
   add format-version negotiation, save migrations, deprecation shims, or compatibility fallbacks. When
-  the on-disk or wire format changes, the world is simply regenerated (delete `World/`). Prefer the
+  the on-disk or wire format changes, the world is simply regenerated (delete the world folder under
+  `Worlds/`, or `World/` for the server). Prefer the
   clean break over machinery that carries the old shape forward. (Crash-robustness — e.g. regenerating
   a truncated/corrupt chunk rather than killing the load thread — is fine; that is not back-compat.)
 - **Record, don't interrupt.** When working through a multi-step task (e.g. the efficiency overhaul),

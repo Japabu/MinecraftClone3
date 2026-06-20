@@ -3,6 +3,7 @@ using System.IO;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using MinecraftClone3API.IO;
+using MinecraftClone3API.Util;
 using OpenTK.Windowing.Common;
 
 namespace MinecraftClone3API.Client
@@ -107,11 +108,27 @@ namespace MinecraftClone3API.Client
             {
                 _data = new Data();
             }
+
+            // Re-clamp deserialized values: the setters clamp the slider path, but a hand-edited / corrupt
+            // file could otherwise feed an out-of-range value straight to a shader uniform or the radius chain.
+            _data.RenderDistanceChunks = Clamp(_data.RenderDistanceChunks, MinRenderDistanceChunks, MaxRenderDistanceChunks);
+            _data.Fov = Clamp(_data.Fov, MinFov, MaxFov);
+            _data.MouseSensitivity = Clamp(_data.MouseSensitivity, MinMouseSensitivity, MaxMouseSensitivity);
+            _data.Brightness = Clamp(_data.Brightness, MinBrightness, MaxBrightness);
         }
 
-        private static void Save() =>
-            File.WriteAllText(GamePaths.GraphicsSettingsFile,
-                JsonConvert.SerializeObject(_data, Formatting.Indented));
+        private static void Save()
+        {
+            try
+            {
+                File.WriteAllText(GamePaths.GraphicsSettingsFile,
+                    JsonConvert.SerializeObject(_data, Formatting.Indented));
+            }
+            catch (Exception e)
+            {
+                Logger.Warn("Failed to save graphics settings: " + e.Message);
+            }
+        }
 
         private static void ApplyVSync()
         {

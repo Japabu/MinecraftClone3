@@ -17,7 +17,8 @@ namespace MinecraftClone3Server
         {
             LoadPlugins();
 
-            var world = new WorldServer(WorldMetadata.LoadOrCreateSeed());
+            var meta = WorldMetadata.LoadOrCreate(GamePaths.WorldDir, "world");
+            var world = new WorldServer(meta.Seed, GamePaths.WorldDir);
             var network = new ServerNetwork(world);
             network.Listen(ServerNetwork.DefaultPort);
 

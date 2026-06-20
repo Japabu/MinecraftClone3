@@ -91,6 +91,11 @@ namespace MinecraftClone3API.Blocks
         // no dimension is registered). Sole writer of generated chunks runs on the load thread.
         private readonly IChunkGenerator _generator;
 
+        // Disk persistence bound to this world's directory. Per-instance (dir + index caches) rather than
+        // static so each world saves to its own folder; safe because exactly one WorldServer exists per
+        // process and only it touches the serializer (the threading model's single-server assumption).
+        private readonly WorldSerializer _serializer;
+
         // Per-block authoritative changes (edits + light propagation) queued for the network layer to
         // flush as compact BlockChanges packets instead of resending whole GZip'd chunks. Fed by the
         // tick thread (SetBlock) and the light Update thread (SetBlockLightLevel); drained each tick by
@@ -127,8 +132,10 @@ namespace MinecraftClone3API.Blocks
 
         public Vector3 SpawnPosition => _generator.Spawn().ToVector3();
 
-        public WorldServer(long seed)
+        public WorldServer(long seed, string worldDir)
         {
+            _serializer = new WorldSerializer(worldDir);
+
             _generator = GameRegistry.TryGetDimension(OverworldDimensionKey, out var dimension)
                 ? dimension.CreateGenerator(seed)
                 : CreateFallbackGenerator();
@@ -372,7 +379,7 @@ namespace MinecraftClone3API.Blocks
 
             Logger.Info("Saving world...");
             foreach (var entry in LoadedChunks)
-                WorldSerializer.SaveChunk(entry.Value);
+                _serializer.SaveChunk(entry.Value);
             Logger.Info("World saved");
         }
 
@@ -421,7 +428,7 @@ namespace MinecraftClone3API.Blocks
                     lock (_chunksReadyToRemove)
                         if (!_chunksReadyToRemove.Add(chunk.Position)) continue;
 
-                    WorldSerializer.SaveChunk(chunk);
+                    _serializer.SaveChunk(chunk);
                 }
 
                 Profiler.AddUnloadAlloc(GC.GetAllocatedBytesForCurrentThread() - allocStart);
@@ -811,7 +818,7 @@ namespace MinecraftClone3API.Blocks
         private CachedChunk LoadChunk(Vector3i position)
         {
             var diskStart = Stopwatch.GetTimestamp();
-            var chunk = WorldSerializer.LoadChunk(this, position);
+            var chunk = _serializer.LoadChunk(this, position);
             Profiler.AddDiskTicks(Stopwatch.GetTimestamp() - diskStart);
             if (chunk != null)
             {

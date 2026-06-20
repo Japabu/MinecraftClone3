@@ -58,7 +58,13 @@ namespace MinecraftClone3.States
         private const double MaxFrameTime = 0.25;
         private const int MaxCatchUpTicks = 5;
 
-        public StateWorld(GameWindow window, bool multiplayer = false)
+        /// <summary>Singleplayer: runs the given world in an in-process server over a loopback connection.</summary>
+        public StateWorld(GameWindow window, WorldInfo world) : this(window, false, world) { }
+
+        /// <summary>Multiplayer: connects to the dedicated server over TCP.</summary>
+        public StateWorld(GameWindow window, bool multiplayer = false) : this(window, multiplayer, null) { }
+
+        private StateWorld(GameWindow window, bool multiplayer, WorldInfo world)
         {
             _window = window;
             _multiplayer = multiplayer;
@@ -89,7 +95,7 @@ namespace MinecraftClone3.States
             }
             else
             {
-                _integratedServer = new WorldServer(WorldMetadata.LoadOrCreateSeed());
+                _integratedServer = new WorldServer(world.Seed, world.Directory);
                 _network = new ServerNetwork(_integratedServer);
                 var loopback = new LoopbackConnection();
                 _network.AddConnection(loopback.ServerSide);

@@ -72,8 +72,12 @@ namespace MinecraftClone3API.Client.GUI
                 _dragging = false;
 
             if (!_dragging) return;
+            if (Bounds.Width <= HandleWidth || _max <= _min) return;
 
-            var t = MathHelper.Clamp((position.X - Bounds.MinX) / Bounds.Width, 0f, 1f);
+            // Map over the same effective range Render draws the handle across (Width - HandleWidth) and offset
+            // by half the handle, so the handle centre sits under the cursor instead of trailing it.
+            var t = MathHelper.Clamp((position.X - Bounds.MinX - HandleWidth / 2f) / (Bounds.Width - HandleWidth),
+                0f, 1f);
             var snapped = Snap(_min + t * (_max - _min));
             if (snapped != _value)
             {

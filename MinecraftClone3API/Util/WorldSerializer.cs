@@ -5,7 +5,6 @@ using System.IO;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
 using MinecraftClone3API.Blocks;
-using MinecraftClone3API.IO;
 
 namespace MinecraftClone3API.Util
 {
@@ -43,17 +42,24 @@ namespace MinecraftClone3API.Util
         private const string RegionIndexExt = ".ri";
         private const string RegionDataExt = ".rd";
 
-        private static readonly List<Tuple<Vector3i, byte[]>> CachedIndexDatas = new List<Tuple<Vector3i, byte[]>>();
+        private readonly List<Tuple<Vector3i, byte[]>> CachedIndexDatas = new List<Tuple<Vector3i, byte[]>>();
 
-        private static readonly object IndexLockObject = new object();
-        private static readonly object DataLockObject = new object();
+        private readonly object IndexLockObject = new object();
+        private readonly object DataLockObject = new object();
 
-        public static void SaveChunk(Chunk chunk)
+        private readonly string _worldDir;
+
+        public WorldSerializer(string worldDir)
+        {
+            _worldDir = worldDir;
+        }
+
+        public void SaveChunk(Chunk chunk)
         {
             if (!chunk.NeedsSaving) return;
 
             var region = ChunkToRegion(chunk.Position);
-            var regionFilename = Path.Combine(GamePaths.WorldDir, RegionsFolder, GetRegionFilename(region));
+            var regionFilename = Path.Combine(_worldDir, RegionsFolder, GetRegionFilename(region));
             var indexFile = new FileInfo(regionFilename + RegionIndexExt);
             var dataFile = new FileInfo(regionFilename + RegionDataExt);
             // ReSharper disable once PossibleNullReferenceException
@@ -103,10 +109,10 @@ namespace MinecraftClone3API.Util
             chunk.NeedsSaving = false;
         }
 
-        public static CachedChunk LoadChunk(WorldBase world, Vector3i chunkPos)
+        public CachedChunk LoadChunk(WorldBase world, Vector3i chunkPos)
         {
             var region = ChunkToRegion(chunkPos);
-            var regionFilename = Path.Combine(GamePaths.WorldDir, RegionsFolder, GetRegionFilename(region));
+            var regionFilename = Path.Combine(_worldDir, RegionsFolder, GetRegionFilename(region));
             var indexFile = new FileInfo(regionFilename + RegionIndexExt);
             var dataFile = new FileInfo(regionFilename + RegionDataExt);
 
@@ -157,7 +163,7 @@ namespace MinecraftClone3API.Util
 
         private static string GetRegionFilename(Vector3i region) => $"{region.X} {region.Y} {region.Z}";
 
-        private static byte[] GetIndexData(Vector3i region, FileInfo indexFile)
+        private byte[] GetIndexData(Vector3i region, FileInfo indexFile)
         {
             for (var i = 0; i < CachedIndexDatas.Count; i++)
             {
