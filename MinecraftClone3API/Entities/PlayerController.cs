@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Client;
 using MinecraftClone3API.Graphics;
@@ -15,9 +16,14 @@ namespace MinecraftClone3API.Entities
         public static EntityPlayer PlayerEntity;
         public static Camera Camera = new Camera();
 
+        private const float FlySpeed = 16f;
+        private const float SprintMultiplier = 3f;
+        private const float MaxStepSeconds = 0.1f;
+
         private static BlockRaytraceResult _blockRaytrace;
         private static string _currentBlock = "Vanilla:Stone";
         private static bool _skipMouseDelta;
+        private static readonly Stopwatch _moveTimer = Stopwatch.StartNew();
 
         public static void SetEntity(EntityPlayer playerEntity)
         {
@@ -28,6 +34,10 @@ namespace MinecraftClone3API.Entities
         public static void Update(GameWindow window, WorldBase world)
         {
             _blockRaytrace = world.BlockRaytrace(PlayerEntity.Position, PlayerEntity.Forward, 8);
+
+            var dt = (float)_moveTimer.Elapsed.TotalSeconds;
+            _moveTimer.Restart();
+            if (dt > MaxStepSeconds) dt = MaxStepSeconds;
 
             if (!window.IsFocused) return;
 
@@ -46,7 +56,11 @@ namespace MinecraftClone3API.Entities
             if (ks.IsKeyDown(Keys.W))
                 a.Z += 1;
             if (Math.Abs(a.LengthSquared) > 0.0001f)
-                PlayerEntity.Move(a.Normalized() * 0.08f);
+            {
+                var speed = FlySpeed;
+                if (ks.IsKeyDown(Keys.LeftControl)) speed *= SprintMultiplier;
+                PlayerEntity.Move(a.Normalized() * speed * dt);
+            }
 
             foreach (var keybinding in ClientResources.Keybindings)
             {

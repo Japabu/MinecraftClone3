@@ -159,6 +159,7 @@ namespace MinecraftClone3.States
         {
             ("Move", "WASD"),
             ("Up / Down", "Space / Shift"),
+            ("Sprint", "Ctrl"),
             ("Look", "Mouse"),
             ("Break / Place", "Left / Right Click"),
             ("Blocks", "number keys (keybindings.txt)"),
