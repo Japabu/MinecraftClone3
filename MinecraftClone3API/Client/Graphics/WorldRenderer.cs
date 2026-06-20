@@ -109,14 +109,57 @@ namespace MinecraftClone3API.Graphics
         private const float DayLengthSeconds = 240f;
         private static readonly System.Diagnostics.Stopwatch _dayClock = System.Diagnostics.Stopwatch.StartNew();
 
+        // Sun/moon textures from the resource pack (minecraft/textures/environment/{sun,moon_phases}.png),
+        // sampled by the composition shader to draw the sky billboards. Null when no pack provides them —
+        // the shader then falls back to a procedural disc (see uHasSunTexture/uHasMoonTexture).
+        public static Texture SunTexture;
+        public static Texture MoonTexture;
+
+        // Sun/moon billboard sizes (tan of the half-angle). The Minecraft sun is famously large; these are an
+        // art-direction choice, tune to taste.
+        private const float SunSize = 0.18f;
+        private const float MoonSize = 0.12f;
+
+        // Normalized clock position (0.25 = noon at startup) and the sun altitude sine derived from it; shared
+        // by every time-of-day function so the sun colour, sky gradient, and sun direction stay in lockstep.
+        private static float DayTime() => 0.25f + (float) (_dayClock.Elapsed.TotalSeconds / DayLengthSeconds);
+        private static float SunHeight() => MathF.Sin(DayTime() * MathHelper.TwoPi);
+
+        /// <summary>Day factor (0 night .. 1 full day) used to cross-fade every time-of-day colour: 0 once the
+        /// sun is well below the horizon, 1 once it is well above.</summary>
+        private static float DayFactor() => MathHelper.Clamp((SunHeight() + 0.2f) / 0.4f, 0f, 1f);
+
+        /// <summary>Loads the sun and moon textures from the active resource pack. Must run after the resource
+        /// packs are indexed (see GuiResourceLoading); leaves the fields null (procedural fallback) if absent.</summary>
+        public static void LoadSkyTextures()
+        {
+            SunTexture = LoadPackTexture("minecraft/textures/environment/sun.png");
+            MoonTexture = LoadPackTexture("minecraft/textures/environment/moon_phases.png");
+        }
+
+        private static Texture LoadPackTexture(string key)
+        {
+            if (!ResourceReader.Exists(key))
+            {
+                Logger.Warn($"Sky texture \"{key}\" not found; using a procedural fallback.");
+                return null;
+            }
+
+            try { return ResourceReader.ReadTexture(key); }
+            catch (Exception e)
+            {
+                Logger.Warn($"Failed to load sky texture \"{key}\"; using a procedural fallback.");
+                Logger.Exception(e);
+                return null;
+            }
+        }
+
         /// <summary>Sun colour/intensity for the current time of day: bright warm white at noon, orange at
         /// the horizon (sunrise/sunset), a dim blue at night. Multiplied by the baked sky factor in the
         /// composition shader.</summary>
         private static Vector3 SunColor()
         {
-            var t = 0.25f + (float) (_dayClock.Elapsed.TotalSeconds / DayLengthSeconds);
-            var sunHeight = MathF.Sin(t * MathHelper.TwoPi);
-
+            var sunHeight = SunHeight();
             var day = MathHelper.Clamp((sunHeight + 0.2f) / 0.4f, 0f, 1f);
             var highness = MathHelper.Clamp(sunHeight, 0f, 1f);
 
@@ -134,14 +177,53 @@ namespace MinecraftClone3API.Graphics
         /// caves — those stay dark unless a block light reaches them. Tune for darker/brighter ambient.</summary>
         private static Vector3 SkyAmbient()
         {
-            var t = 0.25f + (float) (_dayClock.Elapsed.TotalSeconds / DayLengthSeconds);
-            var sunHeight = MathF.Sin(t * MathHelper.TwoPi);
-            var day = MathHelper.Clamp((sunHeight + 0.2f) / 0.4f, 0f, 1f);
-
+            var day = DayFactor();
             var moon = new Vector3(0.05f, 0.06f, 0.11f);
             var sky = new Vector3(0.12f, 0.15f, 0.20f);
             return Vector3.Lerp(moon, sky, day);
         }
+
+        /// <summary>Zenith colour of the background sky gradient: deep blue overhead by day, near-black at
+        /// night. The composition shader blends it toward <see cref="SkyHorizonColor"/> down to the horizon.</summary>
+        private static Vector3 SkyZenithColor()
+        {
+            var day = DayFactor();
+            var night = new Vector3(0.00f, 0.01f, 0.03f);
+            var sky = new Vector3(0.28f, 0.50f, 0.92f);
+            return Vector3.Lerp(night, sky, day);
+        }
+
+        /// <summary>Horizon haze colour: a light hazy blue by day, dark at night. Doubles as the distance-fog
+        /// colour in the composition shader so terrain melts into the horizon at the render-distance edge.</summary>
+        private static Vector3 SkyHorizonColor()
+        {
+            var day = DayFactor();
+            var night = new Vector3(0.01f, 0.02f, 0.05f);
+            var sky = new Vector3(0.66f, 0.78f, 0.93f);
+            return Vector3.Lerp(night, sky, day);
+        }
+
+        /// <summary>Colour below the horizon (the void): a dim grey-blue by day, near-black at night.</summary>
+        private static Vector3 SkyVoidColor()
+        {
+            var day = DayFactor();
+            var night = new Vector3(0.00f, 0.00f, 0.01f);
+            var voidColor = new Vector3(0.18f, 0.22f, 0.28f);
+            return Vector3.Lerp(night, voidColor, day);
+        }
+
+        /// <summary>Sunrise/sunset glow colour, strongest when the sun is near the horizon and fading to black
+        /// by noon and deep night. The composition shader paints it as an orange band near the horizon in the
+        /// sun's azimuth.</summary>
+        private static Vector3 SunsetColor()
+        {
+            var band = MathHelper.Clamp(1f - MathF.Abs(SunHeight()) / 0.30f, 0f, 1f);
+            return new Vector3(0.85f, 0.42f, 0.16f) * band;
+        }
+
+        /// <summary>Star brightness (0 by day, up to 1 at night), faded by the same day factor as everything
+        /// else so the stars come out smoothly as the sky darkens.</summary>
+        private static float StarBrightness() => MathHelper.Clamp(1f - DayFactor(), 0f, 1f);
 
         /// <summary>Unit vector pointing from the world toward the sun, animated by the same day/night
         /// clock as <see cref="SunColor"/> so the brightest sun aligns with the highest sun. Drives the
@@ -149,8 +231,7 @@ namespace MinecraftClone3API.Graphics
         /// horizon, shadow pass skipped). The small Z tilt keeps shadows off the world axes.</summary>
         private static Vector3 SunDirection()
         {
-            var t = 0.25f + (float) (_dayClock.Elapsed.TotalSeconds / DayLengthSeconds);
-            var angle = t * MathHelper.TwoPi;
+            var angle = DayTime() * MathHelper.TwoPi;
             return Vector3.Normalize(new Vector3(MathF.Cos(angle), MathF.Sin(angle), 0.35f));
         }
 
@@ -542,13 +623,47 @@ namespace MinecraftClone3API.Graphics
             GL.Uniform3(comp.GetUniformLocation("uSunColor"), sun.X, sun.Y, sun.Z);
             var skyAmbient = SkyAmbient();
             GL.Uniform3(comp.GetUniformLocation("uSkyAmbient"), skyAmbient.X, skyAmbient.Y, skyAmbient.Z);
-            // Water shading (Fresnel sky reflection + sun specular + animated normals) reconstructs the view
-            // vector and reflects an analytic sky, so it needs the camera position, the sun direction, and a
-            // time for the wave scroll. uTime wraps at 3600 s to keep float precision in the wave phase.
+            // Camera position + sun direction + a wrapped wave-scroll time. Shared by the background sky (the
+            // view-ray reconstruction) and the water surface (Fresnel sky reflection + sun specular + animated
+            // normals reconstruct the view vector from the same uniforms). uTime wraps at 3600 s for precision.
             var toSun = SunDirection();
             GL.Uniform3(comp.GetUniformLocation("uCameraPos"), camera.Position.X, camera.Position.Y, camera.Position.Z);
             GL.Uniform3(comp.GetUniformLocation("uSunDirection"), toSun.X, toSun.Y, toSun.Z);
             GL.Uniform1(comp.GetUniformLocation("uTime"), (float) (_dayClock.Elapsed.TotalSeconds % 3600.0));
+
+            // Background sky: the gradient/sunset/sun/moon/stars are rendered procedurally per background pixel
+            // in the composition shader (no extra geometry, no remesh — same fullscreen pass) and water reflects
+            // the same SkyColor. All it needs are the time-of-day colours computed here and the pack sun/moon
+            // textures on units 5/6 (procedural disc fallback when a pack is absent, via the uHas* flags).
+            var skyColor = SkyZenithColor();
+            GL.Uniform3(comp.GetUniformLocation("uSkyColor"), skyColor.X, skyColor.Y, skyColor.Z);
+            var horizon = SkyHorizonColor();
+            GL.Uniform3(comp.GetUniformLocation("uHorizonColor"), horizon.X, horizon.Y, horizon.Z);
+            var voidColor = SkyVoidColor();
+            GL.Uniform3(comp.GetUniformLocation("uVoidColor"), voidColor.X, voidColor.Y, voidColor.Z);
+            var sunset = SunsetColor();
+            GL.Uniform3(comp.GetUniformLocation("uSunsetColor"), sunset.X, sunset.Y, sunset.Z);
+            GL.Uniform1(comp.GetUniformLocation("uStarBrightness"), StarBrightness());
+            GL.Uniform1(comp.GetUniformLocation("uSunSize"), SunSize);
+            GL.Uniform1(comp.GetUniformLocation("uMoonSize"), MoonSize);
+            // Far-plane (sky) vs terrain split: comfortably past the farthest drawn chunk yet inside the far
+            // clip plane (512). Distance fog hides the chunk-load boundary just before the render edge.
+            var renderDistance = RenderDistance;
+            GL.Uniform1(comp.GetUniformLocation("uSkyDistance"), renderDistance + 48f);
+            GL.Uniform1(comp.GetUniformLocation("uFogStart"), renderDistance * 0.72f);
+            GL.Uniform1(comp.GetUniformLocation("uFogEnd"), renderDistance * 0.97f);
+
+            GL.Uniform1(comp.GetUniformLocation("uSunTexture"), 5);
+            GL.Uniform1(comp.GetUniformLocation("uMoonTexture"), 6);
+            GL.Uniform1(comp.GetUniformLocation("uHasSunTexture"), SunTexture != null ? 1f : 0f);
+            GL.Uniform1(comp.GetUniformLocation("uHasMoonTexture"), MoonTexture != null ? 1f : 0f);
+            GL.ActiveTexture(TextureUnit.Texture5);
+            GL.BindTexture(TextureTarget.Texture2D, (SunTexture ?? ClientResources.WhitePixel).Id);
+            GL.BindSampler(5, 0);
+            GL.ActiveTexture(TextureUnit.Texture6);
+            GL.BindTexture(TextureTarget.Texture2D, (MoonTexture ?? ClientResources.WhitePixel).Id);
+            GL.BindSampler(6, 0);
+
             ClientResources.ScreenRectVao.Draw();
             GraphicsDebug.PopGroup();
 

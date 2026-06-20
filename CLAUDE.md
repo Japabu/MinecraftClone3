@@ -9,7 +9,8 @@
 > Treat editing this file as part of "done," not an afterthought.
 
 A from-scratch Minecraft-like voxel engine in C# on OpenTK (OpenGL). Custom deferred renderer, plugin
-system, chunked world with RGB block-light + sky-light propagation and a dynamic day/night cycle, a
+system, chunked world with RGB block-light + sky-light propagation and a dynamic day/night cycle (procedural
+skybox with a textured sun/moon, stars, sunset glow, and distance fog), a
 **plugin-extensible world generator** (engine framework + vanilla content: biomes, ores, trees, caves,
 oceans), **player movement** (walking with Minecraft-exact gravity/jump/AABB-collision plus a creative
 free-flight toggle), and **client/server multiplayer** (singleplayer runs an in-process server over a
@@ -442,9 +443,11 @@ needs hardening, ship `GameRegistry.Save/Load` (a `registry.bin` exchange) — i
          the 12-tap PCF runs here at half res (quarter the pixels): r = shadow factor, g = norm
          view depth; reads G-buffer normal/depth/light + the shadow depth map
     └─ DrawComposition → screen
+         background pixels (cleared far plane, viewDepth ≥ uSkyDistance) ⇒ SkyColor(viewRay) — the skybox;
          shadow = depth-aware (joint-bilateral) upsample of the half-res resolve buffer (1=lit, early-outed
          past ShadowDistance / in caves / at night); skyLight = sky.a*(shadow*uSunColor*uSunFade + uSkyAmbient);
-         light = max(blockLight.rgb, skyLight); diffuse * max(light, MinLight); normal.w==1 ⇒ diffuse unlit
+         light = max(blockLight.rgb, skyLight); lit = diffuse * max(light, MinLight); water reflects SkyColor;
+         lit fades into uHorizonColor with distance fog; normal.w==1 ⇒ diffuse unlit
 ```
 
 Shaders live in `MinecraftClone3/Content/System/Assets/System/Shaders/`. Lighting is block-emitted RGB light
@@ -459,6 +462,29 @@ that lit everything is **gone**) keeps unlit surfaces from being a literal void.
 **with no remesh** (the sky channel is baked into the chunk mesh, so geometry/occlusion is static; only the
 sun/moon *colour/intensity* animate). The clock is client-local — MP clients are not yet time-synced; see
 "Known rough edges". **Moonlight is non-directional ambient** (no moon shadow pass) — deferred.
+
+**Background sky (the skybox) — procedural, in `Composition.fs`, no geometry.** Background pixels are the
+*cleared far plane*: `main()` reconstructs each pixel's view-space depth and, when it is `≥ uSkyDistance`
+(`WorldRenderer.RenderDistance + 48`, comfortably past the farthest drawn chunk yet inside the 512 far clip
+plane), reuses the reconstructed far-plane point as the view-ray direction and shades `SkyColor(dir)` instead
+of a G-buffer lookup — so the sky costs nothing but the fullscreen pass that already runs. `SkyColor` builds a
+Minecraft-style sky from `WorldRenderer`-computed time-of-day uniforms: a vertical gradient (`uVoidColor`
+below the horizon → `uHorizonColor` haze → `uSkyColor` zenith), a sunrise/sunset orange band near the horizon
+in the sun's azimuth (`uSunsetColor`), procedural **stars** (a hashed direction grid, faded in by
+`uStarBrightness` at night and out toward the horizon), and a **textured sun and moon** drawn as angular
+billboards (`CelestialBillboard` projects the view ray onto a tangent plane at the body's direction → quad
+uv). The sun/moon textures are the real pack assets — `minecraft/textures/environment/sun.png` and
+`moon_phases.png` (full-moon cell), loaded by `WorldRenderer.LoadSkyTextures()` after the resource packs are
+indexed (alongside `Font.Load`, see resource loading) onto composition units 5/6; with **no pack** the
+`uHasSunTexture`/`uHasMoonTexture` flags are 0 and the shader falls back to a procedural disc. The moon sits
+opposite the sun (`-uSunDirection`), each hidden below its own horizon. **Water reflects this same `SkyColor`**
+(see the water section), so the sun glints and the moon/stars reflect at night — one sky function, two
+consumers. **Distance fog** then melts lit geometry into `uHorizonColor` between `uFogStart`/`uFogEnd`
+(0.72–0.97 × `RenderDistance`), hiding the hard chunk-load boundary against the sky (and fading to night
+darkness, since the horizon colour itself dims). The sky/sun/star/fog colours are all `WorldRenderer` C#
+functions (`SkyZenithColor`/`SkyHorizonColor`/`SkyVoidColor`/`SunsetColor`/`StarBrightness`, sharing
+`DayTime`/`SunHeight`/`DayFactor` with the existing `SunColor`/`SkyAmbient`/`SunDirection`), so retuning needs
+no shader recompile; the billboard sizes are the `SunSize`/`MoonSize` consts.
 
 **Directional sun shadows — one low-res shadow map (no cascades).** `DrawShadowMap` renders a **single**
 orthographic depth map into `ShadowFramebuffer` — one `Texture2D` of `ShadowFramebuffer.ShadowMapSize` (1024).
@@ -557,13 +583,14 @@ solid (0.5) and the unlit flag (1.0). Composition detects a water pixel by a snu
 value is deterministic; a future `RenderMaterial` must encode outside this band) and, on top of the
 existing Tier-A lit translucent water (`baseColor`), adds: animated **`WaveNormal`** (analytic gradient of
 three summed directional sine waves over the surface's world XZ, scrolled by `uTime` — only the **top** face,
-`faceN.y > 0.5`, is perturbed), a **Fresnel** mix toward an analytic **`SkyColor`** (horizon→zenith gradient
-over `uSkyAmbient` + a reflected sun disc — there is no skybox, so the reflection is synthesized from the same
-day/night uniforms and tracks time of day), and a **Blinn-Phong sun specular** glint. New composition uniforms:
+`faceN.y > 0.5`, is perturbed), a **Fresnel** mix toward **`SkyColor(reflect(-V, N))`** — the *same* sky
+function the background skybox paints (see "Background sky"), so the water mirrors the real gradient, sun,
+moon, and stars and tracks time of day — and a **Blinn-Phong sun specular** glint. New composition uniforms:
 `uCameraPos`, `uSunDirection`, `uTime` (set in `DrawComposition`). Reflection and specular are scaled by the
 baked sky factor (`uLight.a`) and `uSunFade` (and the glint by `shadow`), so cave/overhang water and night
 water fall straight back to the plain look — the gating is free, no special cases. Look knobs are shader
-`const`s (wave amp/freq/speed, `WaterF0`, `WaterSpecExp/Gain`, the `Sky*Gain`/`SunDisc*`).
+`const`s (wave amp/freq/speed, `WaterF0`, `WaterSpecExp/Gain`); the reflected-sky look is shared with the
+skybox uniforms.
 
 The one subtlety this needs: composition must *identify* water pixels, but the transparent pass blends **all
 three** MRT attachments, so a flag in `normal.w` would blend with the background and become unreadable. Fix:
@@ -753,7 +780,10 @@ the game runs with placeholder blocks, no crash (the headless server tolerates a
 is GL-free and only feeds the client mesher). **The GUI font is also pack-sourced** — `Font` (`Client/GUI/
 Font.cs`) loads `minecraft/font/default.json` and its `minecraft:font/*.png` bitmaps straight from the pack
 (the System plugin ships no font any more), so with no pack `Font.Load` logs an error and text rendering is
-disabled (the rest of the game still runs).
+disabled (the rest of the game still runs). **The sky's sun/moon textures are likewise pack-sourced** —
+`WorldRenderer.LoadSkyTextures()` (called right after `Font.Load`) reads `minecraft/textures/environment/
+{sun,moon_phases}.png` from the pack; with no pack the skybox draws procedural discs instead (see "Background
+sky").
 
 ---
 
@@ -1120,14 +1150,14 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
   you reach it. A fast clip into ungenerated space could still drop the player; accepted for now.
 - **Water is Tier B (animated normals + Fresnel sky reflection + sun specular); Tier C is deferred.** Tier B
   is **done** — see "Water surface — Tier B" in the rendering section for the full design (in-shader, no extra
-  pass; flagged via `normal.w`; per-attachment blend so the flag survives; analytic — **not** cubemap — sky
-  reflection). Residual edges accepted for now: the sky reflection is **analytic** (synthesized from the
-  day/night uniforms, no real environment cubemap), so it doesn't reflect terrain or clouds, only a sky
-  gradient + sun disc; there is **no refraction or depth-based absorption** (looking down still shows the
-  Tier-A tint over the bottom, just Fresnel-mixed) — that's **Tier C** (a **forward water pass after
-  composition** reading the opaque scene colour/depth), still the deferred next step. Water is also **not a
-  fluid**: it doesn't flow, level, or fill — it's a static block placed by gen below sea level. Look knobs are
-  shader `const`s (wave amp/freq/speed, `WaterF0`, `WaterSpecExp/Gain`, `Sky*Gain`/`SunDisc*`).
+  pass; flagged via `normal.w`; per-attachment blend so the flag survives; reflects the procedural skybox —
+  **not** a cubemap). Residual edges accepted for now: the reflection is the shared **`SkyColor`** skybox
+  (gradient + sun/moon/stars; see "Background sky"), so it tracks time of day but still **doesn't reflect
+  terrain or clouds** (no real environment capture); there is **no refraction or depth-based absorption**
+  (looking down still shows the Tier-A tint over the bottom, just Fresnel-mixed) — that's **Tier C** (a
+  **forward water pass after composition** reading the opaque scene colour/depth), still the deferred next
+  step. Water is also **not a fluid**: it doesn't flow, level, or fill — it's a static block placed by gen
+  below sea level. Look knobs are shader `const`s (wave amp/freq/speed, `WaterF0`, `WaterSpecExp/Gain`).
 - **Animated textures show frame 0 only.** Strip textures are sliced and *all* frames are uploaded +
   retained (`BlockTextureManager.AnimatedTextures` with `frametime`), but nothing cycles them yet. Adding the
   animator (advance the sampled layer over time, by remesh-free means — a per-animated-texture uniform/layer

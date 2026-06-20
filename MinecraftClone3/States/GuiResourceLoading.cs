@@ -121,6 +121,10 @@ namespace MinecraftClone3.States
             // indexed by AddResourcePacks above — so the font must load here, after the pack, not in the
             // earlier ClientResources.Load (which runs before the pack is added).
             Font.Load();
+
+            // The sky's sun/moon textures (minecraft/textures/environment/) are likewise pack-sourced, so they
+            // load here too; absent a pack the composition shader falls back to procedural discs.
+            WorldRenderer.LoadSkyTextures();
         }
     }
 }
