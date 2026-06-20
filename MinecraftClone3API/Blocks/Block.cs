@@ -4,6 +4,7 @@ using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
+using OpenTK.Windowing.GraphicsLibraryFramework;
 
 namespace MinecraftClone3API.Blocks
 {
@@ -49,9 +50,13 @@ namespace MinecraftClone3API.Blocks
         public virtual Color4 GetTintColor(WorldBase world, Vector3i blockPos, int tintId) => Color4.White;
         public virtual LightLevel GetLightLevel(WorldBase world, Vector3i blockPos) => LightLevel.Zero;
 
-        public virtual void OnPlaced(WorldBase world, Vector3i blockPos, EntityPlayer player)
+        public virtual void OnPlaced(WorldBase world, Vector3i blockPos, EntityPlayer player, int metadata)
         {
         }
+
+        /// <summary>Client-side: derive the metadata to carry in the place request (e.g. a tint chosen by
+        /// held keys). Runs on the client so the server — which may be headless — never reads input.</summary>
+        public virtual int GetPlacementMetadata(KeyboardState ks) => 0;
 
         public virtual int OnLightPassThrough(WorldBase world, Vector3i blockPos, int lightLevel, int color)
             => lightLevel - 1;

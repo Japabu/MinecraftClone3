@@ -26,7 +26,7 @@ MinecraftClone3.sln
 │   ├── Client/             Client-only code (needs a GL context)
 │   │   ├── Blocks/         WorldClient (client world replica)
 │   │   ├── Graphics/       WorldRenderer, ChunkRenderData, EntityRenderer, BoundingBoxRenderer, VAOs, Camera
-│   │   ├── GUI/            GuiBase, GuiButton, widgets
+│   │   ├── GUI/            GuiBase, GuiButton, GuiSlider, widgets
 │   │   └── StateSystem/    StateEngine, StateBase, GuiBase
 │   ├── Entities/           Entity, EntityPlayer, PlayerController
 │   ├── IO/                 GamePaths, FileSystem*, ResourceReader, CommonResources, plugin file systems
@@ -119,7 +119,7 @@ separate client-only `ChunkRenderData`. This split is the backbone of the whole 
      WorldServer                              WorldClient
      - LoadedChunks: Chunk (storage)          - LoadedChunks: Chunk (received copies)
      - terrain gen / light / save             - RenderData: Vector3i -> ChunkRenderData (GL mesh)
-     - 3 background threads                    - 1 background mesh thread
+     - 3 background threads                    - mesh-thread pool + 1 apply thread
 
    Chunk  (Blocks/Chunk.cs)            ChunkRenderData  (Client/Graphics/ChunkRenderData.cs)
    - PaletteStorage block ids          - holds a Chunk + two VertexArrayObjects (opaque + transparent)
@@ -224,7 +224,7 @@ clients receive baked chunks, so there is no wire/client change (the new registr
 are unused there).
 
 **LoadThread band.** The interest scan loads the **full `MinChunkY..MaxChunkY` vertical column** within
-`TerrainRadius` (16 chunks, matched to `ServerNetwork.ViewDistance`/`RenderDistance` = 256) around each
+`TerrainRadius` (10 chunks, matched to `ServerNetwork.ViewDistance`/`RenderDistance` = 160) around each
 player — replacing the old thin surface slab, because the world now has real vertical extent (oceans, caves,
 mountains). Per-tick cost is unchanged (16-chunk cap, distance sort, dedup); resident chunk count grows
 (tune `TerrainRadius`/`ChunkLifetime`).
@@ -264,15 +264,22 @@ old server-side `Chunk.Write` already had, made safe by the palette copy-on-grow
   S→C  ChunkData             Vector3i + Chunk (loopback: by ref; TCP: GZip of Chunk.Write)   (initial chunk streaming only)
   S→C  BlockChanges          ChunkPos + (localIndex, blockId, light, sky)[]   (edits + block-light + sky-light, see below)
   C→S  ChunkRelease          client dropped a chunk from its cache; clears its SentChunks entry
-  C→S  PlaceBlockRequest     pos + block id (id 0 = break)
+  C→S  PlaceBlockRequest     pos + block id (id 0 = break) + placement metadata (computed client-side, see below)
   C→S/S→C  EntityMove         own player up; relayed to others down
   S→C  EntitySpawn/EntityDespawn   remote players appearing/leaving
 ```
 
+**Placement metadata is computed client-side, never read on the server.** `Block.OnPlaced(world, pos, player,
+int metadata)` receives the metadata in the `PlaceBlockRequest`; the client derives it via
+`Block.GetPlacementMetadata(KeyboardState)` (default `0`; `BlockTintedGlass` overrides it with its U/I/O/P
+tint scan) in `PlayerController.PlaceBlock` and threads it through `WorldClient.PlaceBlock` into the packet.
+The headless server never touches input — `ServerNetwork.ApplyPlaceRequest` just passes `place.Metadata` to
+`WorldServer.PlaceBlock` → `OnPlaced`.
+
 **Chunk caching & eviction is client-owned.** The client keeps every chunk it receives in memory and, each
-`WorldClient.Update`, drops chunks whose centre is farther than `CacheDistance` (384) from the player,
+`WorldClient.Update`, drops chunks whose centre is farther than `CacheDistance` (240) from the player,
 sending a `ChunkRelease` for each. `CacheDistance` is kept comfortably above the server's send range
-(`ServerNetwork.ViewDistance`, 256) so a freshly streamed chunk is never evicted-then-re-requested at the
+(`ServerNetwork.ViewDistance`, 160) so a freshly streamed chunk is never evicted-then-re-requested at the
 boundary — that gap is the hysteresis that makes revisits free. The server's send loop only ever *adds* to
 `SentChunks` (gated so a held chunk is never resent); entries leave `SentChunks` only on `ChunkRelease` or
 when the chunk is dirtied and resent. The server-side `UnloadThread` still evicts idle chunks from
@@ -337,13 +344,26 @@ spawn column (one-shot join signal, see the handshake above) → **flush block c
                  chunks (SP: clone the carried Chunk; MP: decompress + deserialize) and applies BlockChanges
                  deltas in place → publishes to LoadedChunks → hands positions to the main thread via
                  _renderReady. NO GL. Sleeps on _applySignal when idle.
-   MeshThread    drains the mesh queues → ChunkRenderData.Update()  (CPU vertex lists only, NO GL;
-                 holds the VAO locks for the whole remesh, so the main-thread upload must not block on them);
-                 also computes the chunk's SkyExposed flag (plain-field write, read lock-free on the main
-                 thread by the shadow gate — benign torn read self-corrects next remesh)
+   MeshThread    a POOL of workers (Environment.ProcessorCount-2, ≥1), each draining the shared mesh queues →
+                 ChunkRenderData.Update()  (CPU vertex lists only, NO GL; holds the VAO locks for the whole
+                 remesh, so the main-thread upload must not block on them). Meshing was the load-fill
+                 bottleneck (one thread pegged at 100%, chunks waiting ~99% of their latency in the queue; an
+                 F10 chunk-trace measured 80→~350 chunks/s on the pool); it parallelizes because the
+                 _meshPending claim (remove-under-_meshLock) gives each *queued* chunk to exactly ONE worker,
+                 workers only READ chunk storage (Invariant 5 — concurrent readers ok), and GL stays on the
+                 main thread (Invariant 1). Each worker also computes its chunk's SkyExposed flag (plain-field
+                 idempotent write, read lock-free on the main thread by the shadow gate — benign torn read
+                 self-corrects next remesh). **One subtlety:** the _meshPending claim is per *queue-epoch*, not
+                 per *instance* — if QueueMesh re-enqueues a position (an edit/light delta) while a worker is
+                 mid-Update on it, a second worker can Update the SAME ChunkRenderData concurrently. This is
+                 benign, NOT a bug: both Update calls serialize on lock(_vao)+lock(_transparentVao), each is a
+                 complete self-contained remesh (its own pooled lists, read-only storage), and TryUpload's
+                 Monitor.TryEnter never observes a half-built mesh — the only cost is a redundant remesh (it
+                 cannot fire during the edit-free load burst)
    Update()      (MAIN thread) pumps packets (routing ChunkData/BlockChanges to _applyQueue, handling
                  entity/login inline), DrainRenderReady → creates ChunkRenderData (GL) + queues meshing,
-                 TryUploads meshed chunks (GL, non-blocking — requeues a chunk being remeshed), evicts, disposes
+                 TryUploads meshed chunks (GL, non-blocking, time-budgeted per frame — requeues a chunk being
+                 remeshed), evicts, disposes
    RenderWorld() (MAIN thread) BuildVisibleSet runs the frustum + render-distance scan of RenderList, then
                  the shadow + geometry + composition passes
 
@@ -511,8 +531,8 @@ caves, and the connectivity graph + BFS were complexity the simple scan doesn't 
 
 **The visible set gates the shadow passes.** `BuildVisibleSet` sets `_anyShadowReceiver` iff a visible chunk
 within `ShadowDistance` is **sky-exposed** (`ChunkRenderData.SkyExposed = Chunk.HasAnySkyLight()`), and the
-shadow depth pass runs only when `sunUp && _anyShadowReceiver && GraphicsSettings.Shadows` (the last is
-the user's **Shadows** graphics option — see the state-system section). Deep in a cave nothing visible is
+shadow depth pass runs only when `sunUp && _anyShadowReceiver && GraphicsSettings.ShadowsEnabled` (the last is
+the user's **Shadows** quality option ≠ Off — see the state-system section). Deep in a cave nothing visible is
 sky-lit, so the passes (a fixed per-frame GPU cost) are skipped entirely; look toward the surface and a
 sky-exposed chunk comes into view, so they run again. The sun is a *directional* viewer, so this can only
 decide **whether to run the passes**, not prune casters — `DrawShadowMap` keeps its light-frustum caster
@@ -569,13 +589,35 @@ on their feet) line up.
 **Graphics options.** `GuiGraphicsOptions` (reachable from both `GuiMainMenu` and the `GuiPauseMenu` overlay
 via their "Options" button) is an **overlay** — it draws over whichever screen opened it and closing it
 (Done / Esc) reveals that screen again, so opening options from the pause menu doesn't tear down the world.
-Each button cycles a value in `GraphicsSettings` (`MinecraftClone3API/Client/GraphicsSettings.cs`), a static
-holder persisted to `GamePaths.GraphicsSettingsFile` (`GraphicsSettings.json`): **VSync** (Off/On/Adaptive),
-**Shadows** (On/Off), **Fullscreen** (On/Off). The setters write the file and push window-level state onto the
-live `ClientResources.Window` (`VSync`, `WindowState`); `Shadows` has no window state — it gates the shadow
-passes + `uShadowsEnabled` in the renderer (see the rendering section). `Program.Main` calls
-`GraphicsSettings.Load()` before creating the window and seeds `NativeWindowSettings` from it, so the window
-opens with the saved vsync/fullscreen choice.
+Each control mutates a value in `GraphicsSettings` (`MinecraftClone3API/Client/GraphicsSettings.cs`), a static
+holder persisted to `GamePaths.GraphicsSettingsFile` (`GraphicsSettings.json`). The widget toolkit is two
+elements: **`GuiButton`** (cycles a discrete value, relabelling itself) and **`GuiSlider`** (a drag slider for
+a continuous/step value — `ScaledResolution.ToGuiCoords` hit-test + drag tracking like the button, `onChange`
+fires only when the snapped value changes). Controls:
+- **VSync** (Off/On/Adaptive) and **Fullscreen** (On/Off) — buttons; setters push window-level state onto the
+  live `ClientResources.Window` (`VSync`, `WindowState`).
+- **Shadows** — a button cycling a **`ShadowQuality`** enum (Off/Low/Medium/High), which **replaced** the old
+  on/off bool. It drives `WorldRenderer.ShadowDistance` (96/160/256) **and** `ShadowMapSize` (512/1024/2048);
+  `WorldRenderer.EnsureShadowMap()` recreates `ClientResources.ShadowFramebuffer` (GL, in the shadow pass, main
+  thread) when the size changes, and `uShadowMapTexel` (1/mapSize) is uploaded so the PCF disc tracks the new
+  resolution. `GraphicsSettings.ShadowsEnabled` (≠ Off) gates the passes + `uShadowsEnabled`.
+- **Render Distance** (slider, 4–24 chunks) — the flagship knob. The five coupled radii are derived from this
+  one setting so the `load ≥ send ≥ render`, `cache > send` chain can't be violated: client draw =
+  `WorldRenderer.RenderDistance` (a computed property reading the setting live → effect next frame);
+  **singleplayer** `StateWorld.ApplyRenderDistance` also drives `ServerNetwork.ViewDistance` (= chunks·16),
+  `WorldServer.TerrainRadius` (= chunks+1, volatile, read live by the LoadThread), and `WorldClient.CacheDistance`
+  (= chunks·16 + `CacheHysteresis` 80; its setter resets the evict gate so a *decrease* evicts immediately).
+  **Multiplayer** drives only the client draw distance (the client can't exceed what the remote server streams,
+  and its cache stays at the safe default since it doesn't know the remote view distance — a proper
+  `LoginAccept` view-distance advertise+clamp is deferred). `StateWorld.Update` re-applies when the setting changes.
+- **FOV** (slider 30–110°, read by `StateWorld`'s projection), **Sensitivity** (slider, the `PlayerController`
+  mouse-delta multiplier), **Brightness** (slider 0–0.3 → `uMinLight` in `Composition.fs`, the unlit floor).
+
+`Program.Main` calls `GraphicsSettings.Load()` before creating the window and seeds `NativeWindowSettings` from
+it, so the window opens with the saved vsync/fullscreen choice; the rest are read live each frame, so a change
+takes effect immediately with no reload. Numeric setters clamp to the `Min*/Max*` consts. **No back-compat:** an
+old `GraphicsSettings.json` deserializes with the dropped `Shadows` bool ignored and missing fields defaulted.
+The dedicated server never touches `GraphicsSettings` — it keeps the default `ViewDistance`/`TerrainRadius`.
 
 ---
 
@@ -647,7 +689,10 @@ no-pack fallback is unchanged. The plugin pins to **1.13+ vanilla naming** (sing
 
 **No pack present:** models/textures fail to resolve → existing `MissingModel`/`MissingTexture` fallback;
 the game runs with placeholder blocks, no crash (the headless server tolerates an absent pack — model parse
-is GL-free and only feeds the client mesher).
+is GL-free and only feeds the client mesher). **The GUI font is also pack-sourced** — `Font` (`Client/GUI/
+Font.cs`) loads `minecraft/font/default.json` and its `minecraft:font/*.png` bitmaps straight from the pack
+(the System plugin ships no font any more), so with no pack `Font.Load` logs an error and text rendering is
+disabled (the rest of the game still runs).
 
 ---
 
@@ -662,10 +707,14 @@ overlays, and `GameClient` writes the frame timings. F4 chunk borders are the on
 - **F1** — toggle the controls/help overlay: a fixed keybind list (movement, mouse, break/place, the
   debug keys) drawn top-left. `RenderDebug.ShowControls`, drawn in `StateWorld.DrawControls`.
 - **F3** — toggle the on-screen diagnostics overlay: FPS + smoothed frame ms, `gpu`/`cpu upd` ms, **chunks
-  drawn / total** (frustum-cull readout), shadows on/off, loaded/mesh/upload queue depths, player pos + chunk.
+  drawn / total** (frustum-cull readout), shadows on/off, loaded/mesh/upload queue depths, a **pipeline-backlog
+  line** (`apply`/`ready`/`dispose` client queue depths, plus `stage` = the server staging queue in SP) that
+  surfaces the upstream backlogs the mesh/upload depths don't, and player pos + chunk.
   `RenderDebug.ShowDiagnostics`, drawn in `StateWorld.DrawDiagnostics` from `RenderDebug` fields
   (`DrawnChunks`/`ShadowPass` written by `WorldRenderer`; `FrameMs`/`GpuMs`/`UpdateMs` by
-  `GameClient`). This is the cheap, always-available live HUD; the CSV profiler (F10) is the heavy tool.
+  `GameClient`) plus the `WorldClient`/`WorldServer` lock-free depth mirrors. This is the cheap,
+  always-available live HUD; the CSV profilers (F10) are the heavy tools. (Per-frame *sum* timers are
+  deliberately kept off F3 — a single-frame sum flickers meaninglessly at 120 Hz; they live in the CSV.)
 - **F4** — toggle chunk-border wireframes around the player (current chunk red, neighbours yellow).
   Code: `Client/Graphics/ChunkBorderRenderer.cs`, drawn in the geometry pass (depth-tested). (F5/F6 are
   unused — F5 was the occlusion-cull A/B toggle, removed with the cave cull; F6 was the cascade tint.)
@@ -692,7 +741,17 @@ overlays, and `GameClient` writes the frame timings. F4 chunk borders are the on
   block-change-flush time, chunks streamed this tick, block-changes drained, delta packets sent),
   pktMs/drainMs/upMs/evictMs (inside cliMs: WorldClient.Update's packet handling / DrainRenderReady
   (GL render-data creation) / GL upload loop / chunk eviction), upChunks/upIndices (chunks uploaded and
-  total index count uploaded this frame), upQ (upload-queue depth)`. `frameMs` is the
+  total index count uploaded this frame), upQ (upload-queue depth),
+  diskMs/genMs/applyMs/meshMs/drainAddMs (per-frame wall-clock of the heavy pipeline stages — server
+  disk-load vs world-gen [split out of the old lumped loadMB], client chunk decode, client CPU mesh, and
+  the main-thread server stage-drain; the background ones are Interlocked tick sums attributed to the
+  render-frame interval, so they overlap real time, not add to updateMs),
+  chFromDisk/chGenerated/chApplied/chMeshed/chDrainedAdd (throughput: chunks crossing each of those stages
+  this frame — chGenerated≫chFromDisk means a fresh world is regenerating, not loading from save),
+  srvStageQ/applyQ/renderReadyQ/disposeQ (the previously-hidden pipeline queue depths: server
+  _chunksReadyToAdd, client _applyQueue [decode backlog], _renderReady [decoded→GL backlog], _disposeQueue —
+  together with the existing pendingMesh/upQ these cover the whole chain, so a balloon localizes *which*
+  stage is the wall)`. `frameMs` is the
   real frame interval (catches drops); `updateMs`/`renderMs` are CPU work. The four stalls a CPU sampler
   **can't** see, isolated so a high `frameMs` with tiny `updateMs`/`renderMs` is attributable: `swapMs`
   = the `SwapBuffers` call; `gapMs` = OpenTK's between-frame `NewInputFrame`+`ProcessWindowEvents` (the
@@ -718,11 +777,34 @@ overlays, and `GameClient` writes the frame timings. F4 chunk borders are the on
   `upMs ≈ updateMs` ⇒ the GL upload (re-`BufferData` of edited chunks) is stalling, not lighting/meshing
   (which are off-thread). `updCalls` is `OnUpdateFrame` calls per render frame (OpenTK fixed-timestep
   catch-up); ≫ 1 means updates are running behind and being batched.
-  The profiler reads only lock-free mirrors (`WorldClient.LoadedChunkCount`/`MeshQueueDepth`/`UploadQueueDepth`,
-  maintained on the writing threads) — **never** `ConcurrentDictionary.Count` (all-stripe lock) or a
-  `_meshLock` take — so recording with F10 on doesn't contend with the apply/mesh threads and inflate the
-  very stutter it measures.
-  Code: `Util/Profiler.cs`, fed from `GameClient.OnRenderFrame` + `StateWorld.Update` (phase times).
+  The profiler reads only lock-free mirrors (`WorldClient.LoadedChunkCount`/`MeshQueueDepth`/`UploadQueueDepth`/
+  `ApplyQueueDepth`/`RenderReadyQueueDepth`/`DisposeQueueDepth`, `WorldServer.StageQueueDepth` — `volatile int`
+  or `Interlocked`-maintained on the writing threads) — **never** `ConcurrentDictionary`/`ConcurrentQueue.Count`
+  (all-stripe / segment-snapshot) or a `_meshLock` take — so recording with F10 on doesn't contend with the
+  apply/mesh threads and inflate the very stutter it measures. The per-stage timers are
+  `Stopwatch.GetTimestamp()` tick deltas measured unconditionally (a cheap pair, like the existing alloc
+  brackets) and only *read+zeroed* in `Record`.
+  Code: `Util/Profiler.cs`, fed from `GameClient.OnRenderFrame` + `StateWorld.Update` (phase times) and the
+  `WorldServer`/`WorldClient` pipeline threads.
+
+  **F10 drives two CSVs, split by *grain* not subsystem** (a per-frame time-series and a per-chunk latency
+  log — they answer different questions, so frame-bucketing the per-chunk one would lose it). `profiling.csv`
+  above is one row per render frame (rates & queue levels, sampled at frame cadence). `chunk-trace.csv`
+  (`Util/ChunkTracer.cs`, same F10 toggle via `Profiler.Start`/`Stop`, same `GamePaths.UserDataDir`, same
+  `t` clock so they correlate offline) is **one row per chunk**, emitted when the chunk finishes uploading.
+  Its schema is a **work-vs-wait decomposition** of the chunk's whole life across the 4 pipeline threads,
+  keyed by chunk position (the only identity stable across the `CachedChunk→Chunk→ChunkRenderData` handoffs;
+  a side `ConcurrentDictionary` threads the timestamps through). Columns: `t, posX/Y/Z, source`
+  (disk/gen/edit/stream), `mp`, then the tiling spans `genMs`(work) `stageWaitMs` `drainWaitMs` `streamWaitMs`
+  `netWaitMs` `applyWaitMs` `applyMs`(work) `meshWaitMs` `meshMs`(work) `uploadWaitMs`, and `totalMs`.
+  Adjacent stamps tile the timeline, so in **singleplayer** the spans sum to `totalMs` — an instrumentation
+  self-check. **Caveats:** a **multiplayer client** has no in-process server, so the server stages
+  (`genMs`..`netWaitMs`) are blank and `totalMs` starts at `applyWaitMs` (`mp=1`, `source=stream`); a
+  **block-edit** (or a re-stream after eviction) emits a separate `source=edit` row covering only the
+  mesh→upload tail; chunks mid-flight when recording starts are dropped (clean boundary). Memory is bounded
+  by a `MaxLive` cap (drop-new, counted + logged), explicit `Abandon` at the drop sites (empty chunk, server
+  evict, client `UnloadChunk`), and a TTL sweep. Every stamp early-outs on `!Profiler.Recording` before
+  taking a timestamp, so a non-recording run pays nothing.
 
 External (.NET global tools, no rebuild — attach to the running PID):
 
@@ -832,6 +914,12 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
   `TryUpload` uses `Monitor.TryEnter`; if the mesh thread holds the lock it returns `false` and
   `WorldClient.RequeueUpload` defers that chunk to a later frame. The render path (`Draw`/`Sort`) takes no VAO
   lock, so meshing never blocked rendering — only the upload handoff did. **Don't reintroduce a blocking upload.**
+  The upload loop is **time-budgeted** (`UploadBudgetMs`, ~4 ms/frame), not capped at a fixed chunk count: the
+  mesh **pool** produces chunks faster than one frame can upload, so a fixed cap (was 8/frame) throttled the
+  world-fill below the pool's output (an F10 `chunk-trace` showed the upload queue ballooning to ~900 and
+  `uploadWaitMs` becoming ~64% of a chunk's load latency). Uploads are cheap (~0.15 ms each), so the budget
+  drains tens per frame while bounding the upload's frame cost. Failures (mesh thread mid-remesh) are collected
+  and requeued *after* the loop, so each queued position is dequeued at most once per frame (no same-frame spin).
 - **Chunk-mesh re-upload orphans the GPU buffer (don't go back to re-`BufferData`-ing live storage).** A
   re-meshed chunk re-uploads its VBOs every edit. Re-specifying the *same* buffer with
   `glBufferData(data, StaticDraw)` while the GPU is still drawing from it forces an implicit CPU↔GPU sync —
@@ -966,7 +1054,7 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
 - **Walking into a not-yet-streamed chunk reads as air (could fall through an edge).** Collision uses
   `WorldBase.GetBlock`, which returns air for unloaded chunks, so a solid block in an un-streamed chunk
   doesn't collide. Bounded in practice: the join handshake pre-streams the spawn column, and the client cache
-  distance (384) stays well ahead of the server view distance (256), so terrain is normally resident before
+  distance (240) stays well ahead of the server view distance (160), so terrain is normally resident before
   you reach it. A fast clip into ungenerated space could still drop the player; accepted for now.
 - **Water is Tier-A static (no animated/reflective surface).** The block is present and translucent (real
   `water_still` frame-0 texture, tinted blue), but the surface doesn't move or reflect. The agreed next step is
@@ -999,12 +1087,12 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
 - **Single active dimension.** `WorldServer` binds one dimension (`Vanilla:Overworld`); multi-dimension travel
   and per-chunk dimension metadata in saves are deferred. The generator's column scratch assumes the single
   LoadThread writer (Invariant 5).
-- **Resident-chunk growth from the vertical band.** `TerrainRadius` (16) × the full `MinChunkY..MaxChunkY`
+- **Resident-chunk growth from the vertical band.** `TerrainRadius` (10) × the full `MinChunkY..MaxChunkY`
   (9 chunks) is a much larger loaded set than the old thin surface slab; the `UnloadThread` still evicts idle
   chunks but the working set is bigger. Tune `TerrainRadius`/`ChunkLifetime` if memory matters.
 - **Sun shadows are one low-res map capped at `ShadowDistance` (160).** A single shadow map covers
-  `[ShadowNear, ShadowDistance]` and fades out at the edge; geometry past it (out to the 256-unit render
-  distance) has no sun shadows, and the map is intentionally low-res (the **default favours low-res/soft
+  `[ShadowNear, ShadowDistance]` and fades out at the edge; this now equals `RenderDistance` (160), so all
+  drawn geometry is within the shadowed range. The map is intentionally low-res (the **default favours low-res/soft
   shadows** — `ShadowMapSize` 1024 over the whole distance — as an art-direction choice, not a cap). Raising
   `ShadowMapSize` (sharper) or `ShadowDistance` (more coverage, coarser texels) trades one for the other; a
   much larger distance would eventually want a distorted (warped) map or cascades to keep near detail, but CSM
@@ -1057,14 +1145,16 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
   try/catch, but a *post-decode* `Get` throw on the mesh/main thread is not guarded. Left unfixed deliberately:
   it can't fire in normal operation (round-trip is exact), validating would branch the per-block `Get` hot path
   or scan all 4096 entries per decode, and a genuine palette bug *should* surface loudly rather than be masked.
-- **Meshing throughput, not stutter, is the remaining per-edit cost.** With the upload no longer blocking on
-  the remesh lock (see the performance note on `TryUpload`), the *frame* no longer stalls when editing. But a
-  single edit still triggers a **full-chunk remesh of the edited chunk plus up to six face neighbours**, and one
-  remesh is tens of ms (per-vertex smooth-lighting samples ~4 `GetBlockLightLevel` + `IsFullBlock` *per vertex*,
-  over the chunk's whole min..max bounding box) on a **single** mesh thread. So under rapid continuous editing
-  the mesh queue can grow and the *visual* update of edited chunks lags (latency), even though the framerate
-  stays smooth. If that latency matters: remesh only the affected sub-region instead of the whole chunk, cache
-  per-vertex brightness, or parallelise the mesh thread. (The earlier "~10 FPS / ~100 ms `updateMs` spikes when
+- **Meshing throughput is the chunk-fill cost — now parallelized, two amplifiers remain.** An F10 end-to-end
+  trace (`chunk-trace.csv`) pinned the slow world-fill on the mesh stage: chunks generated in ~2 ms then waited
+  **~7.5 s (99.6 % of their latency)** in the mesh queue, the single mesh thread pegged at 100 % the whole
+  recording, queue depth ~1000+. The mesh stage is now a **worker pool** (`Environment.ProcessorCount-2`, ≥1)
+  draining the shared queue — it parallelizes safely (one chunk per worker via the `_meshPending` claim, read-only
+  chunk access, GL on the main thread). Two amplifiers are still **deferred**: (1) a single edit (or each
+  newly-applied chunk during streaming) **full-remeshes the chunk plus up to six face neighbours** — the trace
+  showed ~2× mesh ops per settled chunk — fixable by remeshing only the affected sub-region; (2) each remesh is
+  tens of ms because of per-vertex smooth-lighting (~4 `GetBlockLightLevel` + `IsFullBlock` *per vertex* over the
+  whole min..max box), fixable by caching per-vertex brightness. (The earlier "~10 FPS / ~100 ms `updateMs` spikes when
   destroying" was **misdiagnosed** as swap/GPU-bound — it was the main thread blocking in `ChunkRenderData.Upload`
   on the mesh thread's VAO lock during these remeshes. The F3 CSV that looked like a 10 FPS *baseline* was
   captured during *continuous* destroying; standing idle renders fine, confirming the pipeline/GPU was never the
@@ -1073,11 +1163,6 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
   dirty chunk, each doing one 256 KB index rewrite. Batching all of a region's dirty chunks into a single
   index rewrite is deferred — marginal now that the index is 64× smaller, and `SaveChunk` already early-outs
   on `!NeedsSaving`.
-- **`BlockTintedGlass.OnPlaced` reads `ClientResources.Window.KeyboardState`** — client/window state touched
-  from block code that runs **server-side** (`PlaceBlock` → `OnPlaced`). On the headless dedicated server this
-  throws the moment tinted glass is placed (same class of bug as the old `BlockTorch` keyboard read). Works in
-  singleplayer only because the integrated server shares the client process. Placement metadata should come
-  from the place *request*, not a live keyboard read on the server.
 - **Sky light is "gen-seed + simple BFS" — known edit-time limitations (accepted scope).** At chunk-gen the
   `NoiseChunkGenerator` seeds the sky container directly (open air above the surface = 15, water dims with
   depth, caves stay 0; see the world-generation section), so untouched terrain is well lit without a flood.

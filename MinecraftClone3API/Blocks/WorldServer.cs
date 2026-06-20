@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Util;
@@ -68,10 +69,12 @@ namespace MinecraftClone3API.Blocks
         // Reused by the unload scan (sole user) so the per-second sweep allocates no result list.
         private readonly List<Chunk> _unloadScratch = new List<Chunk>();
 
-        // Horizontal radius (in chunks) of the load band; matches ServerNetwork.ViewDistance /
-        // RenderDistance (256 ≈ 16 chunks) so the streamer never wants a chunk the load thread hasn't
-        // loaded. The full BedrockY..WorldTop vertical column is loaded within this radius.
-        private const int TerrainRadius = 16;
+        // Horizontal radius (in chunks) of the load band; kept one chunk past ServerNetwork.ViewDistance
+        // (≈ RenderDistance) so the streamer never wants a chunk the load thread hasn't loaded. Default 10
+        // (≈ 160 blocks); in singleplayer StateWorld drives it from the render-distance slider, on a dedicated
+        // server it stays the default. Read live each scan by the load thread (volatile so a runtime change is
+        // seen promptly). The full BedrockY..WorldTop vertical column is loaded within this radius.
+        public volatile int TerrainRadius = 10;
 
         // The active world generator (resolved from the Vanilla:Overworld dimension, or a void fallback if
         // no dimension is registered). Sole writer of generated chunks runs on the load thread.
@@ -102,6 +105,12 @@ namespace MinecraftClone3API.Blocks
         public readonly HashSet<Entity> Entities = new HashSet<Entity>();
 
         private bool _unloaded;
+
+        // Lock-free mirror of _chunksReadyToAdd.Count, updated under lock(_chunksReadyToAdd) on the load
+        // thread (stage) and the main thread (drain), so the profiler reads the staging-queue depth
+        // without taking the lock or Dictionary.Count.
+        private volatile int _stageQueueDepth;
+        public int StageQueueDepth => _stageQueueDepth;
 
         private const string OverworldDimensionKey = "Vanilla:Overworld";
 
@@ -274,10 +283,10 @@ namespace MinecraftClone3API.Blocks
                 DirtyChunks[chunkInWorld + new Vector3i(0, 0, +1)] = 0;
         }
 
-        public override void PlaceBlock(EntityPlayer player, Vector3i blockPos, Block block)
+        public override void PlaceBlock(EntityPlayer player, Vector3i blockPos, Block block, int metadata)
         {
             SetBlock(blockPos, block);
-            block.OnPlaced(this, blockPos, player);
+            block.OnPlaced(this, blockPos, player, metadata);
         }
 
         /// <summary>Adds a player whose position drives chunk-loading interest. Mutated only here and
@@ -312,11 +321,14 @@ namespace MinecraftClone3API.Blocks
                 {
                     if (LoadedChunks.TryRemove(chunkPos, out _))
                         _populatedChunks.TryRemove(chunkPos, out _);
+                    ChunkTracer.Abandon(chunkPos);
                 }
 
                 _chunksReadyToRemove.Clear();
             }
 
+            var drainStart = Stopwatch.GetTimestamp();
+            var drained = 0;
             lock (_chunksReadyToAdd)
             {
                 foreach (var entry in _chunksReadyToAdd)
@@ -326,10 +338,15 @@ namespace MinecraftClone3API.Blocks
                     else
                         LoadedChunks[entry.Key] = new Chunk(entry.Value);
                     _populatedChunks[entry.Key] = 0;
+                    ChunkTracer.Published(entry.Key);
+                    drained++;
                 }
 
                 _chunksReadyToAdd.Clear();
+                _stageQueueDepth = 0;
             }
+            Profiler.AddDrainAddTime((Stopwatch.GetTimestamp() - drainStart) * 1000.0 / Stopwatch.Frequency);
+            Profiler.AddDrainAddCount(drained);
         }
 
         public void Unload()
@@ -454,19 +471,24 @@ namespace MinecraftClone3API.Blocks
                     lock (_chunksReadyToAdd)
                         if (_chunksReadyToAdd.ContainsKey(chunkPos)) continue;
 
+                    ChunkTracer.Born(chunkPos);
                     var cachedChunk = LoadChunk(chunkPos);
 
                     if (cachedChunk.IsEmpty)
                     {
                         //Empty chunks dont need to be added to LoadedChunks
                         _populatedChunks[chunkPos] = 0;
+                        ChunkTracer.Abandon(chunkPos);
                     }
                     else
                     {
                         lock (_chunksReadyToAdd)
                         {
                             _chunksReadyToAdd[chunkPos] = cachedChunk;
+                            _stageQueueDepth = _chunksReadyToAdd.Count;
                         }
+
+                        ChunkTracer.Staged(chunkPos);
                     }
                 }
 
@@ -775,11 +797,22 @@ namespace MinecraftClone3API.Blocks
 
         private CachedChunk LoadChunk(Vector3i position)
         {
+            var diskStart = Stopwatch.GetTimestamp();
             var chunk = WorldSerializer.LoadChunk(this, position);
-            if (chunk != null) return chunk;
+            Profiler.AddDiskTicks(Stopwatch.GetTimestamp() - diskStart);
+            if (chunk != null)
+            {
+                Profiler.IncFromDisk();
+                ChunkTracer.Loaded(position, ChunkSource.Disk);
+                return chunk;
+            }
 
             chunk = new CachedChunk(this, position);
+            var genStart = Stopwatch.GetTimestamp();
             _generator.Generate(chunk, position);
+            Profiler.AddGenTicks(Stopwatch.GetTimestamp() - genStart);
+            Profiler.IncGenerated();
+            ChunkTracer.Loaded(position, ChunkSource.Gen);
             return chunk;
         }
     }

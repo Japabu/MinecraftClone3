@@ -22,9 +22,17 @@ namespace MinecraftClone3API.Networking
     {
         public const int DefaultPort = 25565;
 
-        /// <summary>Block radius around a player within which loaded chunks are streamed to them.</summary>
-        private const float ViewDistance = 256f;
-        private const float ViewDistanceSq = ViewDistance * ViewDistance;
+        /// <summary>Block radius around a player within which loaded chunks are streamed to them. Default 160
+        /// (10 chunks); in singleplayer StateWorld drives it from the render-distance slider, on a dedicated
+        /// server it stays the default. An increase is picked up by the streamer automatically (the load
+        /// thread loads more chunks → the loaded-count gate re-scans).</summary>
+        private float _viewDistanceSq = 160f * 160f;
+
+        public float ViewDistance
+        {
+            get => MathF.Sqrt(_viewDistanceSq);
+            set => _viewDistanceSq = value * value;
+        }
 
         /// <summary>Cap on new chunks sent per session per tick, so the initial flood streams in
         /// smoothly instead of stalling the tick by serializing every loaded chunk at once.</summary>
@@ -225,7 +233,7 @@ namespace MinecraftClone3API.Networking
             if (block.Id == 0)
                 _world.SetBlock(place.Position, BlockRegistry.BlockAir);
             else
-                _world.PlaceBlock(session.Player, place.Position, block);
+                _world.PlaceBlock(session.Player, place.Position, block, place.Metadata);
         }
 
         private void RemoveDisconnected()
@@ -269,7 +277,7 @@ namespace MinecraftClone3API.Networking
                 foreach (var entry in _world.LoadedChunks)
                 {
                     var center = (entry.Key * Chunk.Size + new Vector3i(Chunk.Size / 2)).ToVector3();
-                    if ((center - playerPos).LengthSquared > ViewDistanceSq) continue;
+                    if ((center - playerPos).LengthSquared > _viewDistanceSq) continue;
                     if (!session.SentChunks.Contains(entry.Key)) _newChunksScratch.Add(entry.Key);
                 }
 
@@ -285,6 +293,7 @@ namespace MinecraftClone3API.Networking
                     if (!_world.LoadedChunks.TryGetValue(pos, out var chunk)) continue;
 
                     session.Connection.Send(ChunkDataPacket.From(chunk));
+                    ChunkTracer.Streamed(pos);
                     session.SentChunks.Add(pos);
                     sent++;
                 }

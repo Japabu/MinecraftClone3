@@ -145,6 +145,7 @@ namespace MinecraftClone3API.Networking
     {
         public Vector3i Position;
         public ushort BlockId;
+        public int Metadata;
 
         public override PacketId Id => PacketId.PlaceBlockRequest;
 
@@ -152,12 +153,14 @@ namespace MinecraftClone3API.Networking
         {
             WriteVector3i(writer, Position);
             writer.Write(BlockId);
+            writer.Write(Metadata);
         }
 
         public override void Read(BinaryReader reader)
         {
             Position = ReadVector3i(reader);
             BlockId = reader.ReadUInt16();
+            Metadata = reader.ReadInt32();
         }
     }
 

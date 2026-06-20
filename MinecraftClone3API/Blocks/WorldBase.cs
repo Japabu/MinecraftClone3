@@ -117,7 +117,7 @@ namespace MinecraftClone3API.Blocks
         public abstract LightLevel GetBlockLightLevel(int x, int y, int z);
         public abstract void SetSkyLight(int x, int y, int z, int level);
         public abstract int GetSkyLight(int x, int y, int z);
-        public abstract void PlaceBlock(EntityPlayer player, Vector3i blockPos, Block block);
+        public abstract void PlaceBlock(EntityPlayer player, Vector3i blockPos, Block block, int metadata);
         public abstract void Update();
 
     }

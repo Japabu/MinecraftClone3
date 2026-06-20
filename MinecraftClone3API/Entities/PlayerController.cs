@@ -54,7 +54,8 @@ namespace MinecraftClone3API.Entities
                 delta = Vector2.Zero;
                 _skipMouseDelta = false;
             }
-            PlayerEntity.Rotate(-delta.Y * 0.008f, -delta.X * 0.008f);
+            var sensitivity = GraphicsSettings.MouseSensitivity;
+            PlayerEntity.Rotate(-delta.Y * sensitivity, -delta.X * sensitivity);
 
             if (ks.IsKeyPressed(Keys.Space))
             {
@@ -83,7 +84,7 @@ namespace MinecraftClone3API.Entities
             if (ms.IsButtonDown(MouseButton.Left) && !ms.WasButtonDown(MouseButton.Left))
                 BreakBlock(world);
             if (ms.IsButtonDown(MouseButton.Right) && !ms.WasButtonDown(MouseButton.Right))
-                PlaceBlock(world);
+                PlaceBlock(world, ks);
 
             Camera.Update();
         }
@@ -143,10 +144,12 @@ namespace MinecraftClone3API.Entities
             world.SetBlock(_blockRaytrace.BlockPos, BlockRegistry.BlockAir);
         }
 
-        private static void PlaceBlock(WorldBase world)
+        private static void PlaceBlock(WorldBase world, KeyboardState ks)
         {
             if (_blockRaytrace == null) return;
-            world.PlaceBlock(PlayerEntity, _blockRaytrace.BlockPos + _blockRaytrace.Face.GetNormali(), GameRegistry.GetBlock(_currentBlock));
+            var block = GameRegistry.GetBlock(_currentBlock);
+            world.PlaceBlock(PlayerEntity, _blockRaytrace.BlockPos + _blockRaytrace.Face.GetNormali(), block,
+                block.GetPlacementMetadata(ks));
 
             Logger.Debug(PlayerEntity.Position + ":" + _blockRaytrace.BlockPos);
         }
