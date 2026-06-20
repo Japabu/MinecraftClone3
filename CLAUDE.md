@@ -197,7 +197,14 @@ auto-participates.
 **Per-chunk pipeline (`NoiseChunkGenerator.Generate`, no neighbour block reads):**
 1. **Biome + surface-height map** for the chunk's 16×16 columns (reused scratch). Biome is climate
    (temp/humidity Voronoi) for land, with **height-derived overrides**: base height well below sea → Ocean,
-   shoreline band → Beach. Surface height = base noise + biome `HeightBias` + peaks·`HeightVariation`.
+   shoreline band → Beach. Surface height = base noise + **blended** `HeightBias` + peaks·**blended**
+   `HeightVariation`: `SurfaceHeight` bilinearly interpolates the four surrounding biomes' `HeightBias`/
+   `HeightVariation` over a world-aligned lattice (spacing `HeightBlendSpacing`, smoothstep weights), so a
+   biome border (e.g. Mountains↔Plains) is a **foothill, not a cliff**. The blend is a pure function of
+   (wx,wz) — `_surf` holds the blended value and *all* height consumers use it: the fill writes it, the
+   carver is handed the `_surf` array (so its carve ceiling is identically the filled surface — no skin
+   breach), and trees/`Spawn` call the same `SurfaceHeight`. Surface *blocks* still snap to the hard
+   per-column biome (`_colBiome`); only the *height* blends (Minecraft pre-1.18 behaviour).
 2. **Base terrain** — bedrock at `BedrockY`, stone up to the surface.
 3. **Surface skin** — biome `TopBlock`/`FillerBlock` above sea, `UnderwaterBlock` (sand/gravel) below.
 4. **Water** — `Vanilla:Water` fills air below `SeaLevel` on ocean columns.

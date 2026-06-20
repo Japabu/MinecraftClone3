@@ -27,7 +27,8 @@ namespace MinecraftClone3API.WorldGen
             _b = new OpenSimplexNoise(seed ^ 0x1F123BB5C0FFEE42L);
         }
 
-        public override void Carve(CachedChunk chunk, Vector3i chunkPos, NoiseChunkGenerator generator)
+        public override void Carve(CachedChunk chunk, Vector3i chunkPos, NoiseChunkGenerator generator,
+            int[] surfaceHeights)
         {
             var min = chunkPos * Chunk.Size;
             var floor = generator.BedrockY + 1;
@@ -37,7 +38,7 @@ namespace MinecraftClone3API.WorldGen
             {
                 var wx = min.X + x;
                 var wz = min.Z + z;
-                var top = Math.Min(generator.SurfaceHeight(wx, wz) - SurfaceBuffer, min.Y + Chunk.Size - 1);
+                var top = Math.Min(surfaceHeights[x * Chunk.Size + z] - SurfaceBuffer, min.Y + Chunk.Size - 1);
 
                 for (var wy = Math.Max(min.Y, floor); wy <= top; wy++)
                 {
