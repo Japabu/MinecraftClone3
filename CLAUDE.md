@@ -231,9 +231,14 @@ auto-participates.
 
 **Determinism & threading.** Seeds are **process-stable**: `OpenSimplexNoise` is a seeded instance (Fisher–
 Yates perm from a SplitMix64 stream), `WorldGenRandom` is a struct SplitMix64 PRNG, and `Feature.Salt` is an
-**FNV-1a** hash of the registry key (never `string.GetHashCode`, which is per-run randomized). `Generate`
-runs only on the server **LoadThread** (single writer — Invariant 5 holds; the generator's column scratch is
-a plain reused field). The **seed is persisted** to each world's `level.dat` (`WorldMetadata`, alongside its
+**FNV-1a** hash of the registry key (never `string.GetHashCode`, which is per-run randomized). `Generate` is
+driven from the server **LoadThread**, which **fans each batch across cores** (`Parallel.ForEach`,
+`ProcessorCount-2`) — gen was a single-thread ~95 % bottleneck and is embarrassingly parallel: every generator
+field is read-only/pure (the noise perm tables, the biome source, the carvers/features) **except** the column
+scratch, which is per-thread (`ThreadLocal`), and the staging targets are concurrent/locked
+(`_populatedChunks` is a `ConcurrentDictionary`, `_chunksReadyToAdd` is lock-guarded, the disk `WorldSerializer`
+is lock-guarded). Output is deterministic regardless of which thread/order generates a chunk (pure functions of
+position+seed). The **seed is persisted** to each world's `level.dat` (`WorldMetadata`, alongside its
 name + last-played); both call sites construct `new WorldServer(long seed, string worldDir)` — `StateWorld`
 singleplayer with the chosen `WorldInfo.Seed`/`Directory`, `MinecraftClone3Server` via
 `WorldMetadata.LoadOrCreate(GamePaths.WorldDir, …)`. `WorldServer` owns a per-instance `WorldSerializer(worldDir)`
@@ -246,8 +251,13 @@ are unused there).
 **LoadThread band.** The interest scan loads the **full `MinChunkY..MaxChunkY` vertical column** within
 `TerrainRadius` (10 chunks, matched to `ServerNetwork.ViewDistance`/`RenderDistance` = 160) around each
 player — replacing the old thin surface slab, because the world now has real vertical extent (oceans, caves,
-mountains). Per-tick cost is unchanged (16-chunk cap, distance sort, dedup); resident chunk count grows
-(tune `TerrainRadius`/`ChunkLifetime`).
+mountains). Each iteration finds the nearest unknown chunks (distance sort, dedup), caps the batch at
+`MaxChunksPerLoad` (128) per player, and generates it in parallel; it only `Thread.Sleep`s when there was
+**nothing** to load (fully streamed) — under load it runs flat out, so streaming is gen-throughput-bound, not
+the old "16 chunks per 10 ms" dribble. The generator also has an **all-air fast path**: a chunk whose bottom is
+above every surface column (+ decoration headroom) and above sea level skips the per-block fill (≈¾ of a high-
+render-distance vertical band is this empty air). Together these took a fresh RD-16 fill from ~6.5 s to ~3 s.
+Resident chunk count grows (tune `TerrainRadius`/`ChunkLifetime`).
 
 **Spawn** comes from `NoiseChunkGenerator.Spawn()` (spiral out from origin for the first land column);
 `ServerNetwork` caches it and seeds `LoginAccept`.
@@ -411,8 +421,9 @@ dedicated server), `ServerNetwork.Pump()`, and the client `SendMove`. Between ti
 **render-interpolated** (`PlayerController.ApplyInterpolation(alpha)`, `alpha = accumulator / TickSeconds`),
 so motion is smooth at the display rate even though the sim steps at 20 Hz. SP freezes the accumulator while
 paused (unfocused); MP keeps ticking the (remote) server. `UpdateFrequency` stays at the display rate — only
-the sim cadence is fixed. (`ServerNetwork.MaxChunksPerTick` was sized up ~6× when the streaming loop went
-from the ~120 Hz frame rate to 20 tps, to hold the same chunks/second.)
+the sim cadence is fixed. (`ServerNetwork.MaxChunksPerTick` = 512: streaming only fires on the 20 tps tick, so
+the per-tick batch must be large or it caps throughput — 512 × 20 ≈ 10 000 chunks/s, cheap over loopback since
+a streamed chunk is carried by reference.)
 
 **The client chunk pipeline is split across three threads so the render thread does only GL + reads:** the
 apply thread decodes/mutates chunk storage (the per-chunk copy that used to dominate the render thread), the
@@ -1061,6 +1072,18 @@ percentiles, the GPU per-pass split (shadow/geom/comp), CPU update/render ms, dr
 > dropped, not the work). Run baseline and optimized builds back-to-back on a quiet machine to control for
 > thermal state; a single confounded run is worthless for an A/B.
 
+**LOD A/B-diff inspector (`--inspect`).** The honest "what does my render change actually do" tool — built
+because low-res flattering screenshots let real LOD artifacts (black faces, stair-stepping) slip through.
+`Util/Inspect.cs` boots into the fixed-seed world at a large window (default 1920×1080, `--inspect-width/-height`),
+**waits for the world to FULLY stream in** (loaded count stable + server staging drained + client mesh/upload
+queues empty — and logs the fill time, the streaming-speed gauge), then at each fixed pose captures the *same*
+view twice — once with LOD forced off (`WorldClient.ForceLodOff` + `RemeshAll`, the ground truth) and once with
+LOD on — and writes `inspect-<pose>-{full,lod,diff}.png` to `UserDataDir`. The **diff** is an amplified
+per-pixel `|full−lod|` (`Screenshot.WriteDiff`): a flat near-black image where every pixel the LOD changed
+lights up, so a regression can't hide. `Read` the PNGs to review. Pick poses that frame **mid-distance terrain**
+(where LOD1/2 kick in, before the distance fog); a low horizontal look just frames sky+fog (full==LOD → black
+diff, a non-result).
+
 ### Performance findings (what the benchmark established)
 
 Load-bearing facts for anyone making the renderer faster — read before optimizing, they save dead ends. Two
@@ -1373,8 +1396,8 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
   a tighter per-step Y gate is a possible optimization. Ore/`SurfaceHeight` recompute inside the carver/features
   duplicates the per-column noise the fill already did — background cost, not yet memoized.
 - **Single active dimension.** `WorldServer` binds one dimension (`Vanilla:Overworld`); multi-dimension travel
-  and per-chunk dimension metadata in saves are deferred. The generator's column scratch assumes the single
-  LoadThread writer (Invariant 5).
+  and per-chunk dimension metadata in saves are deferred. (The generator's column scratch is now per-thread
+  `ThreadLocal`, so `Generate` is parallel-safe — see "Determinism & threading".)
 - **Resident-chunk growth from the vertical band.** `TerrainRadius` (10) × the full `MinChunkY..MaxChunkY`
   (9 chunks) is a much larger loaded set than the old thin surface slab; the `UnloadThread` still evicts idle
   chunks but the working set is bigger. Tune `TerrainRadius`/`ChunkLifetime` if memory matters.
