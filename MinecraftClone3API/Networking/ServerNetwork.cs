@@ -74,7 +74,7 @@ namespace MinecraftClone3API.Networking
             get => MathF.Sqrt(_lodRadiusSq);
             set => _lodRadiusSq = value * value;
         }
-        private const int MaxLodRegionsPerTick = 16;
+        private const int MaxLodRegionsPerTick = 8;
         private readonly List<Vector3i> _lodKeysScratch = new List<Vector3i>();
         private readonly List<Vector3i> _newLodScratch = new List<Vector3i>();
         private Vector3 _lodSortOrigin;

@@ -223,7 +223,8 @@ namespace MinecraftClone3API.WorldGen
                 if (adx == 2 && adz == 2) continue;                       // canopy corners are empty
                 var bx = tx + dx;
                 var bz = tz + dz;
-                if ((bx & 3) != 0 || (bz & 3) != 0) continue;             // only the stride-4 LOD rep columns
+                if ((bx & (LodColumn.Stride - 1)) != 0 ||
+                    (bz & (LodColumn.Stride - 1)) != 0) continue;          // only the LOD rep columns (stride grid)
                 if (bx < baseX || bx >= baseX + LodColumn.RegionBlocks ||
                     bz < baseZ || bz >= baseZ + LodColumn.RegionBlocks) continue;
                 var idx = LodColumn.CellIndex(bx, bz);

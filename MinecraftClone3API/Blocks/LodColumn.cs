@@ -17,12 +17,12 @@ namespace MinecraftClone3API.Blocks
     public class LodColumn
     {
         public const int RegionBlocks = 128;          // XZ size of a region
-        public const int Stride = 4;                   // one stored column per Stride×Stride blocks
-        public const int CellsPerAxis = RegionBlocks / Stride;   // 32
-        public const int ColumnCount = CellsPerAxis * CellsPerAxis;  // 1024
+        public const int Stride = 2;                   // one stored column per Stride×Stride blocks (finest LOD)
+        public const int CellShift = 1;                // log2(Stride) — KEEP IN SYNC WITH Stride
+        public const int CellsPerAxis = RegionBlocks / Stride;   // 64
+        public const int ColumnCount = CellsPerAxis * CellsPerAxis;  // 4096
         private const int RegionShift = 7;             // log2(RegionBlocks)
         private const int RegionMask = RegionBlocks - 1;
-        private const int CellShift = 2;               // log2(Stride)
 
         /// <summary>Region key: (regionX, 0, regionZ), regionX = wx &gt;&gt; 7. Y is always 0 (Y-agnostic).</summary>
         public Vector3i Position;

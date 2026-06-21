@@ -398,23 +398,25 @@ namespace MinecraftClone3API.Client.Blocks
                     _lodMeshQueue.Enqueue(key);
         }
 
-        // DH power-of-two detail rings: the horizon is stride-4 (full store res) for the first LodStride8Distance
-        // blocks past the render distance, then stride-8, then stride-16 — so a HUGE horizon stays affordable
-        // (the far ring is ~4x/16x fewer quads). Rings are 24 chunks (3 regions) wide so adjacent regions never
+        // DH power-of-two detail rings, RELATIVE to the render distance, scaled by LOD Quality. With the stride-2
+        // LOD store, meshStep 1/2/4/8 = stride 2/4/8/16. The NEAREST ring is stride-2 (the store's finest), so the
+        // horizon just past the render distance is fine (a gentle step down from full detail) and only coarsens
+        // farther out (fog-hidden) to stay cheap. Rings are >= 1 region (8 chunks) wide so adjacent regions never
         // differ by more than one step (no >2x crack).
-        private const float LodStride8Distance = 24 * Chunk.Size;
-        private const float LodStride16Distance = 48 * Chunk.Size;
+        private const float LodRing1Distance = 16 * Chunk.Size;   // stride-2 within this many blocks past RD
+        private const float LodRing2Distance = 32 * Chunk.Size;   // then stride-4
+        private const float LodRing3Distance = 64 * Chunk.Size;   // then stride-8; beyond: stride-16
         private Vector3i _lastLodStepChunk = new Vector3i(int.MinValue);
 
         private int MeshStepFor(Vector3 middle)
         {
-            var dist = (middle - _playerPosition).Length;
-            var rd = GraphicsSettings.RenderDistanceChunks * Chunk.Size;
-            // LOD Quality pushes the stride rings out (finer horizon farther) or pulls them in (coarser, faster).
+            var d = (middle - _playerPosition).Length - GraphicsSettings.RenderDistanceChunks * Chunk.Size;
+            // LOD Quality pushes the rings out (finer horizon farther) or pulls them in (coarser, faster).
             var q = GraphicsSettings.LodHorizonQuality;
-            if (dist < rd + LodStride8Distance * q) return 1;
-            if (dist < rd + LodStride16Distance * q) return 2;
-            return 4;
+            if (d < LodRing1Distance * q) return 1;   // stride-2
+            if (d < LodRing2Distance * q) return 2;   // stride-4
+            if (d < LodRing3Distance * q) return 4;   // stride-8
+            return 8;                                  // stride-16
         }
 
         /// <summary>Forces the next <see cref="ScanLodForMeshStep"/> to re-evaluate every LOD region's stride
@@ -643,7 +645,12 @@ namespace MinecraftClone3API.Client.Blocks
         {
             LodColumn region;
             if (packet.LodColumn != null)
-                region = new LodColumn(packet.LodColumn);
+                // Loopback: a published LOD region is IMMUTABLE (filled once, never mutated — unlike a Chunk),
+                // so the client shares the server's array by reference instead of cloning it. This is the big
+                // allocation win for a deep/fine horizon (no 32 KB clone per streamed region → no GC churn /
+                // hitch as regions stream and re-stream while moving). The server only ever replaces a region
+                // with a new object, never mutates a live one (see LodColumnStore), so the shared array is safe.
+                region = packet.LodColumn;
             else
                 using (var reader = new BinaryReader(new MemoryStream(CompressionHelper.DecompressBytes(packet.CompressedData))))
                     region = new LodColumn(reader, packet.Position);
