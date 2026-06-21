@@ -141,7 +141,10 @@ namespace MinecraftClone3API.Blocks
         private readonly List<EntityPlayer> _lodPlayersScratch = new List<EntityPlayer>();
         private readonly List<Vector3i> _lodKeysScratch = new List<Vector3i>();
         private const int MaxLodRegionsPerIter = 8;
-        private const int LodInnerOverlap = 2 * Chunk.Size;
+        // How far the LOD fill overlaps INWARD past the real-chunk band. Sized so the LOD store covers the
+        // client's cross-fade band [RD - FadeBandWidth, RD] with a full region of margin (a region is 128 wide,
+        // ~90 half-diagonal), so the chunks dithering OUT always have horizon to dither IN against — no holes.
+        private const int LodInnerOverlap = 160;
 
         public readonly HashSet<EntityPlayer> PlayerEntities = new HashSet<EntityPlayer>();
         public readonly HashSet<Entity> Entities = new HashSet<Entity>();

@@ -10,6 +10,7 @@ out vec4 vTexCoord;
 out vec4 vNormal;
 out vec3 vColor;
 out vec4 vLight;
+out vec3 vWorldPos;   // baked world-space position (for the LOD cross-fade's camera-distance test)
 
 uniform mat4 uView;
 uniform mat4 uProjection;
@@ -27,6 +28,7 @@ void main()
 	// Positions are baked world-space at mesh time (no per-chunk model matrix), so all chunks share one
 	// buffer set and draw with a single batched multidraw.
 	gl_Position = uProjection*uView*vec4(inPosition, 1);
+	vWorldPos = inPosition;
 
 	uint texId  = inPacked & 0xFFFFu;
 	uint arrayId = (inPacked >> 16) & 0x3u;

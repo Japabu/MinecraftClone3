@@ -38,6 +38,10 @@ namespace MinecraftClone3API.Graphics
         private static readonly List<LodRenderData> _lodToDraw = new List<LodRenderData>(256);
         private static float _lodRenderDistance;
 
+        // Width (blocks) of the dithered cross-fade band just inside the render distance, where full-detail
+        // chunks dissolve into the Phase-2 horizon LOD instead of popping. The smoothness↔overdraw knob.
+        private const float FadeBandWidth = 32f;
+
         // Read by the cached transparent-sort comparator so the delegate is allocated once instead of
         // capturing a fresh closure (over camera position) every frame.
         private static Vector3 _sortCameraPos;
@@ -469,9 +473,11 @@ namespace MinecraftClone3API.Graphics
         private static void BuildLodVisibleSet(WorldClient world, Camera camera, Frustum viewFrustum)
         {
             _lodToDraw.Clear();
-            var near = RenderDistance;
             var far = _lodRenderDistance;
-            if (far <= near) { RenderDebug.LodDrawn = 0; return; }
+            // Inner edge pulled in by the fade band so the horizon has geometry to dither IN against the chunks
+            // dithering OUT (else the band would be chunk-discard against empty horizon = holes).
+            var near = RenderDistance - FadeBandWidth;
+            if (far <= RenderDistance) { RenderDebug.LodDrawn = 0; return; }
 
             var list = world.LodRenderList;
             for (var i = 0; i < list.Count; i++)
@@ -509,11 +515,21 @@ namespace MinecraftClone3API.Graphics
             GL.Uniform1(shader.GetUniformLocation("uTextures256"), 2);
             GL.Uniform1(shader.GetUniformLocation("uTextures1024"), 3);
 
+            // LOD cross-fade band: full-detail chunks dissolve into the horizon over [RD - FadeBandWidth, RD].
+            // Disabled (start past the far plane) when the horizon is dormant, so chunks never fade into nothing.
+            var uFadeMode = shader.GetUniformLocation("uFadeMode");
+            var fadeActive = _lodRenderDistance > RenderDistance;
+            GL.Uniform3(shader.GetUniformLocation("uCameraPos"), camera.Position.X, camera.Position.Y, camera.Position.Z);
+            GL.Uniform1(shader.GetUniformLocation("uFadeStart"), fadeActive ? RenderDistance - FadeBandWidth : 1e9f);
+            GL.Uniform1(shader.GetUniformLocation("uFadeEnd"), fadeActive ? RenderDistance : 1e9f + 1f);
+
             BlockTextureManager.Bind();
             Samplers.BindBlockTextureSampler();
 
             // Draw all opaque chunk geometry (incl. the opaque faces of transparent chunks) front-to-back in
             // ONE batched multidraw over the shared arena (positions are baked world-space → no per-chunk matrix).
+            // uFadeMode 0 = these near chunks fade OUT across the band.
+            GL.Uniform1(uFadeMode, 0);
             GraphicsDebug.PushGroup("Opaque");
             world.OpaqueArena.Draw(_chunksToDraw, false);
             GraphicsDebug.PopGroup();
@@ -525,9 +541,11 @@ namespace MinecraftClone3API.Graphics
             if (_lodToDraw.Count > 0)
             {
                 GraphicsDebug.PushGroup("LodHorizon");
+                GL.Uniform1(uFadeMode, 1);   // LOD fades IN across the band (complementary to the chunks)
                 GL.DepthFunc(DepthFunction.Less);
                 world.LodArena.Draw(_lodToDraw, false);
                 GL.DepthFunc(DepthFunction.Lequal);
+                GL.Uniform1(uFadeMode, 0);   // restore for the transparent chunk pass (near → no fade)
                 GraphicsDebug.PopGroup();
             }
 
