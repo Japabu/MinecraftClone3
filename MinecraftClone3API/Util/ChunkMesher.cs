@@ -176,6 +176,127 @@ namespace MinecraftClone3API.Util
         private static Vector4 TexCoord(BlockTexture tex, Vector2 uv)
             => tex == null ? new Vector4(-1) : new Vector4(uv) {Z = tex.TextureId, W = tex.ArrayId};
 
+        // Floor a Phase-2 region skirt drops to when its neighbour column is unknown (region not streamed):
+        // below bedrock, so the wall is hidden underground / behind the horizon fog. The over-long wall is
+        // invisible (covered by neighbours when they load, or fogged out).
+        private const int LodFloorY = -40;
+
+        /// <summary>
+        /// Phase-2 distant-horizon mesher: builds the flat-top + skirt heightmap for one streamed LOD region
+        /// directly from its packed column run-list (no world, no real blocks) — the same emission as
+        /// <see cref="AddBlocksToVaoLod"/> but driven by the store instead of sampling a chunk. Block id, surface
+        /// Y and sky come from the packed column; light is sky-only (no torches at the horizon); tint/material use
+        /// the block's world-free properties (grass/water tint by position, water reflection flag). Neighbour
+        /// heights for skirts read across into the adjacent regions (so region borders don't crack); an unknown
+        /// neighbour skirts to <see cref="LodFloorY"/>.
+        /// </summary>
+        public static void AddLodColumnRegionToVao(LodColumnStore store, Vector3i regionKey, MeshBuffer vao)
+        {
+            if (!store.TryGetRegion(regionKey, out var region)) return;
+            var cols = region.Columns;
+            const int n = LodColumn.CellsPerAxis;
+            const int stride = LodColumn.Stride;
+            var baseX = regionKey.X << 7;
+            var baseZ = regionKey.Z << 7;
+
+            store.TryGetRegion(regionKey + new Vector3i(1, 0, 0), out var rPosX);
+            store.TryGetRegion(regionKey + new Vector3i(-1, 0, 0), out var rNegX);
+            store.TryGetRegion(regionKey + new Vector3i(0, 0, 1), out var rPosZ);
+            store.TryGetRegion(regionKey + new Vector3i(0, 0, -1), out var rNegZ);
+
+            // Greedy-merged flat tops: collapse runs of IDENTICAL columns (same packed block+height+sky) into one
+            // quad — water and plains are huge identical expanses, so this cuts the dominant top-quad count
+            // several-fold (the LOD geometry-pass cost). cx = X (height of the merge rect), cz = Z (width).
+            // Texture is stretched over the merged rect (imperceptible at the fogged horizon). Skirts stay
+            // per-cell below (they only emit at height steps, so flat interiors cost nothing).
+            Span<bool> used = stackalloc bool[LodColumn.ColumnCount];
+            for (var cx = 0; cx < n; cx++)
+            for (var cz = 0; cz < n; cz++)
+            {
+                var idx = cx * n + cz;
+                if (used[idx]) continue;
+                var packed = cols[idx];
+                if (LodColumn.IsEmpty(packed)) { used[idx] = true; continue; }
+                var block = GameRegistry.BlockRegistry[LodColumn.BlockId(packed)];
+                if (block == BlockRegistry.BlockAir || block.Model == null ||
+                    !TryGetFace(block, BlockFace.Top, out var topFace)) { used[idx] = true; continue; }
+
+                var w = 1;
+                while (cz + w < n && !used[idx + w] && cols[idx + w] == packed) w++;
+                var h = 1;
+                var grow = true;
+                while (cx + h < n && grow)
+                {
+                    for (var k = 0; k < w; k++)
+                        if (used[(cx + h) * n + cz + k] || cols[(cx + h) * n + cz + k] != packed) { grow = false; break; }
+                    if (grow) h++;
+                }
+                for (var i = 0; i < h; i++)
+                for (var k = 0; k < w; k++)
+                    used[(cx + i) * n + cz + k] = true;
+
+                var sy = LodColumn.SurfaceY(packed);
+                var pos = new Vector3i(baseX + cx * stride, sy, baseZ + cz * stride);
+                var isWater = block.GetRenderMaterial(null, pos) == RenderMaterial.Water;
+                var light = new Vector4(0, 0, 0, CustomLightLevelToBrightness(LodColumn.Sky(packed)));
+                var x0 = baseX + cx * stride - 0.5f;
+                var x1 = baseX + (cx + h) * stride - 0.5f;
+                var z0 = baseZ + cz * stride - 0.5f;
+                var z1 = baseZ + (cz + w) * stride - 0.5f;
+                var yTop = sy + 0.5f;
+                EmitLodQuad(vao, topFace, new Vector4(0, 1, 0, isWater ? WaterNormalW : 0f),
+                    Tint(null, block, pos, topFace),
+                    new Vector3(x0, yTop, z0), new Vector3(x1, yTop, z0),
+                    new Vector3(x0, yTop, z1), new Vector3(x1, yTop, z1), light);
+            }
+
+            for (var cx = 0; cx < n; cx++)
+            for (var cz = 0; cz < n; cz++)
+            {
+                var packed = cols[cx * n + cz];
+                if (LodColumn.IsEmpty(packed)) continue;
+                var block = GameRegistry.BlockRegistry[LodColumn.BlockId(packed)];
+                if (block == BlockRegistry.BlockAir || block.Model == null) continue;
+
+                var sy = LodColumn.SurfaceY(packed);
+                var pos = new Vector3i(baseX + cx * stride, sy, baseZ + cz * stride);
+                var light = new Vector4(0, 0, 0, CustomLightLevelToBrightness(LodColumn.Sky(packed)));
+                var x0 = baseX + cx * stride - 0.5f;
+                var x1 = baseX + (cx + 1) * stride - 0.5f;
+                var z0 = baseZ + cz * stride - 0.5f;
+                var z1 = baseZ + (cz + 1) * stride - 0.5f;
+                var yTop = sy + 0.5f;
+
+                EmitSkirt(null, vao, block, pos, sy, yTop, light, BlockFace.Right,
+                    new Vector3(x1, yTop, z1), new Vector3(x1, yTop, z0),
+                    LodNeighbourY(cols, rPosX, cx + 1, cz, n), LodFloorY);
+                EmitSkirt(null, vao, block, pos, sy, yTop, light, BlockFace.Left,
+                    new Vector3(x0, yTop, z0), new Vector3(x0, yTop, z1),
+                    LodNeighbourY(cols, rNegX, cx - 1, cz, n), LodFloorY);
+                EmitSkirt(null, vao, block, pos, sy, yTop, light, BlockFace.Front,
+                    new Vector3(x0, yTop, z1), new Vector3(x1, yTop, z1),
+                    LodNeighbourY(cols, rPosZ, cx, cz + 1, n), LodFloorY);
+                EmitSkirt(null, vao, block, pos, sy, yTop, light, BlockFace.Back,
+                    new Vector3(x1, yTop, z0), new Vector3(x0, yTop, z0),
+                    LodNeighbourY(cols, rNegZ, cx, cz - 1, n), LodFloorY);
+            }
+        }
+
+        /// <summary>Surface Y of the neighbour cell (cx,cz) within a region, wrapping into the adjacent
+        /// <paramref name="neighbour"/> region when out of [0,n); int.MinValue if empty/absent.</summary>
+        private static int LodNeighbourY(long[] cols, LodColumn neighbour, int cx, int cz, int n)
+        {
+            long packed;
+            if (cx >= 0 && cx < n && cz >= 0 && cz < n)
+                packed = cols[cx * n + cz];
+            else
+            {
+                if (neighbour == null) return int.MinValue;
+                packed = neighbour.Columns[((cx + n) % n) * n + ((cz + n) % n)];
+            }
+            return LodColumn.IsEmpty(packed) ? int.MinValue : LodColumn.SurfaceY(packed);
+        }
+
         public static void AddBlockToVao(WorldBase world, Vector3i blockPos, int x, int y, int z, Block block,
             MeshBuffer vao, MeshBuffer transparentVao)
         {

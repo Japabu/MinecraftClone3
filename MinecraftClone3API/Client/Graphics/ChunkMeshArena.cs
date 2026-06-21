@@ -318,6 +318,38 @@ namespace MinecraftClone3API.Graphics
             return draws;
         }
 
+        /// <summary>Same as <see cref="Draw(List{ChunkRenderData},bool)"/> for Phase-2 LOD regions (separate
+        /// list type, identical multidraw). Used by a dedicated LOD arena.</summary>
+        public int Draw(List<LodRenderData> lods, bool shadow)
+        {
+            var n = lods.Count;
+            if (n > _counts.Length)
+            {
+                var cap = _counts.Length;
+                while (cap < n) cap *= 2;
+                _counts = new int[cap];
+                _offsets = new IntPtr[cap];
+                _baseVertices = new int[cap];
+            }
+
+            var draws = 0;
+            for (var i = 0; i < n; i++)
+            {
+                var a = lods[i].OpaqueAlloc;
+                if (a.IndexCount == 0) continue;
+                _counts[draws] = a.IndexCount;
+                _offsets[draws] = (IntPtr) ((long) a.IndexOffset * sizeof(uint));
+                _baseVertices[draws] = a.VertexOffset;
+                draws++;
+            }
+            if (draws == 0) return 0;
+
+            GL.BindVertexArray(shadow ? _shadowVao : _geometryVao);
+            GL.MultiDrawElementsBaseVertex(PrimitiveType.Triangles, _counts, DrawElementsType.UnsignedInt,
+                _offsets, draws, _baseVertices);
+            return draws;
+        }
+
         public void Dispose()
         {
             GL.DeleteVertexArray(_geometryVao);

@@ -128,12 +128,29 @@ namespace MinecraftClone3.States
             var chunks = GraphicsSettings.RenderDistanceChunks;
             _lastRenderDistanceChunks = chunks;
 
+            // Multiplayer: the client can only LOD what the remote server streams, so leave the LOD horizon at
+            // the (dormant) default and just drive the client draw distance via RenderDistance.
             if (_integratedServer == null) return;
 
             _network.ViewDistance = chunks * Chunk.Size;
             _integratedServer.TerrainRadius = chunks + 1;
             _world.CacheDistance = chunks * Chunk.Size + WorldClient.CacheHysteresis;
+
+            // Phase-2 LOD horizon: full detail to `chunks`, then cheap LOD columns out to chunks + LodRingChunks.
+            var lodChunks = chunks + LodRingChunks;
+            _integratedServer.LodRadius = lodChunks;                         // server gen ring (chunks)
+            _network.LodRadius = lodChunks * Chunk.Size;                     // server stream cull (blocks)
+            _world.LodRenderDistance = lodChunks * Chunk.Size;              // client draw cull (blocks)
+            _world.LodCacheDistance = lodChunks * Chunk.Size + LodColumn.RegionBlocks;
         }
+
+        /// <summary>Chunks of cheap LOD horizon streamed BEYOND the full-detail render distance (the Phase-2
+        /// "distant horizon"). 20 ⇒ ~36-chunk / 576-block total horizon at RD 16 (2.25× the base render distance)
+        /// while holding ≥500 uncapped FPS on every benchmark phase (incl. the continuous-edit stress). The
+        /// geometry pass is primitive-setup-bound, so this is the FPS knob: raise it for a bigger horizon
+        /// (distance-based stride rings / greedy skirts are the deferred way to push it further without the
+        /// cost — see CLAUDE.md).</summary>
+        private const int LodRingChunks = 20;
 
         public override void Update(bool focused)
         {
@@ -293,8 +310,11 @@ namespace MinecraftClone3.States
             }
 
             var aspect = (float)_window.FramebufferSize.X / _window.FramebufferSize.Y;
+            // Far plane must clear the LOD horizon (well past the 256-block render distance) or the distant ring
+            // is clipped; covers LodRenderDistance + a region of margin.
+            var farPlane = MathF.Max(512f, _world.LodRenderDistance + LodColumn.RegionBlocks * 2);
             var projection = Matrix4.CreatePerspectiveFieldOfView(
-                MathHelper.DegreesToRadians(GraphicsSettings.Fov), aspect, 0.01f, 512);
+                MathHelper.DegreesToRadians(GraphicsSettings.Fov), aspect, 0.01f, farPlane);
             WorldRenderer.RenderWorld(_world, projection);
 
             if (!Profiler.Recording && !RenderDebug.ShowDiagnostics && !RenderDebug.ShowControls) return;
@@ -363,6 +383,10 @@ namespace MinecraftClone3.States
             Font.DrawString($"gpu {RenderDebug.GpuMs:0.0} ms   cpu upd {RenderDebug.UpdateMs:0.0} ms", 4, y, scale, OverlayText); y += lh;
 
             Font.DrawString($"chunks drawn {RenderDebug.DrawnChunks} / {_world.RenderList.Count}", 4, y, scale, OverlayText); y += lh;
+
+            var srvLod = _integratedServer != null ? $" / srv {_integratedServer.LodStore.RegionCount}" : "";
+            Font.DrawString($"lod drawn {RenderDebug.LodDrawn} / {_world.LodRegionCount}{srvLod}" +
+                            $"   readyQ {_world.LodRenderReadyQueueDepth}", 4, y, scale, OverlayText); y += lh;
 
             var shadows = RenderDebug.ShadowPass ? "on" : "off";
             Font.DrawString($"shadows {shadows}   loaded {_world.LoadedChunkCount}" +

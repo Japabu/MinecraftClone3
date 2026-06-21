@@ -49,6 +49,11 @@ namespace MinecraftClone3API.Util
             new Pose { Name = "terrain",   Offset = new Vector3(67, 42, 0),  Yaw = 0f,    Pitch = -0.32f },
             new Pose { Name = "downrings", Offset = new Vector3(50, 58, 0),  Yaw = 0f,    Pitch = -0.55f },
             new Pose { Name = "offaxis",   Offset = new Vector3(90, 44, 16), Yaw = 0.55f, Pitch = -0.34f },
+            // Phase-2: look OUT to the distant LOD horizon from up high (terrain should recede continuously into
+            // fog far past the 256-block render distance, no hard chunk edge); and a high down-look across the
+            // detail→LOD seam to check for holes / double-images.
+            new Pose { Name = "horizon",   Offset = new Vector3(0, 90, 0),   Yaw = 0f,    Pitch = -0.14f },
+            new Pose { Name = "farseam",   Offset = new Vector3(0, 150, 0),  Yaw = 0.4f,  Pitch = -0.42f },
         };
 
         private enum State { Stream, FullSettle, CaptureFull, LodSettle, CaptureLod, Advance, Done }
@@ -63,6 +68,7 @@ namespace MinecraftClone3API.Util
         private static int _poseIndex;
         private static State _state;
         private static int _lastLoaded = -1;
+        private static int _lastLodRegions = -1;
         private static byte[] _fullPixels;
         private static readonly System.Diagnostics.Stopwatch _stateTimer = new System.Diagnostics.Stopwatch();
         private static readonly System.Diagnostics.Stopwatch _sinceUnsettled = new System.Diagnostics.Stopwatch();
@@ -138,11 +144,15 @@ namespace MinecraftClone3API.Util
             // count stable + its staging queue drained) AND the client finished decoding/meshing/uploading.
             // Other states only re-mesh (no new loading), so they just need the client queues empty.
             var loaded = world.LoadedChunkCount;
+            var lodRegions = world.LodRegionCount;
             var stageEmpty = (Profiler.Server?.StageQueueDepth ?? 0) == 0;
+            // Stream also waits for the Phase-2 LOD horizon to finish filling (region count stable + decode
+            // queue drained), since the LOD thread streams it in slowly after the detail chunks.
             var settleCond = _state == State.Stream
-                ? QueuesEmpty(world) && stageEmpty && loaded == _lastLoaded
+                ? QueuesEmpty(world) && stageEmpty && loaded == _lastLoaded && lodRegions == _lastLodRegions
                 : QueuesEmpty(world);
             _lastLoaded = loaded;
+            _lastLodRegions = lodRegions;
             if (!settleCond) _sinceUnsettled.Restart();
 
             var t = _stateTimer.Elapsed.TotalSeconds;
@@ -209,7 +219,8 @@ namespace MinecraftClone3API.Util
 
         private static bool QueuesEmpty(WorldClient world) =>
             world.MeshQueueDepth == 0 && world.UploadQueueDepth == 0 &&
-            world.RenderReadyQueueDepth == 0 && world.ApplyQueueDepth == 0;
+            world.RenderReadyQueueDepth == 0 && world.ApplyQueueDepth == 0 &&
+            world.LodRenderReadyQueueDepth == 0;
 
         private static void Finish()
         {

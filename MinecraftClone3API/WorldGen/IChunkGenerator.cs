@@ -16,6 +16,12 @@ namespace MinecraftClone3API.WorldGen
 
         void Generate(CachedChunk chunk, Vector3i chunkPos);
 
+        /// <summary>A cheap surface-only LOD column (packed <see cref="LodColumn"/>: block id + surface Y + sky)
+        /// for the distant horizon, with NO full-chunk generation. Called off the server LOD thread, so it MUST
+        /// be pure/thread-safe and must not touch any per-chunk scratch that <see cref="Generate"/> owns.
+        /// Returns 0 (an empty column) where there is no LOD surface.</summary>
+        long GetLodColumn(int wx, int wz);
+
         Vector3i Spawn();
     }
 }

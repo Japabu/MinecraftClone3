@@ -142,6 +142,19 @@ namespace MinecraftClone3API.WorldGen
 
         private static float Lerp(float a, float b, float t) => a + (b - a) * t;
 
+        /// <summary>Cheap surface-only LOD column for the distant horizon: the topmost visible surface (land
+        /// top block, or water at sea level for ocean columns) packed with its Y and full sky. Pure — uses only
+        /// the read-only noise/biome fields, never the per-chunk ThreadLocal scratch that <see cref="Generate"/>
+        /// owns — so the server LOD thread can call it freely. No trees (decoration runs only on full chunks).</summary>
+        public long GetLodColumn(int wx, int wz)
+        {
+            var surf = SurfaceHeight(wx, wz);
+            if (surf < SeaLevel)
+                return LodColumn.Pack(_water.Id, SeaLevel, LightLevel.SkyMax);
+            var block = BiomeAt(wx, wz).TopBlock ?? _stone;
+            return LodColumn.Pack(block.Id, surf, LightLevel.SkyMax);
+        }
+
         public void Generate(CachedChunk chunk, Vector3i chunkPos)
         {
             var min = chunkPos * Chunk.Size;

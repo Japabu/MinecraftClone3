@@ -32,6 +32,12 @@ namespace MinecraftClone3API.Graphics
         private static readonly List<ChunkRenderData> _transparentSortedChunks = new List<ChunkRenderData>(1024);
         private static readonly List<ChunkRenderData> _transparentChunks = new List<ChunkRenderData>(1024);
 
+        // Phase-2 distant-horizon LOD regions to draw this frame (the ring beyond the real-chunk render
+        // distance). Main-thread scratch, refilled each frame like _chunksToDraw. _lodRenderDistance is the
+        // block radius the LOD ring extends to (0 ⇒ LOD dormant), captured per frame from the world.
+        private static readonly List<LodRenderData> _lodToDraw = new List<LodRenderData>(256);
+        private static float _lodRenderDistance;
+
         // Read by the cached transparent-sort comparator so the delegate is allocated once instead of
         // capturing a fresh closure (over camera position) every frame.
         private static Vector3 _sortCameraPos;
@@ -283,6 +289,8 @@ namespace MinecraftClone3API.Graphics
             // Build the visible set (frustum + render-distance scan): fills the draw lists and flags whether
             // any visible chunk is sky-exposed, so the shadow passes can be skipped when none is (deep cave).
             BuildVisibleSet(world, PlayerController.Camera, viewFrustum);
+            _lodRenderDistance = world.LodRenderDistance;
+            BuildLodVisibleSet(world, PlayerController.Camera, viewFrustum);
 
             RenderDebug.ShadowPass = sunUp && _anyShadowReceiver && GraphicsSettings.ShadowsEnabled;
             if (RenderDebug.ShadowPass)
@@ -454,6 +462,31 @@ namespace MinecraftClone3API.Graphics
             RenderDebug.DrawnChunks = _chunksToDraw.Count;
         }
 
+        /// <summary>Frustum + distance cull of the Phase-2 LOD regions into <see cref="_lodToDraw"/>. Keeps any
+        /// region overlapping the ring [RenderDistance, LodRenderDistance] (nearest/farthest-point test so the
+        /// boundary never gaps); the geometry pass draws them under the real chunks (DepthFunc.Less), so the
+        /// inner overlap is hidden behind loaded chunks. Empty (no work) when the LOD horizon is dormant.</summary>
+        private static void BuildLodVisibleSet(WorldClient world, Camera camera, Frustum viewFrustum)
+        {
+            _lodToDraw.Clear();
+            var near = RenderDistance;
+            var far = _lodRenderDistance;
+            if (far <= near) { RenderDebug.LodDrawn = 0; return; }
+
+            var list = world.LodRenderList;
+            for (var i = 0; i < list.Count; i++)
+            {
+                var rd = list[i];
+                var dist = (camera.Position - rd.Middle).Length;
+                if (dist - rd.Radius > far) continue;        // entirely beyond the LOD horizon
+                if (dist + rd.Radius < near) continue;        // entirely inside the real-chunk core
+                if (!viewFrustum.SpehereIntersection(rd.Middle, rd.Radius)) continue;
+                _lodToDraw.Add(rd);
+            }
+
+            RenderDebug.LodDrawn = _lodToDraw.Count;
+        }
+
         private static void DrawGeometryFramebuffer(WorldClient world, Camera camera, Matrix4 projection)
         {
             RenderState.Set(new GlState {CullFace = true, DepthTest = true, DepthFunc = DepthFunction.Lequal});
@@ -484,6 +517,19 @@ namespace MinecraftClone3API.Graphics
             GraphicsDebug.PushGroup("Opaque");
             world.OpaqueArena.Draw(_chunksToDraw, false);
             GraphicsDebug.PopGroup();
+
+            // Phase-2 distant horizon: draw the LOD ring UNDER the real chunks — DepthFunc.Less means an
+            // already-drawn (nearer) real chunk wins, so the inner overlap is hidden and the streaming frontier
+            // never holes or double-images. Same shader + G-buffer, just coarse baked-light geometry past the
+            // render distance. Restore Lequal so RenderState's tracked state stays consistent.
+            if (_lodToDraw.Count > 0)
+            {
+                GraphicsDebug.PushGroup("LodHorizon");
+                GL.DepthFunc(DepthFunction.Less);
+                world.LodArena.Draw(_lodToDraw, false);
+                GL.DepthFunc(DepthFunction.Lequal);
+                GraphicsDebug.PopGroup();
+            }
 
             RenderState.Set(new GlState
             {
@@ -650,12 +696,15 @@ namespace MinecraftClone3API.Graphics
             GL.Uniform1(comp.GetUniformLocation("uStarBrightness"), StarBrightness());
             GL.Uniform1(comp.GetUniformLocation("uSunSize"), SunSize);
             GL.Uniform1(comp.GetUniformLocation("uMoonSize"), MoonSize);
-            // Far-plane (sky) vs terrain split: comfortably past the farthest drawn chunk yet inside the far
-            // clip plane (512). Distance fog hides the chunk-load boundary just before the render edge.
-            var renderDistance = RenderDistance;
-            GL.Uniform1(comp.GetUniformLocation("uSkyDistance"), renderDistance + 48f);
-            GL.Uniform1(comp.GetUniformLocation("uFogStart"), renderDistance * 0.72f);
-            GL.Uniform1(comp.GetUniformLocation("uFogEnd"), renderDistance * 0.97f);
+            // Far-plane (sky) vs terrain split + distance fog. When the Phase-2 LOD horizon is active the drawn
+            // geometry reaches LodRenderDistance (well past RenderDistance), so the sky-distance threshold and
+            // the fog band move out to that horizon — otherwise the LOD ring would be painted as sky (depth ≥
+            // uSkyDistance) or fully fogged out. The fog melts the coarse far ring into uHorizonColor right
+            // before the sky takes over, hiding the LOD edge. Dormant LOD ⇒ this is just RenderDistance as before.
+            var horizonDistance = _lodRenderDistance > RenderDistance ? _lodRenderDistance : RenderDistance;
+            GL.Uniform1(comp.GetUniformLocation("uSkyDistance"), horizonDistance + 48f);
+            GL.Uniform1(comp.GetUniformLocation("uFogStart"), horizonDistance * 0.72f);
+            GL.Uniform1(comp.GetUniformLocation("uFogEnd"), horizonDistance * 0.97f);
 
             GL.Uniform1(comp.GetUniformLocation("uSunTexture"), 5);
             GL.Uniform1(comp.GetUniformLocation("uMoonTexture"), 6);

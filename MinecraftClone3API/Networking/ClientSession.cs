@@ -22,6 +22,12 @@ namespace MinecraftClone3API.Networking
         public Vector3i StreamScanChunk = new Vector3i(int.MinValue);
         public int StreamScanLoadedCount = -1;
 
+        // Phase-2 LOD horizon: regions streamed to this client, plus the same gate StreamChunks uses
+        // (player chunk + LOD-store region count) so the region scan is skipped when nothing changed.
+        public readonly HashSet<Vector3i> SentLodRegions = new HashSet<Vector3i>();
+        public Vector3i LodScanChunk = new Vector3i(int.MinValue);
+        public int LodScanRegionCount = -1;
+
         public ClientSession(IConnection connection)
         {
             Connection = connection;

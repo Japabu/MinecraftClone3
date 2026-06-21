@@ -239,4 +239,43 @@ namespace MinecraftClone3API.Networking
         public override void Write(BinaryWriter writer) => writer.Write(WorldSeconds);
         public override void Read(BinaryReader reader) => WorldSeconds = reader.ReadDouble();
     }
+
+    /// <summary>Server streams one Phase-2 LOD region (a footprint of surface-only columns for the distant
+    /// horizon). Mirrors <see cref="ChunkDataPacket"/> exactly: over the loopback the live (immutable)
+    /// <see cref="LodColumn"/> is carried by reference; over TCP it's serialized + GZip'd lazily in
+    /// <see cref="Write"/>, and <see cref="Read"/> only copies the still-compressed bytes for the client's
+    /// apply thread to decompress off the render thread.</summary>
+    public class LodColumnDataPacket : Packet
+    {
+        public Vector3i Position;
+        public LodColumn LodColumn;
+        public byte[] CompressedData;
+
+        public override PacketId Id => PacketId.LodColumnData;
+
+        public static LodColumnDataPacket From(LodColumn region)
+            => new LodColumnDataPacket {Position = region.Position, LodColumn = region};
+
+        public override void Write(BinaryWriter writer)
+        {
+            byte[] raw;
+            using (var stream = new MemoryStream())
+            {
+                using (var bw = new BinaryWriter(stream))
+                    LodColumn.Write(bw);
+                raw = stream.ToArray();
+            }
+
+            var compressed = CompressionHelper.CompressBytes(raw);
+            WriteVector3i(writer, Position);
+            writer.Write(compressed.Length);
+            writer.Write(compressed);
+        }
+
+        public override void Read(BinaryReader reader)
+        {
+            Position = ReadVector3i(reader);
+            CompressedData = reader.ReadBytes(reader.ReadInt32());
+        }
+    }
 }
