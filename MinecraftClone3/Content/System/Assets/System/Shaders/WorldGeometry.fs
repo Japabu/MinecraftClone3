@@ -30,7 +30,16 @@ vec4 GetDiffuse()
 	else if(vTexCoord.w == 3) texColor = texture(uTextures1024, vTexCoord.xyz);
 	texColor.rgb *= vColor;
 
-	if(uCutoff && texColor.a < 0.5) discard;
+	// Anti-aliased alpha test for cutout foliage (leaves). The texture array is mipmapped (trilinear + 16x
+	// aniso), so at distance the alpha channel is box-averaged down: a fixed 0.5 cutoff then shrinks leaf
+	// coverage mip by mip, so leaves dissolve and the mip-transition band reads as a seam that crawls with the
+	// camera. Sharpening the sampled alpha by its screen-space gradient (fwidth) restores a ~1px edge at every
+	// mip, so leaf coverage stays put and the seam goes away (the median-preserving "anti-aliased alpha test").
+	if(uCutoff)
+	{
+		float a = (texColor.a - 0.5) / max(fwidth(texColor.a), 0.0001) + 0.5;
+		if(a < 0.5) discard;
+	}
 
 	return texColor;
 }
