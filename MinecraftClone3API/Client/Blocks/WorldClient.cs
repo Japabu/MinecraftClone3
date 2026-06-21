@@ -411,27 +411,29 @@ namespace MinecraftClone3API.Client.Blocks
         // Pushed well out (full detail to 9 chunks) so the LOD seam isn't near the player — we have ample
         // GPU headroom (the heightmap LOD is cheap), so "too cheap too near" is a budget we don't need to spend.
         // Detail-band distances (blocks): full detail (LOD 0) within _lod1Distance, stride-2 (LOD 1) within
-        // _lod2Distance, stride-4 beyond. The base values are scaled by the user's LOD Detail multiplier
-        // (GraphicsSettings.LodDetail); at 1.0 full detail reaches 11 chunks and stride-4 never appears inside
-        // RD 16 (base Lod2 = 256 = the RD-16 edge), which is the less-aggressive default. CACHED fields (not a
-        // live property read): LodFor runs per-chunk over the whole RenderList, so RefreshLodDistances snapshots
-        // the setting once on the main thread and the loop reads stable fields.
-        private const float Lod1BaseDistance = 144f;     // full detail to 9 chunks at 100% (less aggressive than 128)
-        private const float Lod2BaseDistance = 224f;     // keep a stride-4 ring (224..RD edge) — it's the big FPS saver
+        // _lod2Distance, stride-4 beyond. The bands are RELATIVE to the render distance, scaled by the user's
+        // LOD Detail (GraphicsSettings.LodDetail): full detail reaches `RenderDistance · LodDetail`, stride-2
+        // fills the rest of the render distance, and the cheap LOD past it is the Phase-2 horizon (not these
+        // bands). So **LodDetail 1.0 = full per-block detail across the whole render distance** (the within-RD
+        // LOD off — the default the user wants); lower trades the outer ring for stride-2 to claw FPS back.
+        // CACHED fields (not a live property read): LodFor runs per-chunk over the whole RenderList, so
+        // RefreshLodDistances snapshots the setting once on the main thread and the loop reads stable fields.
         private const float LodHysteresis = 16f;        // dead-band around each boundary (no re-mesh thrash)
-        private float _lod1Distance = Lod1BaseDistance;
-        private float _lod2Distance = Lod2BaseDistance;
-        private float _lod1DistanceSq = Lod1BaseDistance * Lod1BaseDistance;
-        private float _lod2DistanceSq = Lod2BaseDistance * Lod2BaseDistance;
+        private float _lod1Distance = float.MaxValue;
+        private float _lod2Distance = float.MaxValue;
+        private float _lod1DistanceSq = float.MaxValue;
+        private float _lod2DistanceSq = float.MaxValue;
         private Vector3i _lastLodChunk = new Vector3i(int.MinValue);
 
-        /// <summary>Snapshots <c>GraphicsSettings.LodDetail</c> into the cached band distances. Main-thread only
-        /// (called from <see cref="RemeshAll"/>'s caller before re-meshing), so an in-flight <see cref="ScanLod"/>
-        /// never reads a half-updated band. Returns true if the bands actually changed.</summary>
+        /// <summary>Recomputes the cached within-RD detail bands from the render distance + the user's LOD Detail
+        /// (full detail to <c>RenderDistance·LodDetail</c>, stride-2 to the render-distance edge). Main-thread
+        /// only (called from <see cref="ApplyRenderDistance"/>'s caller and on a setting change), so an in-flight
+        /// <see cref="ScanLod"/> never reads a half-updated band. Returns true if the bands actually changed.</summary>
         public bool RefreshLodDistances()
         {
-            var d1 = Lod1BaseDistance * GraphicsSettings.LodDetail;
-            var d2 = Lod2BaseDistance * GraphicsSettings.LodDetail;
+            var rd = GraphicsSettings.RenderDistanceChunks * Chunk.Size;
+            var d1 = rd * GraphicsSettings.LodDetail;
+            var d2 = (float) rd;
             if (d1 == _lod1Distance && d2 == _lod2Distance) return false;
             _lod1Distance = d1;
             _lod2Distance = d2;

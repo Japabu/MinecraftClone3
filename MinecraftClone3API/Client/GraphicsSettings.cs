@@ -35,14 +35,14 @@ namespace MinecraftClone3API.Client
         public const float MaxMouseSensitivity = 0.02f;
         public const float MinBrightness = 0f;
         public const float MaxBrightness = 0.3f;
-        // LOD Detail = a multiplier on how far full + stride-2 detail extends before coarsening (within-RD LOD).
-        // Higher = near detail extends farther = less-aggressive LOD = prettier but lower FPS; 2.0 ≈ no
-        // coarsening inside RD 16, 0.5 = max FPS. LOD Horizon = how many chunks the cheap Phase-2 distant horizon
-        // extends BEYOND the render distance (0 = no far horizon).
-        public const float MinLodDetail = 0.5f;
-        public const float MaxLodDetail = 2.0f;
+        // LOD Detail = the fraction of the render distance kept at full per-block detail (1.0 = full detail to
+        // the render-distance edge — the within-RD LOD off; lower coarsens the outer ring to stride-2 for FPS).
+        // LOD Horizon = how many chunks the cheap Phase-2 distant horizon extends BEYOND the render distance
+        // (0 = no far horizon). Defaults: full detail + a big horizon (quality-first).
+        public const float MinLodDetail = 0.25f;
+        public const float MaxLodDetail = 1.0f;
         public const int MinLodHorizonChunks = 0;
-        public const int MaxLodHorizonChunks = 48;
+        public const int MaxLodHorizonChunks = 96;
 
         private class Data
         {
@@ -56,7 +56,7 @@ namespace MinecraftClone3API.Client
             public float MouseSensitivity = 0.008f;
             public float Brightness = 0.01f;
             public float LodDetail = 1.0f;
-            public int LodHorizonChunks = 12;
+            public int LodHorizonChunks = 48;
         }
 
         private static Data _data = new Data();

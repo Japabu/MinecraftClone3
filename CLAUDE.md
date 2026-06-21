@@ -881,18 +881,19 @@ fires only when the snapped value changes). Controls:
   `LoginAccept` view-distance advertise+clamp is deferred). `StateWorld.Update` re-applies when the setting changes.
 - **FOV** (slider 30–110°, read by `StateWorld`'s projection), **Sensitivity** (slider, the `PlayerController`
   mouse-delta multiplier), **Brightness** (slider 0–0.3 → `uMinLight` in `Composition.fs`, the unlit floor).
-- **LOD Detail** (slider 50–200%, `GraphicsSettings.LodDetail`) — the within-RD LOD "aggressiveness" knob: a
-  multiplier on the detail-band base distances (`WorldClient.Lod1BaseDistance`/`Lod2BaseDistance`, 144/224), so
-  higher = full/near detail extends farther before coarsening = prettier but lower FPS (200% ≈ no coarsening
-  inside RD 16; 50% = max FPS). `WorldClient.RefreshLodDistances()` snapshots it into the cached band fields
-  (not live-read per chunk — `LodFor` runs over the whole `RenderList`), and `StateWorld.Update` calls it +
-  `RemeshAll()` (main thread) when the setting changes (the per-frame `_lastLodDetail` gate is the debounce, so
-  a slider drag collapses to one remesh). Default 100% = 144/224 (one chunk farther than the old 128/208 — a
-  bit less aggressive; ~460 uncapped at RD 16 / shadows-off, drag down for 500+).
-- **LOD Horizon** (slider 0–48 chunks, `GraphicsSettings.LodHorizonChunks`) — the Phase-2 distant horizon
+- **LOD Detail** (slider 25–100%, `GraphicsSettings.LodDetail`) — the fraction of the render distance kept at
+  full per-block detail: `_lod1Distance = RenderDistance · LodDetail`, stride-2 fills to the render-distance
+  edge, and the cheap LOD past it is the Phase-2 horizon (not these bands). So **100% (default) = full per-block
+  detail across the whole render distance** — the within-RD LOD off, which is the quality-first default; lower
+  trades the outer ring for stride-2 to claw FPS back. `WorldClient.RefreshLodDistances()` (RD-relative, called
+  from `ApplyRenderDistance`) snapshots it into the cached band fields (not live-read per chunk — `LodFor` runs
+  over the whole `RenderList`), and `StateWorld.Update` calls `RemeshAll()` (main thread) on a render-distance
+  or detail change (per-frame gate debounces a slider drag). Full detail at RD 16 + the 48-chunk horizon is
+  ~184 uncapped on the dedicated GPU — quality-first (the user accepted a lower FPS floor for the look).
+- **LOD Horizon** (slider 0–96 chunks, `GraphicsSettings.LodHorizonChunks`) — the Phase-2 distant horizon
   extent beyond the render distance (0 = off). Drives `StateWorld.LodRingChunks` → `ApplyRenderDistance` (the
-  server gen ring / stream cull / client draw+cache radii); a change re-applies the radius chain with no
-  remesh (LOD columns just stream/evict at the new radius). Default 12.
+  server gen ring / stream cull / client draw+cache radii + the projection far plane); a change re-applies the
+  radius chain with no remesh (LOD columns just stream/evict at the new radius). Default 48 (a deep horizon).
 
 `Program.Main` calls `GraphicsSettings.Load()` before creating the window and seeds `NativeWindowSettings` from
 it, so the window opens with the saved vsync/fullscreen choice; the rest are read live each frame, so a change

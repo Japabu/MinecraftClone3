@@ -131,6 +131,7 @@ namespace MinecraftClone3.States
             _lastRenderDistanceChunks = chunks;
             _lastLodDetail = GraphicsSettings.LodDetail;
             _lastLodHorizonChunks = GraphicsSettings.LodHorizonChunks;
+            _world.RefreshLodDistances();   // the within-RD detail bands are render-distance-relative
 
             // Multiplayer: the client can only LOD what the remote server streams, so leave the LOD horizon at
             // the (dormant) default and just drive the client draw distance via RenderDistance.
@@ -169,19 +170,17 @@ namespace MinecraftClone3.States
                 return;
             }
 
-            // Re-apply the radius chain on a render-distance OR LOD-horizon change (both only retarget the
-            // gen/stream/draw radii — no remesh). A LOD-detail change re-meshes the loaded chunks at the new
-            // bands; RefreshLodDistances returns false when the 0.1 slider step didn't move the scaled band, so a
-            // multi-step drag collapses to one remesh once it actually changes a boundary. All main-thread.
-            if (GraphicsSettings.RenderDistanceChunks != _lastRenderDistanceChunks
-                || GraphicsSettings.LodHorizonChunks != _lastLodHorizonChunks)
+            // Re-apply the radius chain + LOD bands on a render-distance / LOD-horizon / LOD-detail change. The
+            // within-RD bands are render-distance-relative (refreshed in ApplyRenderDistance), so a render-
+            // distance OR detail change re-meshes the loaded chunks at the new bands; a horizon-only change just
+            // retargets the gen/stream/draw radii (no remesh). The per-frame gate debounces a slider drag. All
+            // main-thread (RemeshAll / RenderList).
+            var bandChange = GraphicsSettings.RenderDistanceChunks != _lastRenderDistanceChunks
+                             || GraphicsSettings.LodDetail != _lastLodDetail;
+            if (bandChange || GraphicsSettings.LodHorizonChunks != _lastLodHorizonChunks)
                 ApplyRenderDistance();
-
-            if (GraphicsSettings.LodDetail != _lastLodDetail)
-            {
-                _lastLodDetail = GraphicsSettings.LodDetail;
-                if (_world.RefreshLodDistances()) _world.RemeshAll();
-            }
+            if (bandChange)
+                _world.RemeshAll();
 
             // The automated benchmark drives the camera itself (no player input / no pause overlay).
             var active = focused && !_benchmark;
@@ -324,11 +323,13 @@ namespace MinecraftClone3.States
             }
 
             var aspect = (float)_window.FramebufferSize.X / _window.FramebufferSize.Y;
-            // Far plane must clear the LOD horizon (well past the 256-block render distance) or the distant ring
-            // is clipped; covers LodRenderDistance + a region of margin.
+            // Far plane must clear the LOD horizon (well past the render distance) or the distant ring is
+            // clipped; covers LodRenderDistance + a region of margin. The near plane is raised from 0.01 to 0.1
+            // so a huge far plane (a 96-chunk horizon reaches ~1800 blocks) keeps enough depth precision to not
+            // z-fight near full-detail terrain — 0.1 still only clips when the camera is right against a block.
             var farPlane = MathF.Max(512f, _world.LodRenderDistance + LodColumn.RegionBlocks * 2);
             var projection = Matrix4.CreatePerspectiveFieldOfView(
-                MathHelper.DegreesToRadians(GraphicsSettings.Fov), aspect, 0.01f, farPlane);
+                MathHelper.DegreesToRadians(GraphicsSettings.Fov), aspect, 0.1f, farPlane);
             WorldRenderer.RenderWorld(_world, projection);
 
             if (!Profiler.Recording && !RenderDebug.ShowDiagnostics && !RenderDebug.ShowControls) return;
