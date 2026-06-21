@@ -633,44 +633,14 @@ bind+uniform+draw triples per pass) but **does NOT reduce GPU time** on Mesa, be
 (helps the CPU-bound streaming case) + future GL 4.3 indirect-draw + cleaner architecture; see the performance
 findings below for why the GPU, not the CPU, is the steady-state wall.
 
-**Distance LOD — heightmap (Distant-Horizons-style) meshing of far chunks (the high-render-distance lever).**
-The geometry pass is triangle/primitive-setup bound (see findings), so at high render distance the per-frame
-triangle count is the wall. Distant chunks (where the detail is sub-pixel) are re-meshed as a coarse 2.5-D
-**heightmap** at a stride: **LOD 0** = full per-block (`< 128` blocks = 8 chunks), **LOD 1** = stride-2
-(`< 208`), **LOD 2** = stride-4 (beyond, to the RD-16 edge). `ChunkMesher.AddBlocksToVaoLod` is **not** a voxel
-super-block mesher (that was removed — it stair-stepped, mis-lit faces black, and smeared one corner's material
-across a slope, so coastal water climbed cliffs as giant blue triangles). Instead, per stride×stride column it
-finds the **LOD surface** (`SurfaceTop` → topmost block where `IsLodSurface` holds) and emits a **flat top
-quad** at that height plus **vertical skirt quads** down to each lower neighbour's surface (so cliffs read as
-walls and steps don't see-through). **`IsLodSurface` deliberately includes leaves** (`TransparencyType.Cutoff`)
-as well as liquid and opaque-full blocks (only true `Transparent` glass is excluded) — this is the DH rule
-("anything with presence is a solid coloured LOD voxel"), so a tree column resolves to its **canopy**, rendering
-as a green **bump**, not a trunk **stump** (the earlier opaque-only rule stumped every tree). Each column uses
-its own surface block's top/side `FaceData` (texture + tint, no material smearing across a water↔land border),
-flat per-column light sampled from the air **above** the surface (no black faces); **skirt sides are darkened**
-(`LodSideShade*`, Minecraft-style E/W 0.6, N/S 0.8) so cliff/step faces read as shaded relief — the deferred
-lighting is baked-per-vertex with **no N·L term**, so relief must be baked into the light here, not derived from
-a surface normal. **Water columns carry the `WaterNormalW` flag** so distant water still gets the composition's
-Fresnel sky reflection + sun glint (opaque, no separate transparent pass for LOD chunks — all into the opaque
-arena). Heights are world-sampled (`world.GetBlock` down a `[chunkBottom−16, chunkTop+stride]` window on a
-1-cell-padded grid), so adjacent chunks agree on the shared edge → no cracks; a cell is **owned** by the chunk
-whose Y range holds its surface (`sy ∈ [bottom, top)`), so it's emitted exactly once up the vertical stack.
-`ChunkRenderData.DesiredLod` is set by `WorldClient.ScanLod` (a distance scan gated on chunk-border crossings,
-like eviction; **bidirectional** — re-meshes on both approach *and* recede, since a recede chunk can rotate
-back into view; low-priority re-meshes so they sit behind first-load streaming) and `DrainRenderReady` (initial
-level at stream time); the mesh thread reads it in `Update`. The band thresholds are the cached
-`_lod1Distance`/`_lod2Distance` fields = `Lod1BaseDistance`/`Lod2BaseDistance` (144/224) **scaled by the user's
-`GraphicsSettings.LodDetail` multiplier** (the **LOD Detail** graphics slider — see the state-system section;
-`RefreshLodDistances()` snapshots it, `StateWorld` re-meshes on change), with a `LodHysteresis` dead-band on the
-hysteretic `LodFor(center, current)` so a chunk straddling a boundary doesn't re-mesh every border crossing. **`geomMs` ~1.2 ms at RD 16**; RD 16 +
-shadows off runs **~510 capped / ~600 uncapped FPS** on the dedicated GPU (every benchmark phase ≥ 500
-uncapped). Verify quality changes with the `--inspect` A/B-diff tool (see debug section). Tradeoffs / residual
-edges (accepted): distant terrain is a stepped heightmap and distant foliage is an **opaque bumpy canopy**
-(no see-through gaps, no trunk — DH accepts the same); a cliff taller than ~a chunk (16 blocks) at a chunk
-boundary can leave a thin see-through slit (the skirt scan window only reaches a chunk below); the top is
-flat-shaded per column (no smooth slope), so stride-4 terrain steps at ~4-block granularity. The above is the
-**within-RD-16** heightmap LOD (it meshes *real loaded chunks* at a coarser stride); the **Phase-2 distant
-horizon** below extends cheap LOD terrain *beyond* the streamed chunks.
+**Within the render distance: NO LOD — chunks always mesh at full per-block detail.** A within-RD heightmap LOD
+(coarsening loaded chunks at stride 2/4 in the outer render distance) was tried and **removed** — coarse LOD that
+near the camera looked bad (the maintainer's call). `ChunkRenderData.AddBlocksToVao` is now always the full
+per-block path; `ChunkMesher.AddBlocksToVaoLod`/`SurfaceTop`/`IsLodSurface` and `WorldClient.LodFor`/`ScanLod`/
+`RefreshLodDistances` are gone. The **only** cheap LOD is the **Phase-2 distant horizon** below, which renders
+LOD terrain *beyond* the render distance (where coarseness is far + fog-hidden). With full detail to the render
+distance, the geometry pass is dominated by the near full-detail chunks (the horizon is nearly free — see the
+stride rings below); RD 16 + a 64-chunk horizon runs ~180 uncapped FPS on the dedicated GPU.
 
 **Phase-2 distant horizon — a second streaming channel of surface-only columns far past the view distance.**
 The within-RD LOD above can only coarsen chunks the client actually has (≤ `ServerNetwork.ViewDistance`). The
@@ -900,19 +870,15 @@ fires only when the snapped value changes). Controls:
   `LoginAccept` view-distance advertise+clamp is deferred). `StateWorld.Update` re-applies when the setting changes.
 - **FOV** (slider 30–110°, read by `StateWorld`'s projection), **Sensitivity** (slider, the `PlayerController`
   mouse-delta multiplier), **Brightness** (slider 0–0.3 → `uMinLight` in `Composition.fs`, the unlit floor).
-- **LOD Detail** (slider 25–100%, `GraphicsSettings.LodDetail`) — the fraction of the render distance kept at
-  full per-block detail: `_lod1Distance = RenderDistance · LodDetail`, stride-2 fills to the render-distance
-  edge, and the cheap LOD past it is the Phase-2 horizon (not these bands). So **100% (default) = full per-block
-  detail across the whole render distance** — the within-RD LOD off, which is the quality-first default; lower
-  trades the outer ring for stride-2 to claw FPS back. `WorldClient.RefreshLodDistances()` (RD-relative, called
-  from `ApplyRenderDistance`) snapshots it into the cached band fields (not live-read per chunk — `LodFor` runs
-  over the whole `RenderList`), and `StateWorld.Update` calls `RemeshAll()` (main thread) on a render-distance
-  or detail change (per-frame gate debounces a slider drag). Full detail at RD 16 + the 48-chunk horizon is
-  ~184 uncapped on the dedicated GPU — quality-first (the user accepted a lower FPS floor for the look).
+- **LOD Quality** (slider 50–200%, `GraphicsSettings.LodHorizonQuality`) — scales how far the Phase-2 horizon's
+  **detail rings** (stride-4 → 8 → 16) extend before coarsening: higher = finer horizon farther out (lower FPS),
+  lower = coarser/cheaper. (It does **not** touch the render distance — chunks there are always full detail.)
+  `WorldClient.MeshStepFor` reads it live; a change calls `WorldClient.ForceLodMeshRescan()` (`StateWorld.Update`)
+  to re-step the existing LOD regions. Default 100%.
 - **LOD Horizon** (slider 0–96 chunks, `GraphicsSettings.LodHorizonChunks`) — the Phase-2 distant horizon
   extent beyond the render distance (0 = off). Drives `StateWorld.LodRingChunks` → `ApplyRenderDistance` (the
   server gen ring / stream cull / client draw+cache radii + the projection far plane); a change re-applies the
-  radius chain with no remesh (LOD columns just stream/evict at the new radius). Default 48 (a deep horizon).
+  radius chain (no chunk remesh — LOD columns stream/evict at the new radius). Default 64 (a deep horizon).
 
 `Program.Main` calls `GraphicsSettings.Load()` before creating the window and seeds `NativeWindowSettings` from
 it, so the window opens with the saved vsync/fullscreen choice; the rest are read live each frame, so a change
@@ -1458,10 +1424,10 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
 ## Known rough edges / deferred work
 
 - **The full Distant-Horizons suite is shipped (quality-first); a few refinements are deferred.** Default config:
-  **full per-block detail across the whole render distance** (the within-RD LOD off, `LodDetail` 1.0), then a
+  **full per-block detail across the whole render distance** (there is no within-RD LOD — removed), then a
   **huge Phase-2 horizon** (`LodHorizonChunks` 64, max 96) of cheap LOD columns coarsening with distance
-  (stride-4 → 8 → 16 rings), with **far-ring trees** (matched to the real positions) and a **dithered cross-fade**
-  at the render-distance seam. See the Networking / Threading / World-gen / Rendering sections. RD 16 + 64-chunk
+  (stride-4 → 8 → 16 rings, scaled by the **LOD Quality** option), with **far-ring trees** (matched to the real
+  positions) and a **dithered cross-fade** at the render-distance seam. See the Networking / Threading / World-gen / Rendering sections. RD 16 + 64-chunk
   horizon is ~180 uncapped on the dedicated GPU — the user explicitly traded the old ≥500 FPS bar for the look
   (the dominant cost is now full-detail-RD, *not* the horizon, which is nearly free thanks to the stride rings).
   Accepted residual edges / deferred refinements:
