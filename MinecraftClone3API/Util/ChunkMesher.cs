@@ -68,7 +68,9 @@ namespace MinecraftClone3API.Util
                     var neighbour = world.GetBlock(neighbourPos);
                     if (neighbour.IsOpaqueFullBlock(world, neighbourPos)) continue;
 
-                    AddFaceToVao(world, blockPos, x, y, z, block, face, entry.Value, vao, transform);
+                    // Flat light sampled from the exposed air super-block (the side the face looks toward).
+                    AddFaceToVao(world, blockPos, x, y, z, block, face, entry.Value, vao, transform,
+                        SampleBrightness(world, neighbourPos));
                 }
             }
         }
@@ -118,7 +120,7 @@ namespace MinecraftClone3API.Util
             }
         }
 
-        public static void AddFaceToVao(WorldBase world, Vector3i blockPos, int x, int y, int z, Block block, BlockFace face, BlockModel.FaceData data, MeshBuffer vao, Matrix4 transform)
+        public static void AddFaceToVao(WorldBase world, Vector3i blockPos, int x, int y, int z, Block block, BlockFace face, BlockModel.FaceData data, MeshBuffer vao, Matrix4 transform, Vector4? lodLight = null)
         {
             var faceId = (int) face - 1;
             var baseVertex = vao.VertexCount;
@@ -150,7 +152,9 @@ namespace MinecraftClone3API.Util
                 //tex coords are -1 if texture is null; texCoord z = texId, w = textureArrayId
                 var texCoord = texture == null ? new Vector4(-1) : new Vector4(texCoords[j]) {Z = texture.TextureId, W = texture.ArrayId};
 
-                var brightness = CalculateBrightness(world, block, blockPos, face, vertexPosition);
+                // LOD faces light flat from the exposed air super-block (per-vertex AO sampling would read the
+                // immediate neighbour, which is inside the solid super-block region → black faces).
+                var brightness = lodLight ?? CalculateBrightness(world, block, blockPos, face, vertexPosition);
 
                 vao.Add(position, texCoord, normal, colorXyz, brightness);
 
