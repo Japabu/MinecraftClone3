@@ -477,7 +477,7 @@ namespace MinecraftClone3API.Graphics
             // Inner edge pulled in by the fade band so the horizon has geometry to dither IN against the chunks
             // dithering OUT (else the band would be chunk-discard against empty horizon = holes).
             var near = RenderDistance - FadeBandWidth;
-            if (far <= RenderDistance) { RenderDebug.LodDrawn = 0; return; }
+            if (far <= RenderDistance || world.ForceLodOff) { RenderDebug.LodDrawn = 0; return; }
 
             var list = world.LodRenderList;
             for (var i = 0; i < list.Count; i++)

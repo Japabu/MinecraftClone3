@@ -39,12 +39,6 @@ namespace MinecraftClone3API.Graphics
         /// replaced by another at the same position), so it's computed once instead of every access.</summary>
         public readonly Vector3 Middle;
 
-        /// <summary>LOD the main thread wants this chunk meshed at (0 = full per-block, 1 = stride-2 coarse,
-        /// 2 = stride-4). Set by the distance-based LOD scan; the mesh thread reads it in <see cref="Update"/>
-        /// and records the level it actually meshed in <see cref="Lod"/>.</summary>
-        public volatile int DesiredLod;
-        public int Lod = -1;
-
         public bool HasOpaque => OpaqueAlloc.IndexCount > 0;
         public bool HasTransparency => _transparentVao.UploadedCount > 0;
 
@@ -140,17 +134,9 @@ namespace MinecraftClone3API.Graphics
 
         private void AddBlocksToVao()
         {
+            // Chunks within the render distance always mesh at FULL per-block detail (no within-RD LOD — it
+            // looked bad up close). The cheap LOD is the Phase-2 horizon, beyond the render distance only.
             var chunk = Chunk;
-            var lod = DesiredLod;
-            Lod = lod;
-
-            if (lod > 0)
-            {
-                // Distant chunk: one coarse mesh into the opaque arena (no separate transparent pass).
-                ChunkMesher.AddBlocksToVaoLod(chunk.World, chunk.Position * Chunk.Size, chunk, _opaque, 1 << lod);
-                return;
-            }
-
             var min = chunk.Min;
             var max = chunk.Max;
             for (var x = min.X; x <= max.X; x++)

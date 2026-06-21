@@ -46,7 +46,7 @@ namespace MinecraftClone3.States
         private bool _loading = true;
         private bool _spawnApplied;
         private int _lastRenderDistanceChunks = -1;
-        private float _lastLodDetail = -1f;
+        private float _lastLodHorizonQuality = -1f;
         private int _lastLodHorizonChunks = -1;
         private readonly Stopwatch _loadingTimer = Stopwatch.StartNew();
         private Texture _loadingBackground;
@@ -129,9 +129,9 @@ namespace MinecraftClone3.States
         {
             var chunks = GraphicsSettings.RenderDistanceChunks;
             _lastRenderDistanceChunks = chunks;
-            _lastLodDetail = GraphicsSettings.LodDetail;
+            _lastLodHorizonQuality = GraphicsSettings.LodHorizonQuality;
             _lastLodHorizonChunks = GraphicsSettings.LodHorizonChunks;
-            _world.RefreshLodDistances();   // the within-RD detail bands are render-distance-relative
+            _world.ForceLodMeshRescan();   // a render-distance / horizon change shifts the LOD stride rings
 
             // Multiplayer: the client can only LOD what the remote server streams, so leave the LOD horizon at
             // the (dormant) default and just drive the client draw distance via RenderDistance.
@@ -170,17 +170,18 @@ namespace MinecraftClone3.States
                 return;
             }
 
-            // Re-apply the radius chain + LOD bands on a render-distance / LOD-horizon / LOD-detail change. The
-            // within-RD bands are render-distance-relative (refreshed in ApplyRenderDistance), so a render-
-            // distance OR detail change re-meshes the loaded chunks at the new bands; a horizon-only change just
-            // retargets the gen/stream/draw radii (no remesh). The per-frame gate debounces a slider drag. All
-            // main-thread (RemeshAll / RenderList).
-            var bandChange = GraphicsSettings.RenderDistanceChunks != _lastRenderDistanceChunks
-                             || GraphicsSettings.LodDetail != _lastLodDetail;
-            if (bandChange || GraphicsSettings.LodHorizonChunks != _lastLodHorizonChunks)
+            // Re-apply the radius chain on a render-distance / LOD-horizon change (ApplyRenderDistance also
+            // re-steps the LOD rings). A LOD-Quality change just re-steps the existing LOD regions (no chunk
+            // remesh — chunks are always full detail now). All main-thread (touches RenderList). Per-frame gate
+            // debounces a slider drag.
+            if (GraphicsSettings.RenderDistanceChunks != _lastRenderDistanceChunks
+                || GraphicsSettings.LodHorizonChunks != _lastLodHorizonChunks)
                 ApplyRenderDistance();
-            if (bandChange)
-                _world.RemeshAll();
+            if (GraphicsSettings.LodHorizonQuality != _lastLodHorizonQuality)
+            {
+                _lastLodHorizonQuality = GraphicsSettings.LodHorizonQuality;
+                _world.ForceLodMeshRescan();
+            }
 
             // The automated benchmark drives the camera itself (no player input / no pause overlay).
             var active = focused && !_benchmark;

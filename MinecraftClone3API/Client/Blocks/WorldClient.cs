@@ -320,7 +320,6 @@ namespace MinecraftClone3API.Client.Blocks
 
             _phaseTimer.Restart();
             EvictDistantChunks();
-            ScanLod();
             EvictDistantLod();
             ScanLodForMeshStep();
             LastEvictMs = _phaseTimer.Elapsed.TotalMilliseconds;
@@ -365,7 +364,6 @@ namespace MinecraftClone3API.Client.Blocks
                 }
 
                 renderData.Chunk = chunk;
-                renderData.DesiredLod = LodFor(renderData.Middle);
                 QueueMesh(ready.Position, ready.HighPriority);
             }
         }
@@ -412,10 +410,16 @@ namespace MinecraftClone3API.Client.Blocks
         {
             var dist = (middle - _playerPosition).Length;
             var rd = GraphicsSettings.RenderDistanceChunks * Chunk.Size;
-            if (dist < rd + LodStride8Distance) return 1;
-            if (dist < rd + LodStride16Distance) return 2;
+            // LOD Quality pushes the stride rings out (finer horizon farther) or pulls them in (coarser, faster).
+            var q = GraphicsSettings.LodHorizonQuality;
+            if (dist < rd + LodStride8Distance * q) return 1;
+            if (dist < rd + LodStride16Distance * q) return 2;
             return 4;
         }
+
+        /// <summary>Forces the next <see cref="ScanLodForMeshStep"/> to re-evaluate every LOD region's stride
+        /// (after a LOD-Quality change, which shifts the ring distances). Main-thread only.</summary>
+        public void ForceLodMeshRescan() => _lastLodStepChunk = new Vector3i(int.MinValue);
 
         /// <summary>Re-evaluates each LOD region's mesh stride against the player's new position and re-queues any
         /// whose ring changed. Gated on a chunk-border crossing (own gate), so a stationary player does no work.
@@ -443,106 +447,17 @@ namespace MinecraftClone3API.Client.Blocks
                     _lodUploadQueue.Enqueue(key);
         }
 
-        // Distance (block, chunk-centre to player) at which chunks switch to coarser LOD meshes — the
-        // geometry pass is triangle/primitive-setup bound at high render distance, so distant chunks (where
-        // the detail is sub-pixel) are meshed at stride 2 then stride 4, cutting their face count ~4×/16×.
-        // Pushed well out (full detail to 9 chunks) so the LOD seam isn't near the player — we have ample
-        // GPU headroom (the heightmap LOD is cheap), so "too cheap too near" is a budget we don't need to spend.
-        // Detail-band distances (blocks): full detail (LOD 0) within _lod1Distance, stride-2 (LOD 1) within
-        // _lod2Distance, stride-4 beyond. The bands are RELATIVE to the render distance, scaled by the user's
-        // LOD Detail (GraphicsSettings.LodDetail): full detail reaches `RenderDistance · LodDetail`, stride-2
-        // fills the rest of the render distance, and the cheap LOD past it is the Phase-2 horizon (not these
-        // bands). So **LodDetail 1.0 = full per-block detail across the whole render distance** (the within-RD
-        // LOD off — the default the user wants); lower trades the outer ring for stride-2 to claw FPS back.
-        // CACHED fields (not a live property read): LodFor runs per-chunk over the whole RenderList, so
-        // RefreshLodDistances snapshots the setting once on the main thread and the loop reads stable fields.
-        private const float LodHysteresis = 16f;        // dead-band around each boundary (no re-mesh thrash)
-        private float _lod1Distance = float.MaxValue;
-        private float _lod2Distance = float.MaxValue;
-        private float _lod1DistanceSq = float.MaxValue;
-        private float _lod2DistanceSq = float.MaxValue;
-        private Vector3i _lastLodChunk = new Vector3i(int.MinValue);
-
-        /// <summary>Recomputes the cached within-RD detail bands from the render distance + the user's LOD Detail
-        /// (full detail to <c>RenderDistance·LodDetail</c>, stride-2 to the render-distance edge). Main-thread
-        /// only (called from <see cref="ApplyRenderDistance"/>'s caller and on a setting change), so an in-flight
-        /// <see cref="ScanLod"/> never reads a half-updated band. Returns true if the bands actually changed.</summary>
-        public bool RefreshLodDistances()
-        {
-            var rd = GraphicsSettings.RenderDistanceChunks * Chunk.Size;
-            var d1 = rd * GraphicsSettings.LodDetail;
-            var d2 = (float) rd;
-            if (d1 == _lod1Distance && d2 == _lod2Distance) return false;
-            _lod1Distance = d1;
-            _lod2Distance = d2;
-            _lod1DistanceSq = d1 * d1;
-            _lod2DistanceSq = d2 * d2;
-            return true;
-        }
-
-        /// <summary>Debug/inspection toggle: when true every chunk meshes at full detail (LOD 0), so the
-        /// inspection tool can A/B the LOD against the ground truth. Call <see cref="RemeshAll"/> after changing.</summary>
+        /// <summary>Debug/inspection toggle: when true the Phase-2 distant horizon is not drawn (so the
+        /// inspection tool can A/B the horizon against full-detail-only). There is no within-RD LOD to toggle —
+        /// chunks inside the render distance always mesh at full per-block detail.</summary>
         public volatile bool ForceLodOff;
 
-        private int LodFor(Vector3 center)
-        {
-            if (ForceLodOff) return 0;
-            var distSq = (center - _playerPosition).LengthSquared;
-            if (distSq < _lod1DistanceSq) return 0;
-            if (distSq < _lod2DistanceSq) return 1;
-            return 2;
-        }
-
-        /// <summary>Hysteretic LOD pick: holds <paramref name="current"/> within a dead-band widened by
-        /// <see cref="LodHysteresis"/> around each boundary, so a chunk straddling a band edge doesn't re-mesh
-        /// on every border crossing. Outside the held window it falls back to the plain bands (handles teleports).</summary>
-        private int LodFor(Vector3 center, int current)
-        {
-            if (ForceLodOff) return 0;
-            var dist = (center - _playerPosition).Length;
-            float lo, hi;
-            switch (current)
-            {
-                case 0: lo = 0; hi = _lod1Distance + LodHysteresis; break;
-                case 1: lo = _lod1Distance - LodHysteresis; hi = _lod2Distance + LodHysteresis; break;
-                default: lo = _lod2Distance - LodHysteresis; hi = float.MaxValue; break;
-            }
-            if (dist >= lo && dist < hi) return current;
-            if (dist < _lod1Distance) return 0;
-            if (dist < _lod2Distance) return 1;
-            return 2;
-        }
-
-        /// <summary>Re-queues every rendered chunk for re-meshing at the current LOD policy (used by the
-        /// inspection tool when toggling <see cref="ForceLodOff"/>). Main-thread only (touches RenderList).</summary>
+        /// <summary>Re-queues every rendered chunk for re-meshing (used by the inspection tool). Main-thread only
+        /// (touches RenderList).</summary>
         public void RemeshAll()
         {
             for (var i = 0; i < RenderList.Count; i++)
-            {
-                var rd = RenderList[i];
-                rd.DesiredLod = LodFor(rd.Middle, rd.DesiredLod);
-                QueueMesh(rd.Chunk.Position, false);
-            }
-        }
-
-        /// <summary>Re-evaluates each rendered chunk's LOD against the player's new position and re-queues any
-        /// whose level changed (a chunk approached → finer, receded → coarser). Gated on a chunk-border
-        /// crossing like eviction, so a stationary player does no work; the re-meshes are low priority so they
-        /// sit behind first-load streaming. Main-thread only (touches RenderList).</summary>
-        private void ScanLod()
-        {
-            var playerChunk = ChunkInWorld(_playerPosition.ToVector3i());
-            if (playerChunk == _lastLodChunk) return;
-            _lastLodChunk = playerChunk;
-
-            for (var i = 0; i < RenderList.Count; i++)
-            {
-                var rd = RenderList[i];
-                var want = LodFor(rd.Middle, rd.DesiredLod);
-                if (want == rd.DesiredLod) continue;
-                rd.DesiredLod = want;
-                QueueMesh(rd.Chunk.Position, false);
-            }
+                QueueMesh(RenderList[i].Chunk.Position, false);
         }
 
         /// <summary>Drops chunks the player has moved away from and tells the server it released them.

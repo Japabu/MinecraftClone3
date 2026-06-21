@@ -85,9 +85,10 @@ namespace MinecraftClone3.States
                 v => GraphicsSettings.Brightness = v,
                 v => Percent(v, GraphicsSettings.MinBrightness, GraphicsSettings.MaxBrightness)));
 
-            Elements.Add(new GuiSlider(Row(x, y0, step, row++), "LOD Detail",
-                GraphicsSettings.MinLodDetail, GraphicsSettings.MaxLodDetail, 0.1f, GraphicsSettings.LodDetail,
-                v => GraphicsSettings.LodDetail = v,
+            Elements.Add(new GuiSlider(Row(x, y0, step, row++), "LOD Quality",
+                GraphicsSettings.MinLodHorizonQuality, GraphicsSettings.MaxLodHorizonQuality, 0.25f,
+                GraphicsSettings.LodHorizonQuality,
+                v => GraphicsSettings.LodHorizonQuality = v,
                 v => (int) Math.Round(v * 100) + "%"));
 
             Elements.Add(new GuiSlider(Row(x, y0, step, row++), "LOD Horizon",

@@ -49,7 +49,7 @@ namespace MinecraftClone3API.Util
         public static ShadowQuality Shadows = ShadowQuality.Medium;
         public static float Fov = 90f;
         public static float Brightness = 0.08f;
-        public static float LodDetail = 1.0f;              // within-RD LOD detail multiplier (GraphicsSettings)
+        public static float LodHorizonQuality = 1.0f;   // horizon detail-ring quality multiplier (GraphicsSettings)
         public static int LodHorizonChunks = 64;           // Phase-2 far-horizon chunks beyond render distance
         public static bool DoEdits = true;
         // Pins the day clock so sun/shadow conditions are identical every run (≈ mid-morning: sun well up,
@@ -125,7 +125,7 @@ namespace MinecraftClone3API.Util
                     case "benchmark-warmup": if (double.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var w)) WarmupSeconds = w; break;
                     case "benchmark-seed": if (long.TryParse(val, out var s)) Seed = s; break;
                     case "benchmark-rd": if (int.TryParse(val, out var rd)) RenderDistanceChunks = rd; break;
-                    case "benchmark-loddetail": if (float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var ld)) LodDetail = ld; break;
+                    case "benchmark-lodquality": if (float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var ld)) LodHorizonQuality = ld; break;
                     case "benchmark-lodhorizon": if (int.TryParse(val, out var lh)) LodHorizonChunks = lh; break;
                     case "benchmark-edits": DoEdits = !(val.Equals("off", StringComparison.OrdinalIgnoreCase) || val == "0"); break;
                     case "benchmark-time": if (double.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var t)) FixedTimeOfDay = t; break;
@@ -147,7 +147,7 @@ namespace MinecraftClone3API.Util
             GraphicsSettings.ShadowQuality = Shadows;
             GraphicsSettings.Fov = Fov;
             GraphicsSettings.Brightness = Brightness;
-            GraphicsSettings.LodDetail = LodDetail;
+            GraphicsSettings.LodHorizonQuality = LodHorizonQuality;
             GraphicsSettings.LodHorizonChunks = LodHorizonChunks;
             WorldRenderer.FixedTimeOfDay = FixedTimeOfDay;
         }
