@@ -373,10 +373,10 @@ spawn column (one-shot join signal, see the handshake above) → **flush block c
                  (sky BFS flood, same edited cell) per edit; blocks on _lightSignal (an AutoResetEvent set
                  by SetBlock/SetBlockData) when idle instead of spinning Thread.Sleep(1), waking on a 100 ms
                  timeout to observe _unloaded. Sole writer of both the light and sky containers (post-publish)
-   LodThread     (BelowNormal) fills _lodStore with cheap surface-only LOD columns in the ring beyond
-                 TerrainRadius out to LodRadius (Phase-2 horizon). Sole writer of _lodStore; reads
-                 LoadedChunks/PlayerEntities; writes NOTHING to chunks/light/dirty. Dormant until LodRadius
-                 > TerrainRadius (see the Phase-2 rendering section)
+   LodThread     (BelowNormal) fills _lodStore with cheap surface-only LOD columns + tree canopies
+                 (GetLodColumn + DecorateLodRegion) in the ring beyond TerrainRadius out to LodRadius (Phase-2
+                 horizon). Sole writer of _lodStore; reads LoadedChunks/PlayerEntities; writes NOTHING to
+                 chunks/light/dirty. Dormant until LodRadius > TerrainRadius (see the Phase-2 rendering section)
    WorldServer.Update()  (caller's thread) drains add/remove into LoadedChunks; runs entity updates
 
  WorldClient:
@@ -685,10 +685,16 @@ look. End-to-end data flow:
   (re-fill replaces the whole object) so the loopback by-ref clone is race-free, exactly like `Chunk` streaming.
   `LodColumnStore` is a lock-based region dict with one writer thread (server: LOD thread; client: apply thread)
   and an `Interlocked` `RegionCount` mirror for the profiler.
-- **Server generation** (`NoiseChunkGenerator.GetLodColumn`, on `IChunkGenerator`): a column is the topmost
-  visible surface — land `TopBlock` at `SurfaceHeight`, or water at `SeaLevel` for ocean columns — computed
-  **surface-only** from the existing pure noise/biome functions (≈2 noise evals), **no full 16³ chunk, no
-  ThreadLocal scratch** (so it's safe off the LOD thread). No decoration → **no trees** in the far ring.
+- **Server generation** (`NoiseChunkGenerator.GetLodColumn` + `DecorateLodRegion`, on `IChunkGenerator`): the
+  base column is the topmost visible surface — land `TopBlock` at `SurfaceHeight`, or water at `SeaLevel` for
+  ocean columns — computed **surface-only** from the existing pure noise/biome functions (≈2 noise evals), **no
+  full 16³ chunk, no ThreadLocal scratch** (so it's safe off the LOD thread). **Trees: `DecorateLodRegion`** then
+  stamps canopies — for each origin chunk in the region (±1 margin) it replays the vegetation features' RNG
+  **once per region** (not per column) via `TreeFeature.CollectTrees` (bit-identical RNG order to `Place`:
+  chance → x → z → sea-level-skip → height) and raises the covered stride-4 rep columns to a leaf surface at the
+  canopy top (`StampCanopy`, the `topY+1`/`topY-1` leaf shape). So the horizon forests land on the **same
+  columns the real trees grow** — no tree pop at the render-distance boundary. (Per-column RNG replay would be
+  ~100× more noise evals; the per-region pass is the cheap correct form.)
 - **Server LOD thread** (`WorldServer.LodThread`, `BelowNormal`): the sole writer of `_lodStore`. Fills the ring
   `[TerrainRadius .. LodRadius]` around each player (a few regions/iter, `RegionInRing` test with a one-region
   inner overlap so the seam never gaps), evicts regions no player is near. **Dormant** (zero work) while
@@ -706,21 +712,34 @@ look. End-to-end data flow:
   `ChunkMesher.AddLodColumnRegionToVao`; the main-thread upload loop uploads it into a **second
   `ChunkMeshArena` (`LodArena`)** after the chunk uploads, within the same frame budget. Eviction
   (`EvictDistantLod`) drops regions past `LodCacheDistance`. All GL is main-thread (Invariant 1).
-- **The run-list mesher** (`ChunkMesher.AddLodColumnRegionToVao`): the *same* flat-top + skirt + `IsLodSurface`
-  + skirt-shade emission as the within-RD mesher, but driven by the packed columns (no world, no real blocks) —
-  `GameRegistry.BlockRegistry[blockId]` for the block, world-free `GetTintColor`/`GetRenderMaterial` (grass/water
-  tint by position, water reflection flag), sky-only light. Tops are **greedy-merged** (runs of identical
-  columns → one quad; water/plains collapse, the big geometry win); **skirts stay per-cell** (they only emit at
-  height steps). Neighbour heights read across into adjacent regions (`LodNeighbourY`) so region borders don't
-  crack; an unknown neighbour skirts to `LodFloorY`.
-- **Render integration** (`WorldRenderer`): `BuildLodVisibleSet` frustum+distance-culls `LodRenderList` to the
-  ring `[RenderDistance, LodRenderDistance]` (nearest/farthest-point test so the boundary never gaps); the
+- **The run-list mesher** (`ChunkMesher.AddLodColumnRegionToVao(store, key, vao, meshStep)`): the *same* flat-top
+  + skirt + `IsLodSurface` + skirt-shade emission as the within-RD mesher, but driven by the packed columns (no
+  world, no real blocks) — `GameRegistry.BlockRegistry[blockId]` for the block, world-free
+  `GetTintColor`/`GetRenderMaterial` (grass/water tint by position, water reflection flag), sky-only light. Tops
+  are **greedy-merged** (runs of identical columns → one quad; water/plains collapse, the big geometry win);
+  **skirts stay per-cell**. **`meshStep` = the DH detail ring** (1 = stride-4 store res, 2 = stride-8, 4 =
+  stride-16): the mesher downsamples the store to a super-grid by **MAX surface** (`MaxSurfaceCell` — keeps
+  trees/peaks from sinking, so forests stay canopy plateaus when coarsened) and meshes the super-grid; neighbour
+  super-cells are computed on demand (`SuperNeighbourY`). `LodRenderData.DesiredMeshStep` is set by
+  `WorldClient.ScanLodForMeshStep` (own chunk-cross gate) from the region's distance: stride-4 for the first
+  `LodStride8Distance` (24 chunks) past the render distance, then stride-8, then stride-16 — **rings 24 chunks
+  (3 regions) wide so adjacent regions never differ by >1 step (no >2× crack)**. Doubling the horizon adds ~0
+  geom (the far rings are 4×/16× cheaper + fog-occluded).
+- **Render integration** (`WorldRenderer`): `BuildLodVisibleSet` frustum+distance-culls `LodRenderList` to
+  `[RenderDistance − FadeBandWidth, LodRenderDistance]` (the inner edge pulled in for the cross-fade band); the
   geometry pass draws `LodArena` **after** the real chunks with **`DepthFunc.Less`** (already-drawn nearer real
-  chunks win → the inner overlap is hidden, no holes/double-image — DH overdraw-prevention), same G-buffer +
-  shader. Because drawn geometry now reaches past 256 blocks, the **projection far plane** (`StateWorld`) and
-  the composition **`uSkyDistance` + fog band** are widened to the LOD horizon (else the ring is clipped or
-  painted as sky); the fog melts the coarse far ring into `uHorizonColor` right before the sky takes over. No
-  LOD in the shadow pass (past `ShadowDistance`). `LodRingChunks` is the FPS knob (see "Known rough edges").
+  chunks win → inner overlap hidden, DH overdraw-prevention), same G-buffer + shader. Because drawn geometry now
+  reaches well past the render distance, the **projection far plane** (`StateWorld`, near plane raised to 0.1 for
+  precision) and the composition **`uSkyDistance` + fog band** are widened to the LOD horizon; the fog melts the
+  coarse far ring into `uHorizonColor` before the sky. No LOD in the shadow pass.
+- **Dithered cross-fade (LOD morph, no pop).** Full-detail chunks dissolve into the horizon over a 32-block band
+  (`FadeBandWidth`) just inside the render distance instead of popping when a chunk loads/unloads at the edge.
+  `WorldGeometry.vs` passes `vWorldPos`; the `.fs` does a complementary **Bayer-4×4 dither discard** (chunk fades
+  OUT where `dither < fade`, LOD fades IN where `dither >= fade`, `fade` = camera distance across the band) so
+  **exactly one of {chunk, horizon} survives per pixel** — no gaps, no double-draw, no z-fight. `WorldRenderer`
+  sets `uFadeMode` 0 (chunk) / 1 (LOD) per batch + the band uniforms; disabled (start past the far plane) when
+  the horizon is dormant. The server LOD inner overlap (`LodInnerOverlap = 160`) is widened so the store covers
+  the band with no holes to fade into.
 
 **The visible set gates the shadow passes.** `BuildVisibleSet` sets `_anyShadowReceiver` iff a visible chunk
 within `ShadowDistance` is **sky-exposed** (`ChunkRenderData.SkyExposed = Chunk.HasAnySkyLight()`), and the
@@ -1438,29 +1457,29 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
 
 ## Known rough edges / deferred work
 
-- **The Phase-2 distant-horizon LOD is shipped; a few refinements are deferred.** The cheap LOD terrain now
-  extends ~`LodRingChunks` (20) chunks **past** the full-detail render distance — a continuous heightmap to a
-  fogged horizon at ~576 blocks (2.25× RD 16), via the second streaming channel documented in the Networking /
-  Threading / World-gen / Rendering sections (`LodColumn` store, `LodColumnData` packet, server LOD thread,
-  client `LodArena`/`LodRenderData`, run-list `AddLodColumnRegionToVao`, drawn under real chunks). Holds ≥500
-  uncapped FPS on the dedicated GPU for normal play (streaming/orbit/return ~510–560); the **continuous-edit
-  stress phase dips to ~477** — that is the pre-existing edit-remesh amplifier stacking with the flat ~85-FPS
-  LOD draw cost, *not* horizon size (shrinking `LodRingChunks` barely moves it; it moves orbit instead, which
-  is why 20 is the sweet spot). Accepted residual edges / deferred refinements:
-  - **No far-ring trees.** Surface-only gen (`GetLodColumn`) has no decoration pass, so the streamed horizon is
-    bare terrain + water; trees "pop in" when you get within the full-detail radius (real chunks have them, and
-    the within-RD heightmap LOD renders their canopy). Adding trees needs either an LOD decoration pass or a
-    from-loaded column derivation (the plan's `LodColumnFromLoaded`, deferred).
-  - **Bigger horizon needs distance-based stride or greedy skirts.** The geometry pass is primitive-setup
-    bound; tops are greedy-merged (huge win for water/plains) but **skirts are still per-cell**, so hilly
-    terrain (coastlines, mountains) is the cost. Greedy-merging skirt runs, and/or a coarser stride for the
-    outer ring (the store is fixed stride-4 today), would let `LodRingChunks` go to the user's 48–96 target
-    while holding FPS. Deferred.
-  - **Tall coastline skirts** read as bright vertical walls where water meets a steep drop (the skirt fills the
-    gap down to the neighbour/`LodFloorY`); harmless (no holes) but a bit unnatural at the seam.
+- **The full Distant-Horizons suite is shipped (quality-first); a few refinements are deferred.** Default config:
+  **full per-block detail across the whole render distance** (the within-RD LOD off, `LodDetail` 1.0), then a
+  **huge Phase-2 horizon** (`LodHorizonChunks` 64, max 96) of cheap LOD columns coarsening with distance
+  (stride-4 → 8 → 16 rings), with **far-ring trees** (matched to the real positions) and a **dithered cross-fade**
+  at the render-distance seam. See the Networking / Threading / World-gen / Rendering sections. RD 16 + 64-chunk
+  horizon is ~180 uncapped on the dedicated GPU — the user explicitly traded the old ≥500 FPS bar for the look
+  (the dominant cost is now full-detail-RD, *not* the horizon, which is nearly free thanks to the stride rings).
+  Accepted residual edges / deferred refinements:
+  - **Trees coarsen out at the far rings.** A super-cell takes its tallest member (max-surface downsample), so a
+    forest stays a canopy plateau, but an isolated tree shrinks to a blob and may drop out at stride-8/16. The
+    canopy is also leaf-only (no trunk) and ignores leaves-fill-only-air (the real `Place` clips on terrain), so
+    a 1–2-block canopy mismatch is possible at the seam — the cross-fade hides it.
+  - **Stride-ring seams.** Wide rings (24 chunks) keep adjacent regions within one step, so cracks are bounded;
+    the per-cell skirts (to the neighbour super-cell or `LodFloorY`) hide most, but a hairline gap at a step
+    boundary on a steep slope is possible. Greedy-merging skirt runs would tighten this (deferred).
+  - **Cross-fade is a Bayer dither** (screen-door), not an alpha blend — static screenshots show the dither
+    pattern in the 32-block band; in motion it reads as a smooth dissolve. Tune `FadeBandWidth` (smoothness ↔
+    overdraw). **Tall coastline skirts** still read as bright vertical walls where water meets a steep drop
+    (harmless, no holes).
   - **No LOD light BFS / single surface section.** Columns are sky-15 flat (no torches/AO at the horizon) and
     K=1 (one surface run), so overhangs/floating islands aren't represented; a 2-section run-list is the
-    deferred fix. **No disk persistence** for LOD columns (regenerated on revisit, cheap). **No LOD shadows.**
+    deferred fix. **No disk persistence** for LOD columns (regenerated on revisit). **No LOD shadows.** Occasional
+    frame hitches at a huge horizon (LOD mesh/stream bursts) — the deferred "optimize later" pass.
 - **Player physics is the "80%" walk model — several exact-MC behaviours are deferred.** Implemented: gravity,
   jump, swept per-axis AABB collision, Ctrl sprint, walk/fly toggle, **auto-step up `StepHeight` (0.6 = MC)
   ledges** (climbs slabs/partial blocks, still jump for a full cube). **Not** implemented: sprint-jump forward
