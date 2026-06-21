@@ -687,14 +687,16 @@ look. End-to-end data flow:
   world, no real blocks) — `GameRegistry.BlockRegistry[blockId]` for the block, world-free
   `GetTintColor`/`GetRenderMaterial` (grass/water tint by position, water reflection flag), sky-only light. Tops
   are **greedy-merged** (runs of identical columns → one quad; water/plains collapse, the big geometry win);
-  **skirts stay per-cell**. **`meshStep` = the DH detail ring** (1 = stride-4 store res, 2 = stride-8, 4 =
-  stride-16): the mesher downsamples the store to a super-grid by **MAX surface** (`MaxSurfaceCell` — keeps
-  trees/peaks from sinking, so forests stay canopy plateaus when coarsened) and meshes the super-grid; neighbour
-  super-cells are computed on demand (`SuperNeighbourY`). `LodRenderData.DesiredMeshStep` is set by
-  `WorldClient.ScanLodForMeshStep` (own chunk-cross gate) from the region's distance: stride-4 for the first
-  `LodStride8Distance` (24 chunks) past the render distance, then stride-8, then stride-16 — **rings 24 chunks
-  (3 regions) wide so adjacent regions never differ by >1 step (no >2× crack)**. Doubling the horizon adds ~0
-  geom (the far rings are 4×/16× cheaper + fog-occluded).
+  **skirts stay per-cell**. **`meshStep` = the DH detail ring** (the store is **stride-2**, so meshStep 1/2/4/8 =
+  stride 2/4/8/16): the mesher downsamples the stride-2 store to a super-grid by **MAX surface** (`MaxSurfaceCell`
+  — keeps trees/peaks from sinking, so forests stay canopy plateaus when coarsened) and meshes the super-grid;
+  neighbour super-cells are computed on demand (`SuperNeighbourY`). `LodRenderData.DesiredMeshStep` is set by
+  `WorldClient.ScanLodForMeshStep` (own chunk-cross gate) from the region's distance: **stride-2 for the first
+  `LodRing1Distance` (16 chunks) past the render distance** (so the nearest, most-visible horizon is fine — a
+  gentle step down from full detail), then stride-4, then stride-8, then stride-16 — **rings ≥ 1 region (8
+  chunks) wide so adjacent regions never differ by >1 step (no >2× crack)**, scaled by the **LOD Quality** option.
+  Doubling the horizon adds ~0 geom (the far rings are 4×/16× cheaper + fog-occluded). The loopback apply path
+  **shares the server's immutable region by reference** (no per-region clone).
 - **Render integration** (`WorldRenderer`): `BuildLodVisibleSet` frustum+distance-culls `LodRenderList` to
   `[RenderDistance − FadeBandWidth, LodRenderDistance]` (the inner edge pulled in for the cross-fade band); the
   geometry pass draws `LodArena` **after** the real chunks with **`DepthFunc.Less`** (already-drawn nearer real
@@ -1446,6 +1448,13 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
     K=1 (one surface run), so overhangs/floating islands aren't represented; a 2-section run-list is the
     deferred fix. **No disk persistence** for LOD columns (regenerated on revisit). **No LOD shadows.** Occasional
     frame hitches at a huge horizon (LOD mesh/stream bursts) — the deferred "optimize later" pass.
+  - **Motion GC hitches from the stride-2 store.** The store is stride-2 (finest LOD = the nearest ring) so the
+    near horizon looks fine, but that's 4× the column data of stride-4 → ~3× the allocation, so MOVING (the
+    benchmark orbit) churns Gen2 GC: ~1.3 fps 0.1%-low, worst frame ~0.7 s (the average stays ~140). Quality-
+    first / optimize-later per the maintainer. The clean fix is a **variable-resolution store** — generate near
+    regions at stride-2 and far regions at stride-4/8 (the far rings don't need stride-2 data they mesh away), so
+    the bulk of the horizon carries ¼ the data; deferred (needs per-region stride in the gen + packet + re-gen on
+    band change).
 - **Player physics is the "80%" walk model — several exact-MC behaviours are deferred.** Implemented: gravity,
   jump, swept per-axis AABB collision, Ctrl sprint, walk/fly toggle, **auto-step up `StepHeight` (0.6 = MC)
   ledges** (climbs slabs/partial blocks, still jump for a full cube). **Not** implemented: sprint-jump forward
