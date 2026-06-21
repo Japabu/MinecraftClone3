@@ -629,16 +629,21 @@ findings below for why the GPU, not the CPU, is the steady-state wall.
 **Distance LOD — heightmap (Distant-Horizons-style) meshing of far chunks (the high-render-distance lever).**
 The geometry pass is triangle/primitive-setup bound (see findings), so at high render distance the per-frame
 triangle count is the wall. Distant chunks (where the detail is sub-pixel) are re-meshed as a coarse 2.5-D
-**heightmap** at a stride: **LOD 0** = full per-block (`< 96` blocks), **LOD 1** = stride-2 (`< 160`),
-**LOD 2** = stride-4 (beyond). `ChunkMesher.AddBlocksToVaoLod` is **not** a voxel super-block mesher (that was
-removed — it stair-stepped, mis-lit faces black, and smeared one corner's material across a slope, so coastal
-water climbed cliffs as giant blue triangles). Instead, per stride×stride column it finds the **real surface**
-(topmost opaque-full block **or** liquid via `SurfaceTop` — leaves are `Cutoff`-transparent so they're skipped
-and the heightmap follows the **ground**, no canopy spikes) and emits a **flat top quad** at that height plus
-**vertical skirt quads** down to each lower neighbour's surface (so cliffs read as walls and steps don't
-see-through). Each column uses its own surface block's top/side `FaceData` (texture + tint, no material
-smearing across a water↔land border), flat per-column light sampled from the air **above** the surface (no
-black faces), and **water columns carry the `WaterNormalW` flag** so distant water still gets the composition's
+**heightmap** at a stride: **LOD 0** = full per-block (`< 128` blocks = 8 chunks), **LOD 1** = stride-2
+(`< 208`), **LOD 2** = stride-4 (beyond, to the RD-16 edge). `ChunkMesher.AddBlocksToVaoLod` is **not** a voxel
+super-block mesher (that was removed — it stair-stepped, mis-lit faces black, and smeared one corner's material
+across a slope, so coastal water climbed cliffs as giant blue triangles). Instead, per stride×stride column it
+finds the **LOD surface** (`SurfaceTop` → topmost block where `IsLodSurface` holds) and emits a **flat top
+quad** at that height plus **vertical skirt quads** down to each lower neighbour's surface (so cliffs read as
+walls and steps don't see-through). **`IsLodSurface` deliberately includes leaves** (`TransparencyType.Cutoff`)
+as well as liquid and opaque-full blocks (only true `Transparent` glass is excluded) — this is the DH rule
+("anything with presence is a solid coloured LOD voxel"), so a tree column resolves to its **canopy**, rendering
+as a green **bump**, not a trunk **stump** (the earlier opaque-only rule stumped every tree). Each column uses
+its own surface block's top/side `FaceData` (texture + tint, no material smearing across a water↔land border),
+flat per-column light sampled from the air **above** the surface (no black faces); **skirt sides are darkened**
+(`LodSideShade*`, Minecraft-style E/W 0.6, N/S 0.8) so cliff/step faces read as shaded relief — the deferred
+lighting is baked-per-vertex with **no N·L term**, so relief must be baked into the light here, not derived from
+a surface normal. **Water columns carry the `WaterNormalW` flag** so distant water still gets the composition's
 Fresnel sky reflection + sun glint (opaque, no separate transparent pass for LOD chunks — all into the opaque
 arena). Heights are world-sampled (`world.GetBlock` down a `[chunkBottom−16, chunkTop+stride]` window on a
 1-cell-padded grid), so adjacent chunks agree on the shared edge → no cracks; a cell is **owned** by the chunk
@@ -646,15 +651,18 @@ whose Y range holds its surface (`sy ∈ [bottom, top)`), so it's emitted exactl
 `ChunkRenderData.DesiredLod` is set by `WorldClient.ScanLod` (a distance scan gated on chunk-border crossings,
 like eviction; **bidirectional** — re-meshes on both approach *and* recede, since a recede chunk can rotate
 back into view; low-priority re-meshes so they sit behind first-load streaming) and `DrainRenderReady` (initial
-level at stream time); the mesh thread reads it in `Update`. **This took `geomMs` 4.8→1.2 ms at RD 16** (and the
-heightmap is *cheaper* than voxel LOD — flat top + a few skirts per column vs stride³ cubes); RD 16 + shadows
-off runs **~650 capped / ~810 uncapped FPS** on the dedicated GPU. Tradeoff: distant terrain is a stepped
-heightmap (near stays full detail) and **distant foliage flattens to ground** (trees vanish past the LOD
-threshold — leaves are skipped); thresholds are the `Lod1DistanceSq`/`Lod2DistanceSq` consts. Verify quality
-changes with the `--inspect` A/B-diff tool (see debug section). Known residual edges (accepted): a cliff taller
-than ~a chunk (16 blocks) at a chunk boundary can leave a thin see-through slit (the skirt scan window only
-reaches a chunk below; the unknown-neighbour case skirts to `scanBottom`); the top is flat-shaded per column
-(no smooth slope), so stride-4 terrain steps at ~4-block granularity.
+level at stream time); the mesh thread reads it in `Update`. The band thresholds are
+`Lod1Distance`/`Lod2Distance` (pushed well out so the LOD seam isn't near the player — we have GPU headroom and
+the heightmap is cheap), with a `LodHysteresis` dead-band on the hysteretic `LodFor(center, current)` so a
+chunk straddling a boundary doesn't re-mesh every border crossing. **`geomMs` ~1.2 ms at RD 16**; RD 16 +
+shadows off runs **~510 capped / ~600 uncapped FPS** on the dedicated GPU (every benchmark phase ≥ 500
+uncapped). Verify quality changes with the `--inspect` A/B-diff tool (see debug section). Tradeoffs / residual
+edges (accepted): distant terrain is a stepped heightmap and distant foliage is an **opaque bumpy canopy**
+(no see-through gaps, no trunk — DH accepts the same); a cliff taller than ~a chunk (16 blocks) at a chunk
+boundary can leave a thin see-through slit (the skirt scan window only reaches a chunk below); the top is
+flat-shaded per column (no smooth slope), so stride-4 terrain steps at ~4-block granularity. **The LOD region
+is still entirely *within* RD 16 (256 blocks)** — a true Distant-Horizons *far horizon* (LODs streamed far past
+the server view distance) is deferred Phase-2 work; see "Known rough edges".
 
 **The visible set gates the shadow passes.** `BuildVisibleSet` sets `_anyShadowReceiver` iff a visible chunk
 within `ShadowDistance` is **sky-exposed** (`ChunkRenderData.SkyExposed = Chunk.HasAnySkyLight()`), and the
@@ -1126,10 +1134,13 @@ NVIDIA GTX 750 Ti** (PRIME-offloaded — see "Running on the dedicated GPU" belo
   flat-top + skirt meshing of distant chunks — `geomMs` 4.8→1.2 ms, the big one; *cheaper* than the old voxel
   super-block LOD and far better looking — see the LOD section); **(c) distance-first visible-set cull** (skip
   the ~3000 out-of-range loaded chunks before the frustum test). Result on the **dedicated GTX-class GPU**:
-  **OVERALL ~649 observed / ~807 uncapped FPS** at RD 16 / shadows off, every phase >500 even the worst
-  (in-world editing ~510 / ~615); frame work ~1.2 ms (gpu ~1.2 / cpu ~0.75). The LOD trades quality only at
-  distance (near is full per-block detail) — distant terrain is a stepped heightmap and distant foliage
-  flattens to ground; verified honest with the `--inspect` A/B-diff tool.
+  **OVERALL ~510 observed / ~600 uncapped FPS** at RD 16 / shadows off, every benchmark phase ≥ 500 uncapped;
+  frame work ~1.7 ms (gpu ~1.6 / cpu ~1.05). (Bare-minimum bands `< 96 / < 160` hit ~807 uncapped, but the LOD
+  seam sat too near the player and looked cheap; the bands were pushed out to `< 128 / < 208` — much more
+  full/stride-2 detail near, ~600 uncapped, the deliberate quality/perf trade the maintainer asked for.) The LOD
+  trades quality only at distance (near is full per-block detail) — distant terrain is a stepped heightmap and
+  distant foliage is an opaque bumpy canopy (trees are green bumps, not stumps); verified honest with the
+  `--inspect` A/B-diff tool.
 - **At FULL quality on the UHD 630 (Medium shadows, RD 8, 720p) the frame is GPU-bound at ~9 ms ≈ 100–108 FPS
   uncapped** (per-pass: shadow ~3.4, geom ~4.5, comp ~1.1; CPU not the wall). 500 FPS there is **not** reachable
   without quality cuts — it needs ~4–5× and the passes are real raster work. The `--benchmark-shadows` /
@@ -1356,6 +1367,21 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
 
 ## Known rough edges / deferred work
 
+- **The LOD is a within-RD-16 heightmap, not a true Distant-Horizons *far horizon* (Phase 2 deferred).** The
+  current `AddBlocksToVaoLod` (see the rendering section) fixes the near-quality complaints — trees are green
+  canopy bumps not stumps (`IsLodSurface` counts leaves), bands pushed out to `< 128 / < 208` with hysteresis,
+  skirt-side relief shading — but every LOD chunk is still **inside the 256-block RD-16 view**, because the
+  client has **no data past `ServerNetwork.ViewDistance`**. The real DH look (terrain to 48–96+ chunks past a
+  small full-detail core) needs a second cheap streaming channel: a server-side **LOD-column payload**
+  (per stride-column run-list `(paletteId, minY, height, sky, block)`, 1–2 sections — fixes overhangs/trees
+  cheaply), generated LOD-only on a low-priority thread into a **separate store that never enters
+  `LoadedChunks`** (respects the single-writer invariants), a `LodColumnData` packet (lazy GZip like
+  `ChunkData`), and a client LOD world meshed by a run-list version of the same flat-top+skirt mesher, drawn
+  **under** the real chunks (depth-tested away where a real chunk exists — DH's overdraw-prevention, so the
+  streaming frontier never holes). Also deferred within that: neighbour-aware split skirts (cull covered
+  segments + greedy-merge quads to cut primitive-setup), a bounded LOD-level-difference between neighbours, and
+  an optional dithered cross-fade at band switches to hide LOD popping. This is a multi-week milestone; the
+  within-RD-16 Phase 1 above ships independently.
 - **Player physics is the "80%" walk model — several exact-MC behaviours are deferred.** Implemented: gravity,
   jump, swept per-axis AABB collision, Ctrl sprint, walk/fly toggle, **auto-step up `StepHeight` (0.6 = MC)
   ledges** (climbs slabs/partial blocks, still jump for a full cube). **Not** implemented: sprint-jump forward

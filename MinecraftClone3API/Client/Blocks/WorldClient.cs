@@ -306,8 +306,13 @@ namespace MinecraftClone3API.Client.Blocks
         // Distance (block, chunk-centre to player) at which chunks switch to coarser LOD meshes — the
         // geometry pass is triangle/primitive-setup bound at high render distance, so distant chunks (where
         // the detail is sub-pixel) are meshed at stride 2 then stride 4, cutting their face count ~4×/16×.
-        private static readonly float Lod1DistanceSq = 96f * 96f;
-        private static readonly float Lod2DistanceSq = 160f * 160f;
+        // Pushed well out (full detail to 9 chunks) so the LOD seam isn't near the player — we have ample
+        // GPU headroom (the heightmap LOD is cheap), so "too cheap too near" is a budget we don't need to spend.
+        private const float Lod1Distance = 128f;       // < this: LOD 0 (full per-block detail)
+        private const float Lod2Distance = 208f;       // < this: LOD 1 (stride 2); beyond: LOD 2 (stride 4)
+        private const float LodHysteresis = 16f;        // dead-band around each boundary (no re-mesh thrash)
+        private static readonly float Lod1DistanceSq = Lod1Distance * Lod1Distance;
+        private static readonly float Lod2DistanceSq = Lod2Distance * Lod2Distance;
         private Vector3i _lastLodChunk = new Vector3i(int.MinValue);
 
         /// <summary>Debug/inspection toggle: when true every chunk meshes at full detail (LOD 0), so the
@@ -323,6 +328,26 @@ namespace MinecraftClone3API.Client.Blocks
             return 2;
         }
 
+        /// <summary>Hysteretic LOD pick: holds <paramref name="current"/> within a dead-band widened by
+        /// <see cref="LodHysteresis"/> around each boundary, so a chunk straddling a band edge doesn't re-mesh
+        /// on every border crossing. Outside the held window it falls back to the plain bands (handles teleports).</summary>
+        private int LodFor(Vector3 center, int current)
+        {
+            if (ForceLodOff) return 0;
+            var dist = (center - _playerPosition).Length;
+            float lo, hi;
+            switch (current)
+            {
+                case 0: lo = 0; hi = Lod1Distance + LodHysteresis; break;
+                case 1: lo = Lod1Distance - LodHysteresis; hi = Lod2Distance + LodHysteresis; break;
+                default: lo = Lod2Distance - LodHysteresis; hi = float.MaxValue; break;
+            }
+            if (dist >= lo && dist < hi) return current;
+            if (dist < Lod1Distance) return 0;
+            if (dist < Lod2Distance) return 1;
+            return 2;
+        }
+
         /// <summary>Re-queues every rendered chunk for re-meshing at the current LOD policy (used by the
         /// inspection tool when toggling <see cref="ForceLodOff"/>). Main-thread only (touches RenderList).</summary>
         public void RemeshAll()
@@ -330,7 +355,7 @@ namespace MinecraftClone3API.Client.Blocks
             for (var i = 0; i < RenderList.Count; i++)
             {
                 var rd = RenderList[i];
-                rd.DesiredLod = LodFor(rd.Middle);
+                rd.DesiredLod = LodFor(rd.Middle, rd.DesiredLod);
                 QueueMesh(rd.Chunk.Position, false);
             }
         }
@@ -348,7 +373,7 @@ namespace MinecraftClone3API.Client.Blocks
             for (var i = 0; i < RenderList.Count; i++)
             {
                 var rd = RenderList[i];
-                var want = LodFor(rd.Middle);
+                var want = LodFor(rd.Middle, rd.DesiredLod);
                 if (want == rd.DesiredLod) continue;
                 rd.DesiredLod = want;
                 QueueMesh(rd.Chunk.Position, false);

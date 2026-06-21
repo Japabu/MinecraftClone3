@@ -13,6 +13,11 @@ namespace MinecraftClone3API.Util
         // two constants are a matched pair (see Composition.fs).
         private const float WaterNormalW = 0.5f;
 
+        // Baked directional face shade for LOD relief — the deferred lighting is baked-per-vertex (no N·L term),
+        // so vertical skirt faces are darkened here (Minecraft-style) to read as shaded cliff/step sides.
+        private const float LodSideShadeNS = 0.8f;   // north/south (Back/Front) skirts
+        private const float LodSideShadeEW = 0.6f;   // east/west (Right/Left) skirts
+
 
         private static readonly Vector3[] FacePositions = {
             //left
@@ -108,12 +113,22 @@ namespace MinecraftClone3API.Util
         private static int SurfaceTop(WorldBase world, int wx, int wz, int scanTop, int scanBottom)
         {
             for (var y = scanTop; y >= scanBottom; y--)
-            {
-                var b = world.GetBlock(wx, y, wz);
-                if (b == BlockRegistry.BlockAir) continue;
-                if (b.IsLiquid || b.IsOpaqueFullBlock(world, new Vector3i(wx, y, wz))) return y;
-            }
+                if (IsLodSurface(world.GetBlock(wx, y, wz), world, new Vector3i(wx, y, wz)))
+                    return y;
             return int.MinValue;
+        }
+
+        /// <summary>What counts as the LOD heightmap surface. Includes leaves (Cutoff) so trees read as canopy
+        /// bumps, not trunk stumps — DH treats any block with presence as a solid coloured LOD voxel. Liquid
+        /// counts (distant water surface); true translucent blocks (glass) don't.</summary>
+        private static bool IsLodSurface(Block b, WorldBase world, Vector3i pos)
+        {
+            if (b == BlockRegistry.BlockAir) return false;
+            if (b.IsLiquid) return true;
+            var t = b.IsTransparent(world, pos);
+            if (t == TransparencyType.Cutoff) return true;
+            if (t == TransparencyType.Transparent) return false;
+            return b.IsOpaqueFullBlock(world, pos);
         }
 
         private static void EmitSkirt(WorldBase world, MeshBuffer vao, Block block, Vector3i pos, int sy, float yTop,
@@ -122,8 +137,9 @@ namespace MinecraftClone3API.Util
             if (neighbourY != int.MinValue && neighbourY >= sy) return;            // neighbour covers the gap
             var yBot = (neighbourY == int.MinValue ? scanBottom : neighbourY) + 0.5f;
             if (yBot >= yTop || !TryGetFace(block, face, out var sideFace)) return;
+            var shade = face == BlockFace.Right || face == BlockFace.Left ? LodSideShadeEW : LodSideShadeNS;
             EmitLodQuad(vao, sideFace, new Vector4(face.GetNormal(), 0), Tint(world, block, pos, sideFace),
-                t0, t1, new Vector3(t0.X, yBot, t0.Z), new Vector3(t1.X, yBot, t1.Z), light);
+                t0, t1, new Vector3(t0.X, yBot, t0.Z), new Vector3(t1.X, yBot, t1.Z), light * shade);
         }
 
         private static void EmitLodQuad(MeshBuffer vao, BlockModel.FaceData face, Vector4 normal, Vector3 tint,
