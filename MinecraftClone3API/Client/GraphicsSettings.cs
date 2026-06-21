@@ -28,7 +28,7 @@ namespace MinecraftClone3API.Client
     public static class GraphicsSettings
     {
         public const int MinRenderDistanceChunks = 4;
-        public const int MaxRenderDistanceChunks = 24;
+        public const int MaxRenderDistanceChunks = 64;
         public const float MinFov = 30f;
         public const float MaxFov = 110f;
         public const float MinMouseSensitivity = 0.001f;
