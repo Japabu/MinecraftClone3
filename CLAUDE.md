@@ -626,19 +626,35 @@ bind+uniform+draw triples per pass) but **does NOT reduce GPU time** on Mesa, be
 (helps the CPU-bound streaming case) + future GL 4.3 indirect-draw + cleaner architecture; see the performance
 findings below for why the GPU, not the CPU, is the steady-state wall.
 
-**Distance LOD — coarse meshing of far chunks (the high-render-distance lever).** The geometry pass is
-triangle/primitive-setup bound (see findings), so at high render distance the per-frame triangle count is the
-wall. Distant chunks (where the detail is sub-pixel) are re-meshed at a coarser stride: **LOD 0** = full
-per-block (`< 96` blocks), **LOD 1** = stride-2 (`< 160`), **LOD 2** = stride-4 (beyond). `ChunkMesher.
-AddBlocksToVaoLod` samples each stride³ region at its corner block and emits one scaled face per exposed
-super-block direction (cull = the neighbour super-block's corner sample — approximate but fine at distance),
-all into the opaque arena (no separate transparent pass for LOD chunks). `ChunkRenderData.DesiredLod` is set
-by `WorldClient.ScanLod` (a distance scan gated on chunk-border crossings, like eviction; **bidirectional** —
-re-meshes on both approach *and* recede, since a recede chunk can rotate back into view; low-priority
-re-meshes so they sit behind first-load streaming) and `DrainRenderReady` (initial level at stream time); the
-mesh thread reads it in `Update`. **This took `geomMs` 4.8→1.2 ms at RD 16** and is the change that makes
-500 FPS reachable at RD 16. Tradeoff: distant terrain coarsens (near stays full detail); thresholds are the
-`Lod1DistanceSq`/`Lod2DistanceSq` consts.
+**Distance LOD — heightmap (Distant-Horizons-style) meshing of far chunks (the high-render-distance lever).**
+The geometry pass is triangle/primitive-setup bound (see findings), so at high render distance the per-frame
+triangle count is the wall. Distant chunks (where the detail is sub-pixel) are re-meshed as a coarse 2.5-D
+**heightmap** at a stride: **LOD 0** = full per-block (`< 96` blocks), **LOD 1** = stride-2 (`< 160`),
+**LOD 2** = stride-4 (beyond). `ChunkMesher.AddBlocksToVaoLod` is **not** a voxel super-block mesher (that was
+removed — it stair-stepped, mis-lit faces black, and smeared one corner's material across a slope, so coastal
+water climbed cliffs as giant blue triangles). Instead, per stride×stride column it finds the **real surface**
+(topmost opaque-full block **or** liquid via `SurfaceTop` — leaves are `Cutoff`-transparent so they're skipped
+and the heightmap follows the **ground**, no canopy spikes) and emits a **flat top quad** at that height plus
+**vertical skirt quads** down to each lower neighbour's surface (so cliffs read as walls and steps don't
+see-through). Each column uses its own surface block's top/side `FaceData` (texture + tint, no material
+smearing across a water↔land border), flat per-column light sampled from the air **above** the surface (no
+black faces), and **water columns carry the `WaterNormalW` flag** so distant water still gets the composition's
+Fresnel sky reflection + sun glint (opaque, no separate transparent pass for LOD chunks — all into the opaque
+arena). Heights are world-sampled (`world.GetBlock` down a `[chunkBottom−16, chunkTop+stride]` window on a
+1-cell-padded grid), so adjacent chunks agree on the shared edge → no cracks; a cell is **owned** by the chunk
+whose Y range holds its surface (`sy ∈ [bottom, top)`), so it's emitted exactly once up the vertical stack.
+`ChunkRenderData.DesiredLod` is set by `WorldClient.ScanLod` (a distance scan gated on chunk-border crossings,
+like eviction; **bidirectional** — re-meshes on both approach *and* recede, since a recede chunk can rotate
+back into view; low-priority re-meshes so they sit behind first-load streaming) and `DrainRenderReady` (initial
+level at stream time); the mesh thread reads it in `Update`. **This took `geomMs` 4.8→1.2 ms at RD 16** (and the
+heightmap is *cheaper* than voxel LOD — flat top + a few skirts per column vs stride³ cubes); RD 16 + shadows
+off runs **~650 capped / ~810 uncapped FPS** on the dedicated GPU. Tradeoff: distant terrain is a stepped
+heightmap (near stays full detail) and **distant foliage flattens to ground** (trees vanish past the LOD
+threshold — leaves are skipped); thresholds are the `Lod1DistanceSq`/`Lod2DistanceSq` consts. Verify quality
+changes with the `--inspect` A/B-diff tool (see debug section). Known residual edges (accepted): a cliff taller
+than ~a chunk (16 blocks) at a chunk boundary can leave a thin see-through slit (the skirt scan window only
+reaches a chunk below; the unknown-neighbour case skirts to `scanBottom`); the top is flat-shaded per column
+(no smooth slope), so stride-4 terrain steps at ~4-block granularity.
 
 **The visible set gates the shadow passes.** `BuildVisibleSet` sets `_anyShadowReceiver` iff a visible chunk
 within `ShadowDistance` is **sky-exposed** (`ChunkRenderData.SkyExposed = Chunk.HasAnySkyLight()`), and the
@@ -1104,14 +1120,16 @@ NVIDIA GTX 750 Ti** (PRIME-offloaded — see "Running on the dedicated GPU" belo
   is negligible — exposed-face meshing); (3) packing the vertex 72→32 B (2.25× less bandwidth) barely moved
   `geomMs` (not bandwidth-bound); (4) the fullscreen composition pass is ~0.18 ms (fill is cheap). `geomMs`
   scales linearly with **drawn-chunk count** (≈ triangle count), so the lever is **fewer triangles**.
-- **500 FPS at render distance 16 / shadows off IS achieved on the GTX 750 Ti** (the goal config), via three
-  stacked, mostly-lossless wins on the triangle/CPU bottleneck: **(a) packed 32-byte vertex** (halves mesh
-  alloc + upload, fixes the streaming GC hitches); **(b) distance LOD** (coarse stride-2/4 meshing of distant
-  chunks — `geomMs` 4.8→1.2 ms, the big one); **(c) distance-first visible-set cull** (skip the ~3000
-  out-of-range loaded chunks before the frustum test). Result: **OVERALL ~500–556 observed / ~620–670 uncapped
-  FPS**, every phase >500 uncapped, frame work ~1.5 ms (gpu ~1.4 / cpu ~0.9). From the 102 FPS capped start,
-  ~5×. Only the LOD trades quality (distant coarsening, near is full detail) — the user opted into it; the
-  rest is lossless.
+- **500 FPS at render distance 16 / shadows off IS achieved** (the goal config — and comfortably exceeded on
+  the dedicated GPU), via three stacked wins on the triangle/CPU bottleneck: **(a) packed 32-byte vertex**
+  (halves mesh alloc + upload, fixes the streaming GC hitches); **(b) heightmap distance LOD** (DH-style
+  flat-top + skirt meshing of distant chunks — `geomMs` 4.8→1.2 ms, the big one; *cheaper* than the old voxel
+  super-block LOD and far better looking — see the LOD section); **(c) distance-first visible-set cull** (skip
+  the ~3000 out-of-range loaded chunks before the frustum test). Result on the **dedicated GTX-class GPU**:
+  **OVERALL ~649 observed / ~807 uncapped FPS** at RD 16 / shadows off, every phase >500 even the worst
+  (in-world editing ~510 / ~615); frame work ~1.2 ms (gpu ~1.2 / cpu ~0.75). The LOD trades quality only at
+  distance (near is full per-block detail) — distant terrain is a stepped heightmap and distant foliage
+  flattens to ground; verified honest with the `--inspect` A/B-diff tool.
 - **At FULL quality on the UHD 630 (Medium shadows, RD 8, 720p) the frame is GPU-bound at ~9 ms ≈ 100–108 FPS
   uncapped** (per-pass: shadow ~3.4, geom ~4.5, comp ~1.1; CPU not the wall). 500 FPS there is **not** reachable
   without quality cuts — it needs ~4–5× and the passes are real raster work. The `--benchmark-shadows` /

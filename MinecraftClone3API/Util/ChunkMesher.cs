@@ -36,44 +36,129 @@ namespace MinecraftClone3API.Util
         };
 
         /// <summary>
-        /// Coarse LOD mesh of a whole chunk at <paramref name="stride"/> (2, 4, …): each stride³ region becomes
-        /// one scaled "super-block" sampled at its corner, so the mesh has ~1/stride² the faces. Used for
-        /// distant chunks where the per-pixel detail is invisible but the triangle/primitive-setup cost is the
-        /// geometry-pass bottleneck at high render distance. Self-contained replacement for the per-block path;
-        /// everything goes into the opaque <paramref name="vao"/> (distant transparency isn't worth a second
-        /// sorted pass). Faces are scaled by <paramref name="stride"/> via the transform; cull uses the
-        /// neighbour super-block's corner sample (approximate — fine at distance).
+        /// Surface (heightmap) LOD mesh of a chunk at <paramref name="stride"/> (2, 4, …) — the Distant-Horizons
+        /// approach, rendered as a 2.5-D heightmap rather than stride³ voxel cubes. Per stride×stride column it
+        /// finds the real surface (topmost opaque-full block or liquid — so it follows the GROUND under trees,
+        /// since leaves are cutoff-transparent, with no canopy spikes), and emits a FLAT top quad at that height
+        /// plus VERTICAL skirt quads down to each lower neighbour's surface, so cliffs read as walls and steps
+        /// don't see through. Each column uses its own surface block's texture/tint (no material smearing across
+        /// a water↔land border) and water is emitted as a reflective water quad (distant water still reflects).
+        /// Heights are world-sampled so adjacent chunks agree on the shared edge; a cell is owned by the chunk
+        /// whose Y range holds its surface, so it's emitted exactly once up the vertical stack. Everything goes
+        /// into the opaque <paramref name="vao"/> (no separate sorted pass at distance).
         /// </summary>
         public static void AddBlocksToVaoLod(WorldBase world, Vector3i chunkOrigin, Chunk chunk, MeshBuffer vao, int stride)
         {
-            // Unit face (+-0.5) -> +-stride/2, then shifted so the quad spans [corner-0.5, corner+stride-0.5].
-            var transform = Matrix4.CreateScale(stride) * Matrix4.CreateTranslation(new Vector3((stride - 1) * 0.5f));
+            var bottom = chunkOrigin.Y;
+            var top = chunkOrigin.Y + Chunk.Size;          // exclusive
+            var n = Chunk.Size / stride;                   // cells per axis
+            var gN = n + 2;                                 // surface heights for columns c in [-1, n]
+            var scanTop = top + stride;
+            var scanBottom = bottom - Chunk.Size;          // catch cliffs ~a chunk below for skirts
 
-            for (var x = 0; x < Chunk.Size; x += stride)
-            for (var y = 0; y < Chunk.Size; y += stride)
-            for (var z = 0; z < Chunk.Size; z += stride)
+            // Surface Y per column on a 1-cell-padded grid (int.MinValue = none in window). H(ci,cj) below.
+            Span<int> heights = stackalloc int[gN * gN];
+            for (var ci = -1; ci <= n; ci++)
+            for (var cj = -1; cj <= n; cj++)
+                heights[(ci + 1) * gN + (cj + 1)] =
+                    SurfaceTop(world, chunkOrigin.X + ci * stride, chunkOrigin.Z + cj * stride, scanTop, scanBottom);
+
+            for (var i = 0; i < n; i++)
+            for (var j = 0; j < n; j++)
             {
-                var id = chunk.GetBlock(new Vector3i(x, y, z));
-                if (id == 0) continue;
-                var block = GameRegistry.BlockRegistry[id];
-                var blockPos = chunkOrigin + new Vector3i(x, y, z);
-                if (!block.IsVisible(world, blockPos) || block.Model == null) continue;
+                var sy = heights[(i + 1) * gN + (j + 1)];
+                if (sy < bottom || sy >= top) continue;     // ownership: this chunk's Y range holds the surface
 
-                foreach (var element in block.Model.Elements)
-                foreach (var entry in element.Faces)
-                {
-                    var face = entry.Key;
-                    var cullface = entry.Value.Cullface == BlockFace.None ? face : entry.Value.Cullface;
-                    var neighbourPos = blockPos + cullface.GetNormali() * stride;
-                    var neighbour = world.GetBlock(neighbourPos);
-                    if (neighbour.IsOpaqueFullBlock(world, neighbourPos)) continue;
+                var wx = chunkOrigin.X + i * stride;
+                var wz = chunkOrigin.Z + j * stride;
+                var pos = new Vector3i(wx, sy, wz);
+                var block = world.GetBlock(wx, sy, wz);
+                if (block == BlockRegistry.BlockAir || block.Model == null) continue;
 
-                    // Flat light sampled from the exposed air super-block (the side the face looks toward).
-                    AddFaceToVao(world, blockPos, x, y, z, block, face, entry.Value, vao, transform,
-                        SampleBrightness(world, neighbourPos));
-                }
+                var isWater = block.GetRenderMaterial(world, pos) == RenderMaterial.Water;
+                var light = SampleBrightness(world, new Vector3i(wx, sy + 1, wz));   // flat per-column light
+
+                var x0 = wx - 0.5f;
+                var x1 = wx + stride - 0.5f;
+                var z0 = wz - 0.5f;
+                var z1 = wz + stride - 0.5f;
+                var yTop = sy + 0.5f;
+
+                // Flat top (order = FacePositions Top: (x-,z-),(x+,z-),(x-,z+),(x+,z+)).
+                if (TryGetFace(block, BlockFace.Top, out var topFace))
+                    EmitLodQuad(vao, topFace, new Vector4(0, 1, 0, isWater ? WaterNormalW : 0f),
+                        Tint(world, block, pos, topFace),
+                        new Vector3(x0, yTop, z0), new Vector3(x1, yTop, z0),
+                        new Vector3(x0, yTop, z1), new Vector3(x1, yTop, z1), light);
+
+                // Skirts down to each lower neighbour (vert order = that side face's FacePositions: t0,t1 top).
+                EmitSkirt(world, vao, block, pos, sy, yTop, light, BlockFace.Right,
+                    new Vector3(x1, yTop, z1), new Vector3(x1, yTop, z0), heights[(i + 2) * gN + (j + 1)], scanBottom);
+                EmitSkirt(world, vao, block, pos, sy, yTop, light, BlockFace.Left,
+                    new Vector3(x0, yTop, z0), new Vector3(x0, yTop, z1), heights[(i) * gN + (j + 1)], scanBottom);
+                EmitSkirt(world, vao, block, pos, sy, yTop, light, BlockFace.Front,
+                    new Vector3(x0, yTop, z1), new Vector3(x1, yTop, z1), heights[(i + 1) * gN + (j + 2)], scanBottom);
+                EmitSkirt(world, vao, block, pos, sy, yTop, light, BlockFace.Back,
+                    new Vector3(x1, yTop, z0), new Vector3(x0, yTop, z0), heights[(i + 1) * gN + (j)], scanBottom);
             }
         }
+
+        /// <summary>Topmost solid-or-liquid block Y in the world column within [scanBottom, scanTop] (the LOD
+        /// surface — skips cutoff-transparent leaves so trees don't spike the heightmap); int.MinValue if none.</summary>
+        private static int SurfaceTop(WorldBase world, int wx, int wz, int scanTop, int scanBottom)
+        {
+            for (var y = scanTop; y >= scanBottom; y--)
+            {
+                var b = world.GetBlock(wx, y, wz);
+                if (b == BlockRegistry.BlockAir) continue;
+                if (b.IsLiquid || b.IsOpaqueFullBlock(world, new Vector3i(wx, y, wz))) return y;
+            }
+            return int.MinValue;
+        }
+
+        private static void EmitSkirt(WorldBase world, MeshBuffer vao, Block block, Vector3i pos, int sy, float yTop,
+            Vector4 light, BlockFace face, Vector3 t0, Vector3 t1, int neighbourY, int scanBottom)
+        {
+            if (neighbourY != int.MinValue && neighbourY >= sy) return;            // neighbour covers the gap
+            var yBot = (neighbourY == int.MinValue ? scanBottom : neighbourY) + 0.5f;
+            if (yBot >= yTop || !TryGetFace(block, face, out var sideFace)) return;
+            EmitLodQuad(vao, sideFace, new Vector4(face.GetNormal(), 0), Tint(world, block, pos, sideFace),
+                t0, t1, new Vector3(t0.X, yBot, t0.Z), new Vector3(t1.X, yBot, t1.Z), light);
+        }
+
+        private static void EmitLodQuad(MeshBuffer vao, BlockModel.FaceData face, Vector4 normal, Vector3 tint,
+            Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3, Vector4 light)
+        {
+            var tex = face.LoadedTexture;
+            var uv = face.GetTexCoords();
+            var baseVertex = vao.VertexCount;
+            vao.Add(v0, TexCoord(tex, uv[0]), normal, tint, light);
+            vao.Add(v1, TexCoord(tex, uv[1]), normal, tint, light);
+            vao.Add(v2, TexCoord(tex, uv[2]), normal, tint, light);
+            vao.Add(v3, TexCoord(tex, uv[3]), normal, tint, light);
+            vao.AddFace(baseVertex, false, Vector3.Zero);
+        }
+
+        private static Vector3 Tint(WorldBase world, Block block, Vector3i pos, BlockModel.FaceData face)
+            => face.TintIndex == -1 ? new Vector3(1) : block.GetTintColor(world, pos, face.TintIndex).ToVector4().Xyz;
+
+        private static bool TryGetFace(Block block, BlockFace face, out BlockModel.FaceData data)
+        {
+            foreach (var element in block.Model.Elements)
+                if (element.Faces.TryGetValue(face, out data))
+                    return true;
+            foreach (var element in block.Model.Elements)
+            foreach (var entry in element.Faces)
+            {
+                data = entry.Value;
+                return true;
+            }
+            data = null;
+            return false;
+        }
+
+        private static Vector4 TexCoord(BlockTexture tex, Vector2 uv)
+            => tex == null ? new Vector4(-1) : new Vector4(uv) {Z = tex.TextureId, W = tex.ArrayId};
 
         public static void AddBlockToVao(WorldBase world, Vector3i blockPos, int x, int y, int z, Block block,
             MeshBuffer vao, MeshBuffer transparentVao)
