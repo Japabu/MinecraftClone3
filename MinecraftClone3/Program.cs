@@ -147,8 +147,15 @@ namespace MinecraftClone3
             // or the GPU itself — the two stalls a CPU sampler can't see.
             Profiler.Record(e.Time, _lastUpdateMs, renderMs, _lastSwapMs, _lastGapMs, _lastGpuMs,
                 _updateCalls, renderAlloc);
-            Benchmark.Tick(e.Time, _lastUpdateMs, renderMs, _lastGpuMs);
-            Benchmark.CaptureFrame(FramebufferSize.X, FramebufferSize.Y);
+            if (Inspect.Active)
+            {
+                Inspect.Tick(FramebufferSize.X, FramebufferSize.Y);
+            }
+            else
+            {
+                Benchmark.Tick(e.Time, _lastUpdateMs, renderMs, _lastGpuMs);
+                Benchmark.CaptureFrame(FramebufferSize.X, FramebufferSize.Y);
+            }
             _updateCalls = 0;
 
             _swapTimer.Restart();
@@ -157,8 +164,8 @@ namespace MinecraftClone3
 
             _gapTimer.Restart();
 
-            // The benchmark closes the window when its scripted run completes; the report has already printed.
-            if (Benchmark.Finished) Close();
+            // The benchmark/inspect modes close the window when their scripted run completes.
+            if (Benchmark.Finished || Inspect.Finished) Close();
         }
 
         protected override void OnUnload()
@@ -189,19 +196,24 @@ namespace MinecraftClone3
             // runtime changes go through the GraphicsSettings setters (which push onto the live window).
             GraphicsSettings.Load();
 
-            // Benchmark mode (--benchmark): boot straight into the automated flythrough. VSync MUST be off so we
-            // measure uncapped frame rate, and the deterministic overrides apply in-memory (no save).
+            // Automated modes: --benchmark boots into the FPS flythrough; --inspect boots into the LOD A/B
+            // capture tool (its own large window so artifacts are visible). Both force VSync off and apply
+            // deterministic settings in-memory (no save).
             Benchmark.Configure(args);
-            if (Benchmark.Enabled) Benchmark.ApplySettings();
+            Inspect.Configure(args);
+            if (Inspect.Enabled) Inspect.ApplySettings();
+            else if (Benchmark.Enabled) Benchmark.ApplySettings();
+
+            var clientSize = Inspect.Enabled ? new Vector2i(Inspect.Width, Inspect.Height) : new Vector2i(1280, 720);
 
             var nativeWindowSettings = new NativeWindowSettings
             {
-                ClientSize = new Vector2i(1280, 720),
+                ClientSize = clientSize,
                 Title = "MinecraftClone3",
                 Profile = ContextProfile.Core,
                 // macOS only exposes OpenGL up to 4.1 Core.
                 APIVersion = new Version(4, 1),
-                Vsync = Benchmark.Enabled ? VSyncMode.Off : GraphicsSettings.VSync,
+                Vsync = (Benchmark.Enabled || Inspect.Enabled) ? VSyncMode.Off : GraphicsSettings.VSync,
                 WindowState = GraphicsSettings.Fullscreen ? WindowState.Fullscreen : WindowState.Normal
             };
 

@@ -11,8 +11,8 @@ namespace MinecraftClone3API.WorldGen
     /// base terrain (bedrock/stone) → biome surface skin → water below sea level → carvers →
     /// gen-time sky seeding → decoration (features, with a ±1-chunk margin and per-origin population seed).
     /// All content blocks (stone/water/bedrock) and biomes are injected by the dimension, so this class
-    /// holds no vanilla knowledge. It runs on the server load thread only, so its column scratch is a
-    /// plain reused field (single writer).
+    /// holds no vanilla knowledge. <see cref="Generate"/> is THREAD-SAFE (the load thread fans a batch across
+    /// cores): every field is read-only/pure except the column scratch, which is per-thread (ThreadLocal).
     /// </summary>
     public class NoiseChunkGenerator : IChunkGenerator
     {
@@ -50,8 +50,13 @@ namespace MinecraftClone3API.WorldGen
         private readonly OpenSimplexNoise _temperature;
         private readonly OpenSimplexNoise _humidity;
 
-        private readonly int[] _surf = new int[Chunk.Size * Chunk.Size];
-        private readonly Biome[] _colBiome = new Biome[Chunk.Size * Chunk.Size];
+        // Per-THREAD scratch so the server load thread can generate a batch of chunks in PARALLEL across cores
+        // (gen is embarrassingly parallel — every other field here is read-only/pure: the noise perm tables,
+        // the biome source, the carvers/features). Each thread reuses its own arrays (no per-chunk alloc).
+        private readonly System.Threading.ThreadLocal<int[]> _surfScratch =
+            new System.Threading.ThreadLocal<int[]>(() => new int[Chunk.Size * Chunk.Size]);
+        private readonly System.Threading.ThreadLocal<Biome[]> _colBiomeScratch =
+            new System.Threading.ThreadLocal<Biome[]>(() => new Biome[Chunk.Size * Chunk.Size]);
 
         public NoiseChunkGenerator(long seed, Dimension dimension, BiomeSource biomeSource, Biome ocean, Biome beach,
             Block stone, Block water, Block bedrock, List<Carver> carvers)
@@ -140,6 +145,8 @@ namespace MinecraftClone3API.WorldGen
         public void Generate(CachedChunk chunk, Vector3i chunkPos)
         {
             var min = chunkPos * Chunk.Size;
+            var surfMap = _surfScratch.Value;
+            var biomeMap = _colBiomeScratch.Value;
 
             var colTopMax = int.MinValue;
             for (var x = 0; x < Chunk.Size; x++)
@@ -148,17 +155,27 @@ namespace MinecraftClone3API.WorldGen
                 var idx = x * Chunk.Size + z;
                 var biome = BiomeAt(min.X + x, min.Z + z);
                 var surf = SurfaceHeight(min.X + x, min.Z + z);
-                _colBiome[idx] = biome;
-                _surf[idx] = surf;
+                biomeMap[idx] = biome;
+                surfMap[idx] = surf;
                 if (surf > colTopMax) colTopMax = surf;
             }
+
+            // All-air fast path: a chunk whose bottom sits above every surface column (+ the decoration
+            // headroom that bounds tree tops) and above sea level produces no blocks — the fill/carve/sky
+            // passes below would iterate 4096 cells twice to set nothing, decoration is gated off, and the
+            // chunk is then discarded as IsEmpty anyway. At high render distance the vertical band is mostly
+            // this empty air above the terrain (≈¾ of generated chunks), so skipping it is the single biggest
+            // gen-throughput win. (Seeding sky light is pointless for a discarded chunk — the client falls
+            // back to sky 15 for any unloaded chunk; see WorldClient.GetSkyLight.)
+            if (min.Y > SeaLevel && min.Y > colTopMax + DecorationHeadroom)
+                return;
 
             for (var x = 0; x < Chunk.Size; x++)
             for (var z = 0; z < Chunk.Size; z++)
             {
                 var idx = x * Chunk.Size + z;
-                var surf = _surf[idx];
-                var biome = _colBiome[idx];
+                var surf = surfMap[idx];
+                var biome = biomeMap[idx];
                 var ocean = surf < SeaLevel;
 
                 for (var ly = 0; ly < Chunk.Size; ly++)
@@ -190,7 +207,7 @@ namespace MinecraftClone3API.WorldGen
                 }
             }
 
-            foreach (var carver in _carvers) carver.Carve(chunk, chunkPos, this, _surf);
+            foreach (var carver in _carvers) carver.Carve(chunk, chunkPos, this, surfMap);
 
             // Seed sky light above the solid surface. Open air is full sky; the water column dims one
             // level per block of depth so the surface is bright and the deep is dark (no BFS at gen).
@@ -198,7 +215,7 @@ namespace MinecraftClone3API.WorldGen
             for (var z = 0; z < Chunk.Size; z++)
             {
                 var idx = x * Chunk.Size + z;
-                var surf = _surf[idx];
+                var surf = surfMap[idx];
                 var ocean = surf < SeaLevel;
 
                 for (var ly = 0; ly < Chunk.Size; ly++)

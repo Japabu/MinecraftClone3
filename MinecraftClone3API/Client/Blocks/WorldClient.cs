@@ -310,12 +310,29 @@ namespace MinecraftClone3API.Client.Blocks
         private static readonly float Lod2DistanceSq = 160f * 160f;
         private Vector3i _lastLodChunk = new Vector3i(int.MinValue);
 
+        /// <summary>Debug/inspection toggle: when true every chunk meshes at full detail (LOD 0), so the
+        /// inspection tool can A/B the LOD against the ground truth. Call <see cref="RemeshAll"/> after changing.</summary>
+        public volatile bool ForceLodOff;
+
         private int LodFor(Vector3 center)
         {
+            if (ForceLodOff) return 0;
             var distSq = (center - _playerPosition).LengthSquared;
             if (distSq < Lod1DistanceSq) return 0;
             if (distSq < Lod2DistanceSq) return 1;
             return 2;
+        }
+
+        /// <summary>Re-queues every rendered chunk for re-meshing at the current LOD policy (used by the
+        /// inspection tool when toggling <see cref="ForceLodOff"/>). Main-thread only (touches RenderList).</summary>
+        public void RemeshAll()
+        {
+            for (var i = 0; i < RenderList.Count; i++)
+            {
+                var rd = RenderList[i];
+                rd.DesiredLod = LodFor(rd.Middle);
+                QueueMesh(rd.Chunk.Position, false);
+            }
         }
 
         /// <summary>Re-evaluates each rendered chunk's LOD against the player's new position and re-queues any

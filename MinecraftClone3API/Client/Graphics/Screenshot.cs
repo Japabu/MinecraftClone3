@@ -12,16 +12,27 @@ namespace MinecraftClone3API.Graphics
     /// </summary>
     public static class Screenshot
     {
-        /// <summary>Reads the back buffer (main-thread GL) and writes it to <paramref name="path"/> as PNG.</summary>
-        public static void CaptureBackBuffer(string path, int width, int height)
+        /// <summary>Reads the back buffer (main-thread GL) into a raw RGBA byte buffer (bottom-up, as
+        /// glReadPixels returns it). Used both to write a PNG and to diff two captures.</summary>
+        public static byte[] ReadBackBuffer(int width, int height)
         {
-            if (width <= 0 || height <= 0) return;
-
             var pixels = new byte[width * height * 4];
             GL.PixelStore(PixelStoreParameter.PackAlignment, 1);
             GL.ReadBuffer(ReadBufferMode.Back);
             GL.ReadPixels(0, 0, width, height, PixelFormat.Rgba, PixelType.UnsignedByte, pixels);
+            return pixels;
+        }
 
+        /// <summary>Reads the back buffer and writes it to <paramref name="path"/> as PNG.</summary>
+        public static void CaptureBackBuffer(string path, int width, int height)
+        {
+            if (width <= 0 || height <= 0) return;
+            WritePng(path, width, height, ReadBackBuffer(width, height));
+        }
+
+        /// <summary>Writes a bottom-up RGBA buffer (e.g. from <see cref="ReadBackBuffer"/>) to a PNG.</summary>
+        public static void WritePng(string path, int width, int height, byte[] bottomUpRgba)
+        {
             // glReadPixels rows are bottom-to-top; PNG rows are top-to-bottom. Build the raw image with a
             // per-row filter byte (0 = none), flipping vertically.
             var stride = width * 4;
@@ -31,11 +42,29 @@ namespace MinecraftClone3API.Graphics
                 var src = (height - 1 - y) * stride;
                 var dst = y * (stride + 1);
                 raw[dst] = 0; // filter: none
-                System.Buffer.BlockCopy(pixels, src, raw, dst + 1, stride);
+                System.Buffer.BlockCopy(bottomUpRgba, src, raw, dst + 1, stride);
             }
 
             using var fs = new FileStream(path, FileMode.Create, FileAccess.Write);
             WritePng(fs, width, height, raw);
+        }
+
+        /// <summary>Writes an amplified per-pixel difference of two captures to a PNG: |a-b| × amplify on a near
+        /// black background, so any rendering change (a black face, a moved silhouette, a colour/lighting shift)
+        /// lights up brightly. The biggest honest "what did this change actually do" tool.</summary>
+        public static void WriteDiff(string path, int width, int height, byte[] a, byte[] b, float amplify = 6f)
+        {
+            var diff = new byte[a.Length];
+            for (var i = 0; i < a.Length; i += 4)
+            {
+                for (var c = 0; c < 3; c++)
+                {
+                    var d = Math.Abs(a[i + c] - b[i + c]) * amplify;
+                    diff[i + c] = (byte) (d > 255 ? 255 : d);
+                }
+                diff[i + 3] = 255;
+            }
+            WritePng(path, width, height, diff);
         }
 
         private static readonly byte[] PngSignature = {137, 80, 78, 71, 13, 10, 26, 10};

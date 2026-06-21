@@ -51,7 +51,7 @@ namespace MinecraftClone3.States
         public override void Update(bool focused)
         {
             if (!_done) return;
-            if (Benchmark.Enabled)
+            if (Benchmark.Enabled || Inspect.Enabled)
                 StateEngine.ReplaceState(new StateWorld(_window, Benchmark.CreateWorldInfo(), benchmark: true));
             else
                 StateEngine.ReplaceState(new GuiMainMenu(_window));

@@ -190,9 +190,10 @@ namespace MinecraftClone3.States
 
             if (_benchmark)
             {
-                // The automated flythrough drives the camera (and issues edits) each frame; overwrites the
-                // interpolation above (it sets Position/Prev/Interpolated directly).
-                Benchmark.DriveCamera(_player, _world);
+                // Automated mode drives the camera each frame (overwrites the interpolation above): the
+                // benchmark flies a path, the inspector parks at fixed A/B poses.
+                if (Inspect.Enabled) Inspect.DriveCamera(_player);
+                else Benchmark.DriveCamera(_player, _world);
                 PlayerController.Camera.Update();
             }
             else if (active) PlayerController.UpdateFrame(_window, _world);
@@ -264,7 +265,11 @@ namespace MinecraftClone3.States
                 // frame doesn't flash the default origin view before PlayerController.UpdateFrame runs.
                 PlayerController.Camera.Update();
                 // Anchor the automated flythrough at the spawn now that terrain is under the player.
-                if (_benchmark) Benchmark.Begin(_player.Position);
+                if (_benchmark)
+                {
+                    if (Inspect.Enabled) Inspect.Begin(_player.Position);
+                    else Benchmark.Begin(_player.Position);
+                }
             }
         }
 

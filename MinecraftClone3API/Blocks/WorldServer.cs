@@ -87,6 +87,17 @@ namespace MinecraftClone3API.Blocks
         // seen promptly). The full BedrockY..WorldTop vertical column is loaded within this radius.
         public volatile int TerrainRadius = 10;
 
+        // Chunks generated per LoadThread iteration per player. Large enough that the ~11k-position interest
+        // scan amortizes over a big gen batch (the old cap of 16 meant ~275 scans to fill RD16), small enough
+        // that a moving player's interest is re-read often enough to follow them. With the no-idle-sleep change
+        // (sleep only when nothing is pending) this lets the world stream in flat-out instead of dribbling.
+        private const int MaxChunksPerLoad = 128;
+
+        // Cores the parallel chunk-gen batch may use — leave two for the client mesh pool + main/render thread.
+        private readonly System.Threading.Tasks.ParallelOptions _genParallelOptions =
+            new System.Threading.Tasks.ParallelOptions
+                {MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 2)};
+
         // The active world generator (resolved from the Vanilla:Overworld dimension, or a void fallback if
         // no dimension is registered). Sole writer of generated chunks runs on the load thread.
         private readonly IChunkGenerator _generator;
@@ -482,19 +493,22 @@ namespace MinecraftClone3API.Blocks
                     _loadSortOrigin = playerChunk;
                     playerChunksToLoad.Sort(_loadSort);
 
-                    //Cap player chunk load tasks to 16
-                    if(playerChunksToLoad.Count > 16)
-                        playerChunksToLoad.RemoveRange(16, playerChunksToLoad.Count - 16);
+                    if (playerChunksToLoad.Count > MaxChunksPerLoad)
+                        playerChunksToLoad.RemoveRange(MaxChunksPerLoad, playerChunksToLoad.Count - MaxChunksPerLoad);
                 }
 
                 ExtensionHelper.ZipMerge(_loadPlayerChunkLists, _loadMerged);
-                foreach (var chunkPos in _loadMerged)
+                // Generate the batch in PARALLEL across cores — chunk gen is the streaming bottleneck (a
+                // single thread was ~95% busy) and is embarrassingly parallel (the generator's per-thread
+                // scratch makes Generate thread-safe; _populatedChunks is concurrent, disk load is lock-guarded,
+                // staging is locked). Bounded so the mesh pool + main thread keep their cores.
+                System.Threading.Tasks.Parallel.ForEach(_loadMerged, _genParallelOptions, chunkPos =>
                 {
                     // Players with overlapping interest produce duplicate positions in the merged
                     // list; skip ones already queued or known so we don't load (or add) them twice.
-                    if (_populatedChunks.ContainsKey(chunkPos)) continue;
+                    if (_populatedChunks.ContainsKey(chunkPos)) return;
                     lock (_chunksReadyToAdd)
-                        if (_chunksReadyToAdd.ContainsKey(chunkPos)) continue;
+                        if (_chunksReadyToAdd.ContainsKey(chunkPos)) return;
 
                     ChunkTracer.Born(chunkPos);
                     var cachedChunk = LoadChunk(chunkPos);
@@ -515,10 +529,12 @@ namespace MinecraftClone3API.Blocks
 
                         ChunkTracer.Staged(chunkPos);
                     }
-                }
+                });
 
                 Profiler.AddLoadAlloc(GC.GetAllocatedBytesForCurrentThread() - allocStart);
-                Thread.Sleep(10);
+                // Only idle-sleep when nothing was loaded (world fully streamed around every player); under
+                // load run flat out so streaming is gen-throughput-bound, not 16-chunks-per-10ms throttled.
+                if (_loadMerged.Count == 0) Thread.Sleep(10);
             }
         }
 
