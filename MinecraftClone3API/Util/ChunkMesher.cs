@@ -190,12 +190,12 @@ namespace MinecraftClone3API.Util
         /// heights for skirts read across into the adjacent regions (so region borders don't crack); an unknown
         /// neighbour skirts to <see cref="LodFloorY"/>.
         /// </summary>
-        public static void AddLodColumnRegionToVao(LodColumnStore store, Vector3i regionKey, MeshBuffer vao)
+        public static void AddLodColumnRegionToVao(LodColumnStore store, Vector3i regionKey, MeshBuffer vao, int meshStep)
         {
             if (!store.TryGetRegion(regionKey, out var region)) return;
             var cols = region.Columns;
-            const int n = LodColumn.CellsPerAxis;
-            const int stride = LodColumn.Stride;
+            var superN = LodColumn.CellsPerAxis / meshStep;     // super-cells per axis (stride-ring coarsening)
+            var cellSize = LodColumn.Stride * meshStep;          // world blocks per super-cell
             var baseX = regionKey.X << 7;
             var baseZ = regionKey.Z << 7;
 
@@ -204,45 +204,49 @@ namespace MinecraftClone3API.Util
             store.TryGetRegion(regionKey + new Vector3i(0, 0, 1), out var rPosZ);
             store.TryGetRegion(regionKey + new Vector3i(0, 0, -1), out var rNegZ);
 
-            // Greedy-merged flat tops: collapse runs of IDENTICAL columns (same packed block+height+sky) into one
-            // quad — water and plains are huge identical expanses, so this cuts the dominant top-quad count
-            // several-fold (the LOD geometry-pass cost). cx = X (height of the merge rect), cz = Z (width).
-            // Texture is stretched over the merged rect (imperceptible at the fogged horizon). Skirts stay
-            // per-cell below (they only emit at height steps, so flat interiors cost nothing).
-            Span<bool> used = stackalloc bool[LodColumn.ColumnCount];
-            for (var cx = 0; cx < n; cx++)
-            for (var cz = 0; cz < n; cz++)
+            // Downsample the stride-4 store to the super-grid by MAX surface (keeps trees/peaks from sinking when
+            // coarsening — a super-cell shows its tallest member, so forests stay as canopy plateaus). meshStep 1
+            // is the identity (super-grid == store), used in the near horizon ring; 2/4 are the stride-8/16 rings.
+            Span<long> grid = stackalloc long[superN * superN];
+            for (var scx = 0; scx < superN; scx++)
+            for (var scz = 0; scz < superN; scz++)
+                grid[scx * superN + scz] = MaxSurfaceCell(cols, scx, scz, meshStep);
+
+            // Greedy-merged flat tops over the super-grid (water/plains collapse to a few big quads).
+            Span<bool> used = stackalloc bool[superN * superN];
+            for (var scx = 0; scx < superN; scx++)
+            for (var scz = 0; scz < superN; scz++)
             {
-                var idx = cx * n + cz;
+                var idx = scx * superN + scz;
                 if (used[idx]) continue;
-                var packed = cols[idx];
+                var packed = grid[idx];
                 if (LodColumn.IsEmpty(packed)) { used[idx] = true; continue; }
                 var block = GameRegistry.BlockRegistry[LodColumn.BlockId(packed)];
                 if (block == BlockRegistry.BlockAir || block.Model == null ||
                     !TryGetFace(block, BlockFace.Top, out var topFace)) { used[idx] = true; continue; }
 
                 var w = 1;
-                while (cz + w < n && !used[idx + w] && cols[idx + w] == packed) w++;
+                while (scz + w < superN && !used[idx + w] && grid[idx + w] == packed) w++;
                 var h = 1;
                 var grow = true;
-                while (cx + h < n && grow)
+                while (scx + h < superN && grow)
                 {
                     for (var k = 0; k < w; k++)
-                        if (used[(cx + h) * n + cz + k] || cols[(cx + h) * n + cz + k] != packed) { grow = false; break; }
+                        if (used[(scx + h) * superN + scz + k] || grid[(scx + h) * superN + scz + k] != packed) { grow = false; break; }
                     if (grow) h++;
                 }
                 for (var i = 0; i < h; i++)
                 for (var k = 0; k < w; k++)
-                    used[(cx + i) * n + cz + k] = true;
+                    used[(scx + i) * superN + scz + k] = true;
 
                 var sy = LodColumn.SurfaceY(packed);
-                var pos = new Vector3i(baseX + cx * stride, sy, baseZ + cz * stride);
+                var pos = new Vector3i(baseX + scx * cellSize, sy, baseZ + scz * cellSize);
                 var isWater = block.GetRenderMaterial(null, pos) == RenderMaterial.Water;
                 var light = new Vector4(0, 0, 0, CustomLightLevelToBrightness(LodColumn.Sky(packed)));
-                var x0 = baseX + cx * stride - 0.5f;
-                var x1 = baseX + (cx + h) * stride - 0.5f;
-                var z0 = baseZ + cz * stride - 0.5f;
-                var z1 = baseZ + (cz + w) * stride - 0.5f;
+                var x0 = baseX + scx * cellSize - 0.5f;
+                var x1 = baseX + (scx + h) * cellSize - 0.5f;
+                var z0 = baseZ + scz * cellSize - 0.5f;
+                var z1 = baseZ + (scz + w) * cellSize - 0.5f;
                 var yTop = sy + 0.5f;
                 EmitLodQuad(vao, topFace, new Vector4(0, 1, 0, isWater ? WaterNormalW : 0f),
                     Tint(null, block, pos, topFace),
@@ -250,49 +254,68 @@ namespace MinecraftClone3API.Util
                     new Vector3(x0, yTop, z1), new Vector3(x1, yTop, z1), light);
             }
 
-            for (var cx = 0; cx < n; cx++)
-            for (var cz = 0; cz < n; cz++)
+            for (var scx = 0; scx < superN; scx++)
+            for (var scz = 0; scz < superN; scz++)
             {
-                var packed = cols[cx * n + cz];
+                var packed = grid[scx * superN + scz];
                 if (LodColumn.IsEmpty(packed)) continue;
                 var block = GameRegistry.BlockRegistry[LodColumn.BlockId(packed)];
                 if (block == BlockRegistry.BlockAir || block.Model == null) continue;
 
                 var sy = LodColumn.SurfaceY(packed);
-                var pos = new Vector3i(baseX + cx * stride, sy, baseZ + cz * stride);
+                var pos = new Vector3i(baseX + scx * cellSize, sy, baseZ + scz * cellSize);
                 var light = new Vector4(0, 0, 0, CustomLightLevelToBrightness(LodColumn.Sky(packed)));
-                var x0 = baseX + cx * stride - 0.5f;
-                var x1 = baseX + (cx + 1) * stride - 0.5f;
-                var z0 = baseZ + cz * stride - 0.5f;
-                var z1 = baseZ + (cz + 1) * stride - 0.5f;
+                var x0 = baseX + scx * cellSize - 0.5f;
+                var x1 = baseX + (scx + 1) * cellSize - 0.5f;
+                var z0 = baseZ + scz * cellSize - 0.5f;
+                var z1 = baseZ + (scz + 1) * cellSize - 0.5f;
                 var yTop = sy + 0.5f;
 
                 EmitSkirt(null, vao, block, pos, sy, yTop, light, BlockFace.Right,
                     new Vector3(x1, yTop, z1), new Vector3(x1, yTop, z0),
-                    LodNeighbourY(cols, rPosX, cx + 1, cz, n), LodFloorY);
+                    SuperNeighbourY(grid, superN, rPosX, scx + 1, scz, meshStep), LodFloorY);
                 EmitSkirt(null, vao, block, pos, sy, yTop, light, BlockFace.Left,
                     new Vector3(x0, yTop, z0), new Vector3(x0, yTop, z1),
-                    LodNeighbourY(cols, rNegX, cx - 1, cz, n), LodFloorY);
+                    SuperNeighbourY(grid, superN, rNegX, scx - 1, scz, meshStep), LodFloorY);
                 EmitSkirt(null, vao, block, pos, sy, yTop, light, BlockFace.Front,
                     new Vector3(x0, yTop, z1), new Vector3(x1, yTop, z1),
-                    LodNeighbourY(cols, rPosZ, cx, cz + 1, n), LodFloorY);
+                    SuperNeighbourY(grid, superN, rPosZ, scx, scz + 1, meshStep), LodFloorY);
                 EmitSkirt(null, vao, block, pos, sy, yTop, light, BlockFace.Back,
                     new Vector3(x1, yTop, z0), new Vector3(x0, yTop, z0),
-                    LodNeighbourY(cols, rNegZ, cx, cz - 1, n), LodFloorY);
+                    SuperNeighbourY(grid, superN, rNegZ, scx, scz - 1, meshStep), LodFloorY);
             }
         }
 
-        /// <summary>Surface Y of the neighbour cell (cx,cz) within a region, wrapping into the adjacent
-        /// <paramref name="neighbour"/> region when out of [0,n); int.MinValue if empty/absent.</summary>
-        private static int LodNeighbourY(long[] cols, LodColumn neighbour, int cx, int cz, int n)
+        /// <summary>Max-surface packed column over a meshStep×meshStep block of stride-4 store cells (the
+        /// super-cell downsample), or 0 (empty) if all empty.</summary>
+        private static long MaxSurfaceCell(long[] cols, int scx, int scz, int meshStep)
+        {
+            long best = 0;
+            var bestY = int.MinValue;
+            var cx0 = scx * meshStep;
+            var cz0 = scz * meshStep;
+            for (var i = 0; i < meshStep; i++)
+            for (var j = 0; j < meshStep; j++)
+            {
+                var packed = cols[(cx0 + i) * LodColumn.CellsPerAxis + (cz0 + j)];
+                if (LodColumn.IsEmpty(packed)) continue;
+                var y = LodColumn.SurfaceY(packed);
+                if (y > bestY) { bestY = y; best = packed; }
+            }
+            return best;
+        }
+
+        /// <summary>Surface Y of the neighbour super-cell (scx,scz): the self super-grid when in range, else the
+        /// adjacent region's wrapped super-cell (max-surface on demand at the same step); int.MinValue if absent.</summary>
+        private static int SuperNeighbourY(Span<long> grid, int superN, LodColumn neighbour, int scx, int scz, int meshStep)
         {
             long packed;
-            if (cx >= 0 && cx < n && cz >= 0 && cz < n)
-                packed = cols[cx * n + cz];
+            if (scx >= 0 && scx < superN && scz >= 0 && scz < superN)
+                packed = grid[scx * superN + scz];
             else
             {
                 if (neighbour == null) return int.MinValue;
-                packed = neighbour.Columns[((cx + n) % n) * n + ((cz + n) % n)];
+                packed = MaxSurfaceCell(neighbour.Columns, (scx + superN) % superN, (scz + superN) % superN, meshStep);
             }
             return LodColumn.IsEmpty(packed) ? int.MinValue : LodColumn.SurfaceY(packed);
         }

@@ -50,7 +50,7 @@ namespace MinecraftClone3API.Util
         public static float Fov = 90f;
         public static float Brightness = 0.08f;
         public static float LodDetail = 1.0f;              // within-RD LOD detail multiplier (GraphicsSettings)
-        public static int LodHorizonChunks = 48;           // Phase-2 far-horizon chunks beyond render distance
+        public static int LodHorizonChunks = 64;           // Phase-2 far-horizon chunks beyond render distance
         public static bool DoEdits = true;
         // Pins the day clock so sun/shadow conditions are identical every run (≈ mid-morning: sun well up,
         // long shadows, the shadow passes active — the heavy, representative case). See WorldRenderer.

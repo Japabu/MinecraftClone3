@@ -56,7 +56,7 @@ namespace MinecraftClone3API.Client
             public float MouseSensitivity = 0.008f;
             public float Brightness = 0.01f;
             public float LodDetail = 1.0f;
-            public int LodHorizonChunks = 48;
+            public int LodHorizonChunks = 64;
         }
 
         private static Data _data = new Data();

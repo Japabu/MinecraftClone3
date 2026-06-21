@@ -25,6 +25,13 @@ namespace MinecraftClone3API.Graphics
         public bool Updated;
         public bool Uploaded;
 
+        /// <summary>Mesh stride the main thread wants this region meshed at (1 = stride-4 store res near the
+        /// horizon edge, 2 = stride-8, 4 = stride-16 farther — the DH power-of-two detail rings). Set by the
+        /// distance scan; the mesh thread reads it in <see cref="Update"/> and records what it meshed in
+        /// <see cref="MeshStep"/>.</summary>
+        public volatile int DesiredMeshStep = 1;
+        public int MeshStep = 1;
+
         /// <summary>Index into <see cref="MinecraftClone3API.Client.Blocks.WorldClient"/>'s main-thread LOD
         /// render list; -1 when not listed. O(1) swap-removal on eviction. Main-thread only.</summary>
         public int RenderListIndex = -1;
@@ -47,10 +54,12 @@ namespace MinecraftClone3API.Graphics
 
         public void Update(LodColumnStore store)
         {
+            var step = DesiredMeshStep;
             lock (_opaque)
             {
                 _opaque.Clear();
-                ChunkMesher.AddLodColumnRegionToVao(store, RegionKey, _opaque);
+                ChunkMesher.AddLodColumnRegionToVao(store, RegionKey, _opaque, step);
+                MeshStep = step;
                 Updated = true;
             }
         }

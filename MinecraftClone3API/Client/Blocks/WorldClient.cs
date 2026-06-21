@@ -322,6 +322,7 @@ namespace MinecraftClone3API.Client.Blocks
             EvictDistantChunks();
             ScanLod();
             EvictDistantLod();
+            ScanLodForMeshStep();
             LastEvictMs = _phaseTimer.Elapsed.TotalMilliseconds;
 
             while (_disposeQueue.TryDequeue(out var disposed))
@@ -383,6 +384,7 @@ namespace MinecraftClone3API.Client.Blocks
                 if (!LodRegions.TryGetValue(key, out var lodData))
                 {
                     LodRegions[key] = lodData = new LodRenderData(key);
+                    lodData.DesiredMeshStep = MeshStepFor(lodData.Middle);
                     lodData.RenderListIndex = LodRenderList.Count;
                     LodRenderList.Add(lodData);
                 }
@@ -396,6 +398,42 @@ namespace MinecraftClone3API.Client.Blocks
             lock (_meshLock)
                 if (_lodMeshPending.Add(key))
                     _lodMeshQueue.Enqueue(key);
+        }
+
+        // DH power-of-two detail rings: the horizon is stride-4 (full store res) for the first LodStride8Distance
+        // blocks past the render distance, then stride-8, then stride-16 — so a HUGE horizon stays affordable
+        // (the far ring is ~4x/16x fewer quads). Rings are 24 chunks (3 regions) wide so adjacent regions never
+        // differ by more than one step (no >2x crack).
+        private const float LodStride8Distance = 24 * Chunk.Size;
+        private const float LodStride16Distance = 48 * Chunk.Size;
+        private Vector3i _lastLodStepChunk = new Vector3i(int.MinValue);
+
+        private int MeshStepFor(Vector3 middle)
+        {
+            var dist = (middle - _playerPosition).Length;
+            var rd = GraphicsSettings.RenderDistanceChunks * Chunk.Size;
+            if (dist < rd + LodStride8Distance) return 1;
+            if (dist < rd + LodStride16Distance) return 2;
+            return 4;
+        }
+
+        /// <summary>Re-evaluates each LOD region's mesh stride against the player's new position and re-queues any
+        /// whose ring changed. Gated on a chunk-border crossing (own gate), so a stationary player does no work.
+        /// Main-thread only (touches LodRenderList).</summary>
+        private void ScanLodForMeshStep()
+        {
+            var playerChunk = ChunkInWorld(_playerPosition.ToVector3i());
+            if (playerChunk == _lastLodStepChunk) return;
+            _lastLodStepChunk = playerChunk;
+
+            for (var i = 0; i < LodRenderList.Count; i++)
+            {
+                var rd = LodRenderList[i];
+                var want = MeshStepFor(rd.Middle);
+                if (want == rd.DesiredMeshStep) continue;
+                rd.DesiredMeshStep = want;
+                QueueLodMesh(rd.RegionKey);
+            }
         }
 
         private void RequeueLodUpload(Vector3i key)
