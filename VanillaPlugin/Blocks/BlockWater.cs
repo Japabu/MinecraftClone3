@@ -30,6 +30,7 @@ namespace VanillaPlugin.Blocks
         public override RenderMaterial GetRenderMaterial(WorldBase world, Vector3i blockPos) => RenderMaterial.Water;
         public override bool CanPassThrough(WorldBase world, Vector3i blockPos) => true;
         public override bool CanTarget(WorldBase world, Vector3i blockPos) => false;
+        public override bool IsLiquid => true;
 
         public override ConnectionType ConnectsToBlock(WorldBase world, Vector3i blockPos, Vector3i otherBlockPos,
             Block otherBlock) => otherBlock == this ? ConnectionType.Connected : ConnectionType.Undefined;

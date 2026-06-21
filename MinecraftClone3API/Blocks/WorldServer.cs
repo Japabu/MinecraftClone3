@@ -12,6 +12,17 @@ namespace MinecraftClone3API.Blocks
 {
     public class WorldServer : WorldBase
     {
+        /// <summary>Authoritative world clock: ticks elapsed since the world started, advanced once per
+        /// <see cref="Update"/> (20 tps in both the integrated and the dedicated server). Drives the
+        /// day/night time sync. Single writer (the tick thread); a plain field read elsewhere is fine.</summary>
+        public long TickCount { get; private set; }
+
+        public const double SecondsPerTick = PlayerPhysics.TickSeconds;
+
+        /// <summary>The world clock in seconds (<see cref="TickCount"/> · <see cref="SecondsPerTick"/>);
+        /// shipped in <c>WorldTimePacket</c> to drive the client day/night cycle.</summary>
+        public double WorldTimeSeconds => TickCount * SecondsPerTick;
+
         public static readonly TimeSpan ChunkLifetime = TimeSpan.FromSeconds(30);
         private readonly Dictionary<Vector3i, CachedChunk> _chunksReadyToAdd = new Dictionary<Vector3i, CachedChunk>();
         private readonly HashSet<Vector3i> _chunksReadyToRemove = new HashSet<Vector3i>();
@@ -290,10 +301,10 @@ namespace MinecraftClone3API.Blocks
                 DirtyChunks[chunkInWorld + new Vector3i(0, 0, +1)] = 0;
         }
 
-        public override void PlaceBlock(EntityPlayer player, Vector3i blockPos, Block block)
+        public override void PlaceBlock(EntityPlayer player, Vector3i blockPos, Block block, int metadata)
         {
             SetBlock(blockPos, block);
-            block.OnPlaced(this, blockPos, player);
+            block.OnPlaced(this, blockPos, player, metadata);
         }
 
         /// <summary>Adds a player whose position drives chunk-loading interest. Mutated only here and
@@ -311,6 +322,8 @@ namespace MinecraftClone3API.Blocks
         public override void Update()
         {
             if (_unloaded) return;
+
+            TickCount++;
 
             //Update entities
             foreach (var playerEntity in PlayerEntities)

@@ -12,8 +12,14 @@ namespace MinecraftClone3API.Entities
         public float Pitch;
         public float Yaw;
 
+        // Remote-entity interpolation: position updates arrive at the server tick rate (20 tps), so a
+        // remote entity lerps from where it was drawn toward the new target over one tick interval instead
+        // of snapping. The local player overrides RenderPosition with its own (accumulator-driven) interp.
+        private Vector3 _interpStart;
+        private float _interpAlpha = 1f;
+
         public virtual Vector3 EyeOffset => Vector3.Zero;
-        public virtual Vector3 RenderPosition => Position;
+        public virtual Vector3 RenderPosition => Vector3.Lerp(_interpStart, Position, _interpAlpha);
 
         public Entity()
         {
@@ -24,6 +30,23 @@ namespace MinecraftClone3API.Entities
 
         public virtual void Update()
         {
+        }
+
+        /// <summary>Aims the interpolation at a freshly-received position: continue from where the entity is
+        /// drawn right now, then lerp toward the new target over one server tick.</summary>
+        public void SetInterpTarget(Vector3 target, float pitch, float yaw)
+        {
+            _interpStart = RenderPosition;
+            Position = target;
+            Pitch = pitch;
+            Yaw = yaw;
+            _interpAlpha = 0f;
+        }
+
+        public void UpdateInterpolation(float dt)
+        {
+            if (_interpAlpha >= 1f) return;
+            _interpAlpha = MathHelper.Min(1f, _interpAlpha + dt / PlayerPhysics.TickSeconds);
         }
 
         public void Rotate(float pitch, float yaw)

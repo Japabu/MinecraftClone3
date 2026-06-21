@@ -90,6 +90,13 @@ namespace MinecraftClone3API.Client.Blocks
         public bool SpawnReceived;
         public bool Ready;
 
+        // Server-authoritative world clock: the last received world time plus the wall-clock since it
+        // arrived, so the day/night cycle advances smoothly between the periodic WorldTime packets and is
+        // shared across multiplayer clients (WorldRenderer reads this).
+        private double _serverTimeSeconds;
+        private readonly Stopwatch _timeSyncClock = Stopwatch.StartNew();
+        public double WorldTimeSeconds => _serverTimeSeconds + _timeSyncClock.Elapsed.TotalSeconds;
+
         // Per-Update phase timings + GL upload volume, surfaced to the profiler so a frame spike can be
         // split into packet-handling / render-data creation / GL upload / eviction — isolating whether the
         // cost is the update path or the GPU upload (the re-BufferData of edited chunks).
@@ -119,6 +126,7 @@ namespace MinecraftClone3API.Client.Blocks
         public int DisposeQueueDepth => _disposeQueueDepth;
 
         private readonly Stopwatch _phaseTimer = new Stopwatch();
+        private readonly Stopwatch _entityInterpTimer = Stopwatch.StartNew();
 
         private readonly IConnection _connection;
         private readonly Thread[] _meshThreads;
@@ -262,6 +270,11 @@ namespace MinecraftClone3API.Client.Blocks
                 disposed.FreeArena(OpaqueArena);
                 disposed.Dispose();
             }
+
+            // Advance remote-entity interpolation at the display rate (positions arrive at 20 tps).
+            var interpDt = (float) _entityInterpTimer.Elapsed.TotalSeconds;
+            _entityInterpTimer.Restart();
+            foreach (var entity in Entities.Values) entity.UpdateInterpolation(interpDt);
         }
 
         /// <summary>Creates the GL render data (a GL call, hence main-thread only) for chunks the apply
@@ -409,13 +422,15 @@ namespace MinecraftClone3API.Client.Blocks
                     break;
                 case EntityMovePacket move when move.EntityId != LocalEntityId:
                     if (!Entities.TryGetValue(move.EntityId, out var entity))
-                        Entities[move.EntityId] = entity = new Entity();
-                    entity.Position = move.Position;
-                    entity.Pitch = move.Pitch;
-                    entity.Yaw = move.Yaw;
+                        Entities[move.EntityId] = entity = new Entity {Position = move.Position};
+                    entity.SetInterpTarget(move.Position, move.Pitch, move.Yaw);
                     break;
                 case EntityDespawnPacket despawn:
                     Entities.Remove(despawn.EntityId);
+                    break;
+                case WorldTimePacket time:
+                    _serverTimeSeconds = time.WorldSeconds;
+                    _timeSyncClock.Restart();
                     break;
             }
         }
@@ -649,8 +664,8 @@ namespace MinecraftClone3API.Client.Blocks
         public override void SetBlock(int x, int y, int z, Block block, bool update, bool lowPriority)
             => _connection.Send(new PlaceBlockRequestPacket {Position = new Vector3i(x, y, z), BlockId = block.Id});
 
-        public override void PlaceBlock(EntityPlayer player, Vector3i blockPos, Block block)
-            => _connection.Send(new PlaceBlockRequestPacket {Position = blockPos, BlockId = block.Id});
+        public override void PlaceBlock(EntityPlayer player, Vector3i blockPos, Block block, int metadata)
+            => _connection.Send(new PlaceBlockRequestPacket {Position = blockPos, BlockId = block.Id, Metadata = metadata});
 
         public override Block GetBlock(int x, int y, int z)
         {

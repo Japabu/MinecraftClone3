@@ -18,15 +18,12 @@ namespace MinecraftClone3API.Entities
 
         private const float FlySpeed = 16f;
         private const float SprintMultiplier = 3f;
-        private const float MaxStepSeconds = 0.1f;
         private const float DoubleTapSeconds = 0.3f;
 
         private static BlockRaytraceResult _blockRaytrace;
         private static string _currentBlock = "Vanilla:Stone";
         private static bool _skipMouseDelta;
-        private static readonly Stopwatch _moveTimer = Stopwatch.StartNew();
         private static readonly Stopwatch _spaceTapTimer = Stopwatch.StartNew();
-        private static float _physicsAccumulator;
 
         public static void SetEntity(EntityPlayer playerEntity)
         {
@@ -34,14 +31,13 @@ namespace MinecraftClone3API.Entities
             Camera.ParentEntity = playerEntity;
         }
 
-        public static void Update(GameWindow window, WorldBase world)
+        /// <summary>Per-display-frame: look, the fly toggle, hotbar, debug keys, break/place, and the camera.
+        /// Movement is a fixed 20 tps step in <see cref="Tick"/>; this runs every frame for responsiveness
+        /// and reads the interpolated position (set by <see cref="ApplyInterpolation"/> before it is called).</summary>
+        public static void UpdateFrame(GameWindow window, WorldBase world)
         {
             _blockRaytrace = world.BlockRaytrace(PlayerEntity.RenderPosition + PlayerEntity.EyeOffset,
                 PlayerEntity.Forward, 8);
-
-            var dt = (float) _moveTimer.Elapsed.TotalSeconds;
-            _moveTimer.Restart();
-            if (dt > MaxStepSeconds) dt = MaxStepSeconds;
 
             if (!window.IsFocused) return;
 
@@ -67,9 +63,6 @@ namespace MinecraftClone3API.Entities
                 _spaceTapTimer.Restart();
             }
 
-            if (PlayerEntity.Flying) UpdateFlying(ks, dt);
-            else UpdateWalking(ks, dt, world);
-
             foreach (var keybinding in ClientResources.Keybindings)
             {
                 if (ks.IsKeyDown(keybinding.Key)) _currentBlock = keybinding.Value;
@@ -84,12 +77,31 @@ namespace MinecraftClone3API.Entities
             if (ms.IsButtonDown(MouseButton.Left) && !ms.WasButtonDown(MouseButton.Left))
                 BreakBlock(world);
             if (ms.IsButtonDown(MouseButton.Right) && !ms.WasButtonDown(MouseButton.Right))
-                PlaceBlock(world);
+                PlaceBlock(world, ks);
 
             Camera.Update();
         }
 
-        private static void UpdateFlying(KeyboardState ks, float dt)
+        /// <summary>One fixed 20 tps simulation step (one walk physics step, or one fly move). Records
+        /// PrevPosition so <see cref="ApplyInterpolation"/> can smooth the 20 tps motion to the frame rate.</summary>
+        public static void Tick(GameWindow window, WorldBase world)
+        {
+            if (!window.IsFocused) return;
+
+            var ks = window.KeyboardState;
+            PlayerEntity.PrevPosition = PlayerEntity.Position;
+
+            if (PlayerEntity.Flying) TickFlying(ks);
+            else TickWalking(ks, world);
+        }
+
+        public static void ApplyInterpolation(float alpha)
+        {
+            PlayerEntity.InterpolatedPosition =
+                Vector3.Lerp(PlayerEntity.PrevPosition, PlayerEntity.Position, alpha);
+        }
+
+        private static void TickFlying(KeyboardState ks)
         {
             var a = Vector3.Zero;
             if (ks.IsKeyDown(Keys.A)) a.X -= 1;
@@ -102,14 +114,11 @@ namespace MinecraftClone3API.Entities
             {
                 var speed = FlySpeed;
                 if (ks.IsKeyDown(Keys.LeftControl)) speed *= SprintMultiplier;
-                PlayerEntity.Move(a.Normalized() * speed * dt);
+                PlayerEntity.Move(a.Normalized() * speed * PlayerPhysics.TickSeconds);
             }
-
-            PlayerEntity.PrevPosition = PlayerEntity.Position;
-            PlayerEntity.InterpolatedPosition = PlayerEntity.Position;
         }
 
-        private static void UpdateWalking(KeyboardState ks, float dt, WorldBase world)
+        private static void TickWalking(KeyboardState ks, WorldBase world)
         {
             var inputX = 0f;
             var inputZ = 0f;
@@ -125,17 +134,7 @@ namespace MinecraftClone3API.Entities
             var jump = ks.IsKeyDown(Keys.Space);
             var sprint = ks.IsKeyDown(Keys.LeftControl) && inputZ > 0;
 
-            _physicsAccumulator += dt;
-            while (_physicsAccumulator >= PlayerPhysics.TickSeconds)
-            {
-                PlayerEntity.PrevPosition = PlayerEntity.Position;
-                PlayerPhysics.Tick(world, PlayerEntity, wish, jump, sprint);
-                _physicsAccumulator -= PlayerPhysics.TickSeconds;
-            }
-
-            var alpha = _physicsAccumulator / PlayerPhysics.TickSeconds;
-            PlayerEntity.InterpolatedPosition =
-                Vector3.Lerp(PlayerEntity.PrevPosition, PlayerEntity.Position, alpha);
+            PlayerPhysics.Tick(world, PlayerEntity, wish, jump, sprint);
         }
 
         private static void BreakBlock(WorldBase world)
@@ -144,10 +143,12 @@ namespace MinecraftClone3API.Entities
             world.SetBlock(_blockRaytrace.BlockPos, BlockRegistry.BlockAir);
         }
 
-        private static void PlaceBlock(WorldBase world)
+        private static void PlaceBlock(WorldBase world, KeyboardState ks)
         {
             if (_blockRaytrace == null) return;
-            world.PlaceBlock(PlayerEntity, _blockRaytrace.BlockPos + _blockRaytrace.Face.GetNormali(), GameRegistry.GetBlock(_currentBlock));
+            var block = GameRegistry.GetBlock(_currentBlock);
+            world.PlaceBlock(PlayerEntity, _blockRaytrace.BlockPos + _blockRaytrace.Face.GetNormali(), block,
+                block.GetPlacementMetadata(ks, PlayerEntity, _blockRaytrace));
 
             Logger.Debug(PlayerEntity.Position + ":" + _blockRaytrace.BlockPos);
         }

@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using MinecraftClone3API.Blocks;
+using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Entities
@@ -17,12 +19,25 @@ namespace MinecraftClone3API.Entities
         private const float AirAccel = 0.02f;
         private const float SprintMultiplier = 1.3f;
 
+        private const float WaterAccel = 0.02f;
+        private const float WaterDrag = 0.8f;
+        private const float WaterGravity = 0.02f;
+        private const float SwimImpulse = 0.04f;
+
         private const float HalfWidth = EntityPlayer.Width / 2;
         private const float Height = EntityPlayer.Height;
         private const float Epsilon = 1e-4f;
+        private const float GroundProbe = 1e-3f;
+        private const float StepHeight = 0.6f;
 
         public static void Tick(WorldBase world, EntityPlayer p, Vector2 wishDir, bool jump, bool sprint)
         {
+            if (IsInLiquid(world, p))
+            {
+                TickInWater(world, p, wishDir, jump);
+                return;
+            }
+
             var friction = p.OnGround ? GroundFriction : AirFriction;
             var accel = (p.OnGround ? GroundAccel : AirAccel) * (sprint ? SprintMultiplier : 1f);
 
@@ -41,34 +56,110 @@ namespace MinecraftClone3API.Entities
             p.Velocity.Z *= friction;
         }
 
+        /// <summary>The "80%" swim model: gentle water accel, Space buoys up, otherwise sink slowly; all
+        /// velocity damped by <see cref="WaterDrag"/>. Liquid never collides (it's pass-through), so the
+        /// swept-collision and ground probe still run via <see cref="MoveWithCollision"/>.</summary>
+        private static void TickInWater(WorldBase world, EntityPlayer p, Vector2 wishDir, bool jump)
+        {
+            p.Velocity.X += wishDir.X * WaterAccel;
+            p.Velocity.Z += wishDir.Y * WaterAccel;
+
+            if (jump) p.Velocity.Y += SwimImpulse;
+
+            MoveWithCollision(world, p);
+
+            p.Velocity.X *= WaterDrag;
+            p.Velocity.Z *= WaterDrag;
+            p.Velocity.Y = p.Velocity.Y * WaterDrag - WaterGravity;
+        }
+
+        private static bool IsInLiquid(WorldBase world, EntityPlayer p)
+        {
+            var pos = p.Position;
+            return IsLiquidAt(world, pos.X, pos.Y + 0.1f, pos.Z)
+                || IsLiquidAt(world, pos.X, pos.Y + Height * 0.5f, pos.Z);
+        }
+
+        private static bool IsLiquidAt(WorldBase world, float x, float y, float z)
+            => world.GetBlock(BlockCoord(x), BlockCoord(y), BlockCoord(z)).IsLiquid;
+
+        private static int BlockCoord(float v) => (int) Math.Floor(v + 0.5f);
+
         private static void MoveWithCollision(WorldBase world, EntityPlayer p)
         {
-            var feet = p.Position;
-            p.OnGround = false;
+            var velX = p.Velocity.X;
+            var velY = p.Velocity.Y;
+            var velZ = p.Velocity.Z;
+            var grounded = p.OnGround;
 
-            var min = new Vector3(feet.X - HalfWidth, feet.Y, feet.Z - HalfWidth);
-            var max = new Vector3(feet.X + HalfWidth, feet.Y + Height, feet.Z + HalfWidth);
-            var dy = ClipY(world, min, max, p.Velocity.Y);
+            var feet = p.Position;
+            var dy = ClipYFrom(world, feet, velY);
             feet.Y += dy;
-            if (dy != p.Velocity.Y)
+            if (dy != velY) p.Velocity.Y = 0;
+
+            // Horizontal collide (X then Z) from the post-vertical position.
+            var afterY = feet;
+            var cdx = ClipXFrom(world, afterY, velX);
+            var cdz = ClipZFrom(world, new Vector3(afterY.X + cdx, afterY.Y, afterY.Z), velZ);
+            var blockedX = cdx != velX;
+            var blockedZ = cdz != velZ;
+
+            feet = new Vector3(afterY.X + cdx, afterY.Y, afterY.Z + cdz);
+            var resVelX = blockedX ? 0f : velX;
+            var resVelZ = blockedZ ? 0f : velZ;
+
+            // Auto-step: when grounded, NOT rising, and a horizontal axis was blocked, retry the full
+            // horizontal move raised by StepHeight (up → horizontal → drop back down) and keep it if it
+            // advanced farther. StepHeight 0.6 = Minecraft: climbs slabs/partial blocks. The velY <= 0 gate
+            // is essential — without it the step fires on the jump tick (velY = +0.42), stacking StepHeight
+            // on top of the jump's rise and clipping the player straight up a full block. Stepping only while
+            // settling onto the ground means the jump arc alone (apex ~1.25) decides if a 1-block is cleared.
+            if (grounded && velY <= 0f && (blockedX || blockedZ))
             {
-                if (p.Velocity.Y < 0) p.OnGround = true;
-                p.Velocity.Y = 0;
+                var up = ClipYFrom(world, afterY, StepHeight);
+                var stepped = new Vector3(afterY.X, afterY.Y + up, afterY.Z);
+                var sdx = ClipXFrom(world, stepped, velX);
+                var sdz = ClipZFrom(world, new Vector3(stepped.X + sdx, stepped.Y, stepped.Z), velZ);
+                stepped = new Vector3(stepped.X + sdx, stepped.Y, stepped.Z + sdz);
+                stepped.Y += ClipYFrom(world, stepped, -up);
+
+                if (sdx * sdx + sdz * sdz > cdx * cdx + cdz * cdz)
+                {
+                    feet = stepped;
+                    resVelX = sdx != velX ? 0f : velX;
+                    resVelZ = sdz != velZ ? 0f : velZ;
+                }
             }
 
-            min = new Vector3(feet.X - HalfWidth, feet.Y, feet.Z - HalfWidth);
-            max = new Vector3(feet.X + HalfWidth, feet.Y + Height, feet.Z + HalfWidth);
-            var dx = ClipX(world, min, max, p.Velocity.X);
-            feet.X += dx;
-            if (dx != p.Velocity.X) p.Velocity.X = 0;
-
-            min = new Vector3(feet.X - HalfWidth, feet.Y, feet.Z - HalfWidth);
-            max = new Vector3(feet.X + HalfWidth, feet.Y + Height, feet.Z + HalfWidth);
-            var dz = ClipZ(world, min, max, p.Velocity.Z);
-            feet.Z += dz;
-            if (dz != p.Velocity.Z) p.Velocity.Z = 0;
-
+            p.Velocity.X = resVelX;
+            p.Velocity.Z = resVelZ;
             p.Position = feet;
+
+            // Ground state from an explicit downward probe, not the Y-clip outcome: a tick that enters
+            // with Velocity.Y==0 (spawn, just un-flew) or lands exactly flush would otherwise read
+            // airborne for one tick (no jump, wrong friction).
+            p.OnGround = ClipYFrom(world, feet, -GroundProbe) != -GroundProbe;
+        }
+
+        private static float ClipYFrom(WorldBase world, Vector3 feet, float dy)
+        {
+            var min = new Vector3(feet.X - HalfWidth, feet.Y, feet.Z - HalfWidth);
+            var max = new Vector3(feet.X + HalfWidth, feet.Y + Height, feet.Z + HalfWidth);
+            return ClipY(world, min, max, dy);
+        }
+
+        private static float ClipXFrom(WorldBase world, Vector3 feet, float dx)
+        {
+            var min = new Vector3(feet.X - HalfWidth, feet.Y, feet.Z - HalfWidth);
+            var max = new Vector3(feet.X + HalfWidth, feet.Y + Height, feet.Z + HalfWidth);
+            return ClipX(world, min, max, dx);
+        }
+
+        private static float ClipZFrom(WorldBase world, Vector3 feet, float dz)
+        {
+            var min = new Vector3(feet.X - HalfWidth, feet.Y, feet.Z - HalfWidth);
+            var max = new Vector3(feet.X + HalfWidth, feet.Y + Height, feet.Z + HalfWidth);
+            return ClipZ(world, min, max, dz);
         }
 
         private static float ClipY(WorldBase world, Vector3 min, Vector3 max, float dy)
@@ -87,19 +178,25 @@ namespace MinecraftClone3API.Entities
             for (var z = z0; z <= z1; z++)
             for (var y = y0; y <= y1; y++)
             {
-                if (!TrySolidBox(world, x, y, z, out var bmin, out var bmax)) continue;
-                if (max.X <= bmin.X + Epsilon || min.X >= bmax.X - Epsilon) continue;
-                if (max.Z <= bmin.Z + Epsilon || min.Z >= bmax.Z - Epsilon) continue;
+                var n = GetSolidBoxes(world, x, y, z);
+                for (var bi = 0; bi < n; bi++)
+                {
+                    var box = _solidBoxes[bi];
+                    var bmin = new Vector3(x + box.Min.X, y + box.Min.Y, z + box.Min.Z);
+                    var bmax = new Vector3(x + box.Max.X, y + box.Max.Y, z + box.Max.Z);
+                    if (max.X <= bmin.X + Epsilon || min.X >= bmax.X - Epsilon) continue;
+                    if (max.Z <= bmin.Z + Epsilon || min.Z >= bmax.Z - Epsilon) continue;
 
-                if (dy > 0 && max.Y <= bmin.Y + Epsilon)
-                {
-                    var d = bmin.Y - max.Y;
-                    if (d < dy) dy = d;
-                }
-                else if (dy < 0 && min.Y >= bmax.Y - Epsilon)
-                {
-                    var d = bmax.Y - min.Y;
-                    if (d > dy) dy = d;
+                    if (dy > 0 && max.Y <= bmin.Y + Epsilon)
+                    {
+                        var d = bmin.Y - max.Y;
+                        if (d < dy) dy = d;
+                    }
+                    else if (dy < 0 && min.Y >= bmax.Y - Epsilon)
+                    {
+                        var d = bmax.Y - min.Y;
+                        if (d > dy) dy = d;
+                    }
                 }
             }
 
@@ -122,19 +219,25 @@ namespace MinecraftClone3API.Entities
             for (var z = z0; z <= z1; z++)
             for (var y = y0; y <= y1; y++)
             {
-                if (!TrySolidBox(world, x, y, z, out var bmin, out var bmax)) continue;
-                if (max.Y <= bmin.Y + Epsilon || min.Y >= bmax.Y - Epsilon) continue;
-                if (max.Z <= bmin.Z + Epsilon || min.Z >= bmax.Z - Epsilon) continue;
+                var n = GetSolidBoxes(world, x, y, z);
+                for (var bi = 0; bi < n; bi++)
+                {
+                    var box = _solidBoxes[bi];
+                    var bmin = new Vector3(x + box.Min.X, y + box.Min.Y, z + box.Min.Z);
+                    var bmax = new Vector3(x + box.Max.X, y + box.Max.Y, z + box.Max.Z);
+                    if (max.Y <= bmin.Y + Epsilon || min.Y >= bmax.Y - Epsilon) continue;
+                    if (max.Z <= bmin.Z + Epsilon || min.Z >= bmax.Z - Epsilon) continue;
 
-                if (dx > 0 && max.X <= bmin.X + Epsilon)
-                {
-                    var d = bmin.X - max.X;
-                    if (d < dx) dx = d;
-                }
-                else if (dx < 0 && min.X >= bmax.X - Epsilon)
-                {
-                    var d = bmax.X - min.X;
-                    if (d > dx) dx = d;
+                    if (dx > 0 && max.X <= bmin.X + Epsilon)
+                    {
+                        var d = bmin.X - max.X;
+                        if (d < dx) dx = d;
+                    }
+                    else if (dx < 0 && min.X >= bmax.X - Epsilon)
+                    {
+                        var d = bmax.X - min.X;
+                        if (d > dx) dx = d;
+                    }
                 }
             }
 
@@ -157,41 +260,41 @@ namespace MinecraftClone3API.Entities
             for (var z = z0; z <= z1; z++)
             for (var y = y0; y <= y1; y++)
             {
-                if (!TrySolidBox(world, x, y, z, out var bmin, out var bmax)) continue;
-                if (max.X <= bmin.X + Epsilon || min.X >= bmax.X - Epsilon) continue;
-                if (max.Y <= bmin.Y + Epsilon || min.Y >= bmax.Y - Epsilon) continue;
+                var n = GetSolidBoxes(world, x, y, z);
+                for (var bi = 0; bi < n; bi++)
+                {
+                    var box = _solidBoxes[bi];
+                    var bmin = new Vector3(x + box.Min.X, y + box.Min.Y, z + box.Min.Z);
+                    var bmax = new Vector3(x + box.Max.X, y + box.Max.Y, z + box.Max.Z);
+                    if (max.X <= bmin.X + Epsilon || min.X >= bmax.X - Epsilon) continue;
+                    if (max.Y <= bmin.Y + Epsilon || min.Y >= bmax.Y - Epsilon) continue;
 
-                if (dz > 0 && max.Z <= bmin.Z + Epsilon)
-                {
-                    var d = bmin.Z - max.Z;
-                    if (d < dz) dz = d;
-                }
-                else if (dz < 0 && min.Z >= bmax.Z - Epsilon)
-                {
-                    var d = bmax.Z - min.Z;
-                    if (d > dz) dz = d;
+                    if (dz > 0 && max.Z <= bmin.Z + Epsilon)
+                    {
+                        var d = bmin.Z - max.Z;
+                        if (d < dz) dz = d;
+                    }
+                    else if (dz < 0 && min.Z >= bmax.Z - Epsilon)
+                    {
+                        var d = bmax.Z - min.Z;
+                        if (d > dz) dz = d;
+                    }
                 }
             }
 
             return dz;
         }
 
-        private static bool TrySolidBox(WorldBase world, int x, int y, int z, out Vector3 min, out Vector3 max)
+        // Reused scratch for the block's collision boxes at one cell (block-local, centred). Single writer
+        // (the player physics tick runs on the client main thread), refilled per cell, consumed immediately.
+        private static readonly List<AxisAlignedBoundingBox> _solidBoxes = new List<AxisAlignedBoundingBox>(4);
+
+        // Fills _solidBoxes with the cell's collision boxes (block-local). Returns the count; 0 = pass-through.
+        private static int GetSolidBoxes(WorldBase world, int x, int y, int z)
         {
-            min = default;
-            max = default;
-
-            var pos = new Vector3i(x, y, z);
-            var block = world.GetBlock(x, y, z);
-            if (block.CanPassThrough(world, pos)) return false;
-
-            var bb = block.GetBoundingBox(world, pos);
-            if (bb == null) return false;
-
-            var center = new Vector3(x, y, z);
-            min = center + bb.Min;
-            max = center + bb.Max;
-            return true;
+            _solidBoxes.Clear();
+            world.GetBlock(x, y, z).GetCollisionBoxes(world, new Vector3i(x, y, z), _solidBoxes);
+            return _solidBoxes.Count;
         }
 
         private static int Floor(float v) => (int) Math.Floor(v);

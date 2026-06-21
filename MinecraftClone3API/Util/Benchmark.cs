@@ -280,7 +280,7 @@ namespace MinecraftClone3API.Util
             if ((_editsDone & 1) == 0)
                 world.SetBlock(hit.BlockPos, BlockRegistry.BlockAir);
             else
-                world.PlaceBlock(player, hit.BlockPos + hit.Face.GetNormali(), GameRegistry.GetBlock("Vanilla:Stone"));
+                world.PlaceBlock(player, hit.BlockPos + hit.Face.GetNormali(), GameRegistry.GetBlock("Vanilla:Stone"), 0);
         }
 
         /// <summary>Per-frame sample + timeline advance. Called from the render loop right after

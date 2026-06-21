@@ -145,6 +145,7 @@ namespace MinecraftClone3API.Networking
     {
         public Vector3i Position;
         public ushort BlockId;
+        public int Metadata;
 
         public override PacketId Id => PacketId.PlaceBlockRequest;
 
@@ -152,12 +153,14 @@ namespace MinecraftClone3API.Networking
         {
             WriteVector3i(writer, Position);
             writer.Write(BlockId);
+            writer.Write(Metadata);
         }
 
         public override void Read(BinaryReader reader)
         {
             Position = ReadVector3i(reader);
             BlockId = reader.ReadUInt16();
+            Metadata = reader.ReadInt32();
         }
     }
 
@@ -223,5 +226,17 @@ namespace MinecraftClone3API.Networking
         public override PacketId Id => PacketId.EntityDespawn;
         public override void Write(BinaryWriter writer) => writer.Write(EntityId);
         public override void Read(BinaryReader reader) => EntityId = reader.ReadInt32();
+    }
+
+    /// <summary>Server → client world clock (seconds the world has simulated, = TickCount·SecondsPerTick).
+    /// Sent on join and periodically; the client advances it locally between packets so the day/night cycle
+    /// is server-authoritative and shared across multiplayer clients.</summary>
+    public class WorldTimePacket : Packet
+    {
+        public double WorldSeconds;
+
+        public override PacketId Id => PacketId.WorldTime;
+        public override void Write(BinaryWriter writer) => writer.Write(WorldSeconds);
+        public override void Read(BinaryReader reader) => WorldSeconds = reader.ReadDouble();
     }
 }

@@ -79,11 +79,16 @@ namespace MinecraftClone3API.Util
             //If block is invisible or does not have a model for some reason ignore it
             if (!block.IsVisible(world, blockPos) || block.Model == null) return;
 
+            // Block-state orientation (e.g. a stair's facing) applied after the element transform, so it
+            // rotates the centred element about the block origin. Identity for every normal block.
+            var orient = block.GetModelTransform(world, blockPos);
+
             foreach (var element in block.Model.Elements)
             {
                 var transform = Matrix4.CreateScale((element.To - element.From) / 16) *
                                 Matrix4.CreateTranslation((element.To - element.From) / 32 + element.From / 16) *
-                                Matrix4.CreateTranslation(new Vector3(-0.5f));
+                                Matrix4.CreateTranslation(new Vector3(-0.5f)) *
+                                orient;
 
                 foreach (var entry in element.Faces)
                 {

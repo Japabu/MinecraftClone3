@@ -1,5 +1,4 @@
 ﻿using MinecraftClone3API.Blocks;
-using MinecraftClone3API.Client;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
@@ -52,19 +51,19 @@ namespace VanillaPlugin.Blocks
             return otherBlock == this && myMeta == otherMeta ? ConnectionType.Connected : ConnectionType.Undefined;
         }
 
-        public override void OnPlaced(WorldBase world, Vector3i blockPos, EntityPlayer player)
+        public override int GetPlacementMetadata(KeyboardState ks, EntityPlayer player, BlockRaytraceResult ray)
         {
-            var m = 0;
-            var ks = ClientResources.Window.KeyboardState;
             for (var i = 0; i < BindKeys.Length; i++)
             {
-                if (!ks.IsKeyDown(BindKeys[i])) continue;
-
-                m = i;
-                break;
+                if (ks.IsKeyDown(BindKeys[i])) return i;
             }
 
-            world.SetBlockData(blockPos, new BlockDataMetadata(m));
+            return 0;
+        }
+
+        public override void OnPlaced(WorldBase world, Vector3i blockPos, EntityPlayer player, int metadata)
+        {
+            world.SetBlockData(blockPos, new BlockDataMetadata(metadata));
         }
 
         public override int OnLightPassThrough(WorldBase world, Vector3i blockPos, int lightLevel, int color)

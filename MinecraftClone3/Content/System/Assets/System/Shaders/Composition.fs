@@ -1,7 +1,11 @@
 #version 410 core
 
-// Deferred composition. The 12-tap sun-shadow PCF runs in ShadowResolve.fs at half res; this pass
-// depth-aware-upsamples that result and combines it with the baked block + sky light.
+// Deferred composition. Background pixels (the cleared far plane, no geometry) render a procedural
+// Minecraft-style sky here: a time-of-day gradient + sunrise/sunset glow + a textured sun and moon (from
+// the resource pack, procedural disc fallback) + stars at night. Lit pixels combine the baked block + sky
+// light with the depth-aware-upsampled half-res sun shadow (resolved in ShadowResolve.fs); water surfaces
+// reflect that same sky. Finally everything fades into the horizon colour with distance fog so terrain
+// melts into the sky at the render-distance edge.
 
 in vec2 vTexCoord;
 
@@ -28,9 +32,9 @@ uniform sampler2D uShadowResolved;
 uniform float uShadowDistance;
 
 // uViewProjectionInv reconstructs world position from the camera depth buffer; uView gives view-space depth
-// (for the upsample's per-tap depth comparison). uSunFade (0..1) scales the whole directional sun term and
-// gates shadow sampling: it ramps to 0 as the sun reaches the horizon (and is 0 when the sun is down / the
-// shadow passes were skipped), so dusk fades smoothly to ambient with no pop.
+// (for the upsample's per-tap depth comparison and distance fog). uSunFade (0..1) scales the whole
+// directional sun term and gates shadow sampling: it ramps to 0 as the sun reaches the horizon (and is 0
+// when the sun is down / the shadow passes were skipped), so dusk fades smoothly to ambient with no pop.
 uniform mat4 uViewProjectionInv;
 uniform mat4 uView;
 uniform float uSunFade;
@@ -52,18 +56,58 @@ uniform float uDebugShadow;
 uniform vec3 uMinLight;
 
 // Water shading (Tier B): a face flagged with normal.w ~ 0.75 (baked by the mesher) gets animated sine-wave
-// normals + a Fresnel reflection of an analytic sky + a sun specular glint, all here in the deferred pass (no
-// extra render pass). uCameraPos reconstructs the view vector, uSunDirection is the unit vector toward the
-// sun, uTime scrolls the waves. The reflection/specular are scaled by the baked sky factor and uSunFade, so
-// cave water and night water behave correctly with no special-casing.
+// normals + a Fresnel reflection of the sky (the same SkyColor that paints the background) + a sun specular
+// glint, all here in the deferred pass (no extra render pass). uCameraPos reconstructs the view vector,
+// uSunDirection is the unit vector toward the sun, uTime scrolls the waves. The reflection/specular are
+// scaled by the baked sky factor and uSunFade, so cave water and night water behave correctly with no
+// special-casing. uCameraPos also gives the background view-ray direction for the sky.
 uniform vec3 uCameraPos;
 uniform vec3 uSunDirection;
 uniform float uTime;
+
+// --- Sky (background + water reflection) -------------------------------------------------------------
+uniform vec3 uSkyColor;         // zenith colour (time of day)
+uniform vec3 uHorizonColor;     // horizon haze colour (also the distance-fog colour)
+uniform vec3 uVoidColor;        // colour below the horizon
+uniform vec3 uSunsetColor;      // orange horizon glow toward the sun (~0 away from dawn/dusk)
+uniform float uStarBrightness;  // 0 by day .. ~1 at night
+uniform sampler2D uSunTexture;
+uniform sampler2D uMoonTexture;
+uniform float uHasSunTexture;   // 1 if the pack provided sun.png, else a procedural disc
+uniform float uHasMoonTexture;  // 1 if the pack provided moon_phases.png, else a procedural disc
+uniform float uSunSize;         // tan of the sun billboard's half-angle (tunable, see WorldRenderer)
+uniform float uMoonSize;
+// View-space distance separating the cleared far plane (sky) from the farthest drawn terrain.
+uniform float uSkyDistance;
+
+// Distance fog: terrain fades into uHorizonColor between these view-space distances.
+uniform float uFogStart;
+uniform float uFogEnd;
 
 // Joint-bilateral upsample sharpness (in normalized-depth units, i.e. view depth / uShadowDistance). Larger
 // = a smaller depth difference rejects a tap, so the half-res shadow doesn't bleed across silhouette edges;
 // too large and same-surface taps get rejected too (the half-res shadow shows through as blocky). Tunable.
 const float DepthSharpness = 256.0;
+
+// --- Water look (Tier B) tunables ---
+// Detection band for the mesher's water flag in the G-buffer normal.w. The mesher writes normal.w = 0.5 for
+// water; EncodeNormal stores 0.5*0.5+0.5 = 0.75, which Rgba8 quantizes to a deterministic 191/255 ≈ 0.749
+// (the flag is a flat per-face attribute and attachment 1 is written with blending OFF, so there is no
+// interpolation/blend drift). The band is kept snug around that value: lit solid (input 0 → 0.502) and unlit
+// geometry (input 1 → 1.0) are far outside. Any future RenderMaterial given its own mesher w-mapping must
+// encode OUTSIDE this band (i.e. avoid input w in [0.4, 0.6)) or pick its own band.
+const float WaterFlagLo = 0.7;
+const float WaterFlagHi = 0.8;
+// Animated surface: three summed directional sine waves. WaveAmp = per-wave slope, WaveFreq = base spatial
+// frequency (per world block), WaveSpeed = scroll rate. Larger = choppier, smaller = glassier.
+const float WaveAmp = 0.05;
+const float WaveFreq = 0.9;
+const float WaveSpeed = 1.3;
+// Fresnel reflectance at normal incidence (water ~0.02): higher = more mirror-like looking straight down.
+const float WaterF0 = 0.02;
+// Sun specular glint: exponent (higher = tighter highlight) and gain.
+const float WaterSpecExp = 220.0;
+const float WaterSpecGain = 2.0;
 
 vec3 PositionFromDepth(float depth)
 {
@@ -72,10 +116,112 @@ vec3 PositionFromDepth(float depth)
 	return homogenousCoord.xyz/homogenousCoord.w;
 }
 
-float FragViewDepth()
+float hash13(vec3 p3)
 {
-	vec3 worldPos = PositionFromDepth(texture(uDepth, vTexCoord).x*2 - 1);
-	return -(uView*vec4(worldPos, 1)).z;
+	p3 = fract(p3 * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.x + p3.y) * p3.z);
+}
+
+// Sparse round stars from a hashed direction grid: each cell may hold one star at a random sub-cell offset.
+float Stars(vec3 dir)
+{
+	vec3 p = dir * 110.0;
+	vec3 cell = floor(p);
+	float rnd = hash13(cell);
+	if (rnd < 0.972) return 0.0;
+	vec3 center = vec3(hash13(cell + 11.5), hash13(cell + 23.7), hash13(cell + 41.3));
+	float d = length(fract(p) - center);
+	return smoothstep(0.13, 0.0, d) * ((rnd - 0.972) / 0.028);
+}
+
+// A textured celestial billboard (sun/moon) addressed by the angle between the view ray and its direction.
+// Returns the [0,1] quad uv in .xy and 1 in .w when the ray hits the quad (.w 0 = miss / behind the camera).
+vec4 CelestialBillboard(vec3 dir, vec3 toBody, float size)
+{
+	float along = dot(dir, toBody);
+	if (along <= 0.0) return vec4(0.0);
+	vec3 right = normalize(cross(vec3(0, 1, 0), toBody));
+	vec3 up = cross(toBody, right);
+	vec3 proj = dir / along;            // where the ray pierces the tangent plane one unit out along toBody
+	float u = dot(proj, right);
+	float v = dot(proj, up);
+	if (abs(u) > size || abs(v) > size) return vec4(0.0);
+	return vec4(vec2(u, v) / (2.0*size) + 0.5, 0.0, 1.0);
+}
+
+// Animated water normal from the analytic gradient of three summed directional sine waves, scrolled by time.
+// Purely in-shader (no remesh); p is the world-space XZ of the water surface so waves are seamless across chunks.
+vec3 WaveNormal(vec2 p, float t)
+{
+	vec2 d1 = normalize(vec2(1.0, 0.4));
+	vec2 d2 = normalize(vec2(-0.3, 1.0));
+	vec2 d3 = normalize(vec2(0.8, -0.6));
+	float k1 = WaveFreq;
+	float k2 = WaveFreq*1.7;
+	float k3 = WaveFreq*0.6;
+	vec2 g = vec2(0.0);
+	g += d1*(WaveAmp*k1*cos(dot(p, d1)*k1 + t*WaveSpeed));
+	g += d2*(WaveAmp*k2*cos(dot(p, d2)*k2 + t*WaveSpeed*0.8));
+	g += d3*(WaveAmp*k3*cos(dot(p, d3)*k3 + t*WaveSpeed*1.3));
+	return normalize(vec3(-g.x, 1.0, -g.y));
+}
+
+// The Minecraft-style sky in a given direction: a time-of-day vertical gradient + sunrise/sunset glow +
+// stars + textured sun/moon billboards. Used both for the background and (via reflect()) for water, so the
+// water mirrors the actual sky -- the sun glints, the moon and stars reflect at night.
+vec3 SkyColor(vec3 dir)
+{
+	float h = dir.y;
+
+	// Vertical gradient: void below the horizon, horizon haze at h=0, zenith colour overhead.
+	vec3 sky = mix(uHorizonColor, uSkyColor, smoothstep(0.0, 0.55, h));
+	sky = mix(sky, uVoidColor, smoothstep(0.0, -0.12, h));
+
+	// Sunrise/sunset orange, concentrated near the horizon in the sun's azimuth.
+	vec3 hd = normalize(vec3(dir.x, 0.0, dir.z) + 1e-5);
+	vec3 sd = normalize(vec3(uSunDirection.x, 0.0, uSunDirection.z) + 1e-5);
+	float glow = pow(max(dot(hd, sd), 0.0), 4.0) * exp(-abs(h)*6.0);
+	sky += uSunsetColor * glow;
+
+	// Stars (faded out into the horizon haze and during the day).
+	if (uStarBrightness > 0.001)
+		sky += vec3(Stars(dir)) * uStarBrightness * smoothstep(-0.05, 0.25, h);
+
+	// Sun, hidden once it dips below its horizon.
+	float sunVis = smoothstep(-0.08, 0.06, uSunDirection.y);
+	if (sunVis > 0.0)
+	{
+		vec4 b = CelestialBillboard(dir, uSunDirection, uSunSize);
+		if (b.w > 0.0)
+		{
+			vec3 sunCol;
+			if (uHasSunTexture > 0.5)
+				sunCol = texture(uSunTexture, b.xy).rgb * uSunColor;
+			else
+				sunCol = smoothstep(1.0, 0.55, length(b.xy*2.0 - 1.0)) * uSunColor;
+			sky += sunCol * sunVis;
+		}
+	}
+
+	// Moon, opposite the sun.
+	vec3 toMoon = -uSunDirection;
+	float moonVis = smoothstep(-0.08, 0.06, toMoon.y);
+	if (moonVis > 0.0)
+	{
+		vec4 b = CelestialBillboard(dir, toMoon, uMoonSize);
+		if (b.w > 0.0)
+		{
+			vec3 moonCol;
+			if (uHasMoonTexture > 0.5)
+				moonCol = texture(uMoonTexture, b.xy * vec2(0.25, 0.5)).rgb;  // full-moon cell (top-left of 4x2)
+			else
+				moonCol = smoothstep(1.0, 0.6, length(b.xy*2.0 - 1.0)) * vec3(0.9, 0.9, 1.0);
+			sky += moonCol * moonVis;
+		}
+	}
+
+	return sky;
 }
 
 // Depth-aware 2x2 upsample of the half-res shadow: bilinear weights modulated by how close each half-res
@@ -105,64 +251,15 @@ float UpsampleShadow(float fragNormDepth)
 	return sumWeight > 0.0 ? sumShadow/sumWeight : 1.0;
 }
 
-// --- Water look (Tier B) tunables ---
-// Detection band for the mesher's water flag in the G-buffer normal.w. The mesher writes normal.w = 0.5 for
-// water; EncodeNormal stores 0.5*0.5+0.5 = 0.75, which Rgba8 quantizes to a deterministic 191/255 ≈ 0.749
-// (the flag is a flat per-face attribute and attachment 1 is written with blending OFF, so there is no
-// interpolation/blend drift). The band is kept snug around that value: lit solid (input 0 → 0.502) and unlit
-// geometry (input 1 → 1.0) are far outside. Any future RenderMaterial given its own mesher w-mapping must
-// encode OUTSIDE this band (i.e. avoid input w in [0.4, 0.6)) or pick its own band.
-const float WaterFlagLo = 0.7;
-const float WaterFlagHi = 0.8;
-// Animated surface: three summed directional sine waves. WaveAmp = per-wave slope, WaveFreq = base spatial
-// frequency (per world block), WaveSpeed = scroll rate. Larger = choppier, smaller = glassier.
-const float WaveAmp = 0.05;
-const float WaveFreq = 0.9;
-const float WaveSpeed = 1.3;
-// Fresnel reflectance at normal incidence (water ~0.02): higher = more mirror-like looking straight down.
-const float WaterF0 = 0.02;
-// Sun specular glint: exponent (higher = tighter highlight) and gain.
-const float WaterSpecExp = 220.0;
-const float WaterSpecGain = 2.0;
-// Analytic sky reflection (no skybox exists): gradient gains over uSkyAmbient + a reflected sun disc, so the
-// reflection tracks the time of day (blue by day, warm at dusk, moon-dim at night).
-const float SkyHorizonGain = 5.0;
-const float SkyZenithGain = 3.0;
-const float SkyHorizonSunTint = 0.15;
-const float SunDiscExp = 350.0;
-const float SunDiscGain = 1.5;
-
-// Animated water normal from the analytic gradient of three summed directional sine waves, scrolled by time.
-// Purely in-shader (no remesh); p is the world-space XZ of the water surface so waves are seamless across chunks.
-vec3 WaveNormal(vec2 p, float t)
+// Distance fog: melt geometry into the horizon colour at the render-distance edge (and into darkness at
+// night, since the horizon colour itself dims), hiding the hard chunk-load boundary against the sky.
+vec3 ApplyFog(vec3 color, float viewDepth)
 {
-	vec2 d1 = normalize(vec2(1.0, 0.4));
-	vec2 d2 = normalize(vec2(-0.3, 1.0));
-	vec2 d3 = normalize(vec2(0.8, -0.6));
-	float k1 = WaveFreq;
-	float k2 = WaveFreq*1.7;
-	float k3 = WaveFreq*0.6;
-	vec2 g = vec2(0.0);
-	g += d1*(WaveAmp*k1*cos(dot(p, d1)*k1 + t*WaveSpeed));
-	g += d2*(WaveAmp*k2*cos(dot(p, d2)*k2 + t*WaveSpeed*0.8));
-	g += d3*(WaveAmp*k3*cos(dot(p, d3)*k3 + t*WaveSpeed*1.3));
-	return normalize(vec3(-g.x, 1.0, -g.y));
+	float fog = clamp((viewDepth - uFogStart) / max(uFogEnd - uFogStart, 1.0), 0.0, 1.0);
+	return mix(color, uHorizonColor, fog*fog);
 }
 
-// Analytic sky colour in a given direction, built from the day/night uniforms (there is no skybox): a
-// horizon->zenith gradient over uSkyAmbient plus a sharp reflected sun disc, both faded by uSunFade.
-vec3 SkyColor(vec3 dir)
-{
-	float up = clamp(dir.y, 0.0, 1.0);
-	vec3 zenith = uSkyAmbient*SkyZenithGain;
-	vec3 horizon = uSkyAmbient*SkyHorizonGain + uSunColor*uSunFade*SkyHorizonSunTint;
-	vec3 sky = mix(horizon, zenith, up);
-	float sd = max(dot(dir, uSunDirection), 0.0);
-	sky += uSunColor*uSunFade*(pow(sd, SunDiscExp)*SunDiscGain);
-	return sky;
-}
-
-vec4 GetColor()
+vec4 GetColor(vec3 worldPos, float viewDepth)
 {
 	vec4 diffuse = texture(uDiffuse, vTexCoord);
 	if (diffuse.a == 0) discard;
@@ -177,12 +274,8 @@ vec4 GetColor()
 	// pass used): daytime (uSunFade > 0), shadows enabled, and a sky-reached surface (lightSample.a). Past the
 	// shadow distance there is no coverage. Everything else is fully lit (shadow = 1).
 	float shadow = 1.0;
-	if (uShadowsEnabled > 0.5 && uSunFade > 0.0 && lightSample.a > 0.004)
-	{
-		float fragDepth = FragViewDepth();
-		if (fragDepth < uShadowDistance)
-			shadow = UpsampleShadow(fragDepth/uShadowDistance);
-	}
+	if (uShadowsEnabled > 0.5 && uSunFade > 0.0 && lightSample.a > 0.004 && viewDepth < uShadowDistance)
+		shadow = UpsampleShadow(viewDepth/uShadowDistance);
 
 	if (uDebugShadow > 0.5) return vec4(vec3(shadow), 1.0);
 
@@ -198,13 +291,13 @@ vec4 GetColor()
 
 	vec3 baseColor = diffuse.rgb * max(light, uMinLight);
 
-	// Water surface (mesher-flagged normal.w ~ 0.75): add animated normals + a Fresnel reflection of the
-	// analytic sky + a sun specular glint on top of the Tier-A lit translucent water (baseColor). Everything
-	// is scaled by the baked sky factor and uSunFade, so cave/overhang water (lightSample.a ~ 0) and night
-	// water (uSunFade ~ 0) fall straight back to the plain look with no special-casing.
+	// Water surface (mesher-flagged normal.w ~ 0.75): add animated normals + a Fresnel reflection of the sky
+	// (the same SkyColor the background uses, so water mirrors the real sun/moon/stars) + a sun specular
+	// glint on top of the Tier-A lit translucent water (baseColor). Everything is scaled by the baked sky
+	// factor and uSunFade, so cave/overhang water (lightSample.a ~ 0) and night water fall straight back to
+	// the plain look with no special-casing.
 	if (normal.w > WaterFlagLo && normal.w < WaterFlagHi)
 	{
-		vec3 worldPos = PositionFromDepth(texture(uDepth, vTexCoord).x*2 - 1);
 		vec3 faceN = normalize(normal.xyz*2.0 - 1.0);
 		vec3 N = faceN.y > 0.5 ? WaveNormal(worldPos.xz, uTime) : faceN;
 		vec3 V = normalize(uCameraPos - worldPos);
@@ -213,13 +306,25 @@ vec4 GetColor()
 		vec3 H = normalize(V + uSunDirection);
 		float spec = pow(max(dot(N, H), 0.0), WaterSpecExp)*uSunFade*shadow*lightSample.a*WaterSpecGain;
 		vec3 col = mix(baseColor, skyRefl, fres*lightSample.a) + uSunColor*spec;
-		return vec4(col, diffuse.a);
+		return vec4(ApplyFog(col, viewDepth), diffuse.a);
 	}
 
-	return vec4(baseColor, diffuse.a);
+	return vec4(ApplyFog(baseColor, viewDepth), diffuse.a);
 }
 
 void main()
 {
-	outColor = GetColor();
+	float depthRaw = texture(uDepth, vTexCoord).x;
+	vec3 worldPos = PositionFromDepth(depthRaw*2 - 1);
+	float viewDepth = -(uView*vec4(worldPos, 1)).z;
+
+	// Background = the cleared far plane (a constant view depth = the far clip plane), well beyond the
+	// farthest drawn terrain. Render the sky along the pixel's view ray; reuse worldPos as the far ray point.
+	if (viewDepth >= uSkyDistance)
+	{
+		outColor = vec4(SkyColor(normalize(worldPos - uCameraPos)), 1.0);
+		return;
+	}
+
+	outColor = GetColor(worldPos, viewDepth);
 }

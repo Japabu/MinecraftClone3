@@ -9,7 +9,8 @@
 > Treat editing this file as part of "done," not an afterthought.
 
 A from-scratch Minecraft-like voxel engine in C# on OpenTK (OpenGL). Custom deferred renderer, plugin
-system, chunked world with RGB block-light + sky-light propagation and a dynamic day/night cycle, a
+system, chunked world with RGB block-light + sky-light propagation and a dynamic day/night cycle (procedural
+skybox with a textured sun/moon, stars, sunset glow, and distance fog), a
 **plugin-extensible world generator** (engine framework + vanilla content: biomes, ores, trees, caves,
 oceans), **player movement** (walking with Minecraft-exact gravity/jump/AABB-collision plus a creative
 free-flight toggle), and **client/server multiplayer** (singleplayer runs an in-process server over a
@@ -147,7 +148,14 @@ This shrinks the per-chunk clone **and** the resident chunk heap ~10–50× vers
 order.
 
 `ChunkMesher.AddBlockToVao(WorldBase, ...)` reads neighbour blocks through `WorldBase`, so it works for any
-world. Chunk serialization (`Chunk.Write` ↔ `new CachedChunk(world, pos, reader)`) is reused for both disk
+world. It meshes each of `Block.Model.Elements` (Minecraft `from`/`to` boxes with per-face `uv`/texture/
+`cullface`), so partial-cube models (stairs) render as-is. **Per-block orientation** is `Block.GetModelTransform`
+(default identity), composed after the element transform so it rotates the centred element about the block
+origin — the engine parses **no blockstate files**, so a stair's facing (which vanilla keeps in the
+blockstate) is applied here from the block's stored metadata. (Face normals + `cullface` are **not** rotated,
+which is harmless: a partial block — `IsFullBlock` false — is never the both-full pair the face cull needs, so
+its faces always draw; only flat shading on rotated faces is mildly off.) Chunk serialization (`Chunk.Write` ↔
+`new CachedChunk(world, pos, reader)`) is reused for both disk
 saves (`WorldSerializer`) and the `ChunkData` network packet; both write each container's palette form via
 `PaletteStorage.Write`/`Read`.
 
@@ -276,10 +284,21 @@ old server-side `Chunk.Write` already had, made safe by the palette copy-on-grow
   S→C  ChunkData             Vector3i + Chunk (loopback: by ref; TCP: GZip of Chunk.Write)   (initial chunk streaming only)
   S→C  BlockChanges          ChunkPos + (localIndex, blockId, light, sky)[]   (edits + block-light + sky-light, see below)
   C→S  ChunkRelease          client dropped a chunk from its cache; clears its SentChunks entry
-  C→S  PlaceBlockRequest     pos + block id (id 0 = break)
+  C→S  PlaceBlockRequest     pos + block id (id 0 = break) + placement metadata (computed client-side, see below)
   C→S/S→C  EntityMove         own player up; relayed to others down
   S→C  EntitySpawn/EntityDespawn   remote players appearing/leaving
+  S→C  WorldTime             world clock in seconds (TickCount·SecondsPerTick); on join + ~1/s, drives day/night
 ```
+
+**Placement metadata is computed client-side, never read on the server.** `Block.OnPlaced(world, pos, player,
+int metadata)` receives the metadata in the `PlaceBlockRequest`; the client derives it via
+`Block.GetPlacementMetadata(KeyboardState, EntityPlayer, BlockRaytraceResult)` (default `0`) in
+`PlayerController.PlaceBlock` and threads it through `WorldClient.PlaceBlock` into the packet. The player +
+ray are passed so a block can orient by the placer's look and clicked face (stairs: facing from yaw, half
+from the clicked face); `BlockTintedGlass` uses only the held-key tint. The headless server never touches
+input — `ServerNetwork.ApplyPlaceRequest` just passes `place.Metadata` to `WorldServer.PlaceBlock` →
+`OnPlaced`. (Like tinted glass, a stair's facing is block *data*, so it rides the whole-chunk `ChunkData`
+resend, not the lighter `BlockChanges` delta.)
 
 **Chunk caching & eviction is client-owned.** The client keeps every chunk it receives in memory and, each
 `WorldClient.Update`, drops chunks whose centre is farther than `CacheDistance` (240) from the player,
@@ -372,12 +391,28 @@ spawn column (one-shot join signal, see the handshake above) → **flush block c
    RenderWorld() (MAIN thread) BuildVisibleSet runs the frustum + render-distance scan of RenderList, then
                  the shadow + geometry + composition passes
 
- Client game loop (MinecraftClone3/Program.cs, 120 Hz, MAIN thread):
+ Client game loop (MinecraftClone3/Program.cs, display rate ~120 Hz, MAIN thread):
    OnUpdateFrame → StateEngine.Update() → StateWorld.Update():
-       integratedServer.Update();  network.Pump();   // singleplayer only
-       world.SendMove(player);     world.Update();
+       per FRAME:  PlayerController.UpdateFrame (look/break/place/camera), world.Update() (GL + packet pump + evict)
+       per TICK (fixed 20 tps accumulator, 0..N times per frame) → StateWorld.Tick():
+           PlayerController.Tick (one physics step)   // singleplayer + multiplayer
+           integratedServer.Update();  network.Pump();  // singleplayer only (advances WorldServer.TickCount)
+           world.SendMove(player);
+       then ApplyInterpolation(alpha) renders the 20 tps motion smooth at the frame rate
    OnRenderFrame → StateEngine.Render() → WorldRenderer.RenderWorld(worldClient, projection)
 ```
+
+**The whole simulation runs at a fixed 20 tps; input/look/camera/render run every display frame.**
+`StateWorld` owns a real-time accumulator (`_simTimer`/`_simAccumulator`): each `Update` it adds the elapsed
+frame time (clamped to `MaxFrameTime`) and runs `Tick()` while ≥ `PlayerPhysics.TickSeconds` (capped at
+`MaxCatchUpTicks` so a stall can't spiral). A `Tick` is one player physics step, the integrated
+`WorldServer.Update()` (which increments `TickCount` — the authoritative world clock, also 20 tps on the
+dedicated server), `ServerNetwork.Pump()`, and the client `SendMove`. Between ticks the player position is
+**render-interpolated** (`PlayerController.ApplyInterpolation(alpha)`, `alpha = accumulator / TickSeconds`),
+so motion is smooth at the display rate even though the sim steps at 20 Hz. SP freezes the accumulator while
+paused (unfocused); MP keeps ticking the (remote) server. `UpdateFrequency` stays at the display rate — only
+the sim cadence is fixed. (`ServerNetwork.MaxChunksPerTick` was sized up ~6× when the streaming loop went
+from the ~120 Hz frame rate to 20 tps, to hold the same chunks/second.)
 
 **The client chunk pipeline is split across three threads so the render thread does only GL + reads:** the
 apply thread decodes/mutates chunk storage (the per-chunk copy that used to dominate the render thread), the
@@ -443,9 +478,11 @@ needs hardening, ship `GameRegistry.Save/Load` (a `registry.bin` exchange) — i
          the 12-tap PCF runs here at half res (quarter the pixels): r = shadow factor, g = norm
          view depth; reads G-buffer normal/depth/light + the shadow depth map
     └─ DrawComposition → screen
+         background pixels (cleared far plane, viewDepth ≥ uSkyDistance) ⇒ SkyColor(viewRay) — the skybox;
          shadow = depth-aware (joint-bilateral) upsample of the half-res resolve buffer (1=lit, early-outed
          past ShadowDistance / in caves / at night); skyLight = sky.a*(shadow*uSunColor*uSunFade + uSkyAmbient);
-         light = max(blockLight.rgb, skyLight); diffuse * max(light, MinLight); normal.w==1 ⇒ diffuse unlit
+         light = max(blockLight.rgb, skyLight); lit = diffuse * max(light, MinLight); water reflects SkyColor;
+         lit fades into uHorizonColor with distance fog; normal.w==1 ⇒ diffuse unlit
 ```
 
 Shaders live in `MinecraftClone3/Content/System/Assets/System/Shaders/`. Lighting is block-emitted RGB light
@@ -458,8 +495,33 @@ noon, orange at the horizon, faded out at night) **plus an ambient sky term** (`
 unless a block light reaches them; only a tiny `MinLight` floor (≈ 0, tunable; the old global `Ambient = 0.2`
 that lit everything is **gone**) keeps unlit surfaces from being a literal void. The whole thing animates
 **with no remesh** (the sky channel is baked into the chunk mesh, so geometry/occlusion is static; only the
-sun/moon *colour/intensity* animate). The clock is client-local — MP clients are not yet time-synced; see
-"Known rough edges". **Moonlight is non-directional ambient** (no moon shadow pass) — deferred.
+sun/moon *colour/intensity* animate). The clock is **server-authoritative**: `WorldRenderer` reads
+`WorldClient.WorldTimeSeconds` (synced from the periodic `WorldTime` packet — the server's
+`TickCount·SecondsPerTick` — and advanced locally between packets), so all MP clients share one time of day.
+**Moonlight is non-directional ambient** (no moon shadow pass) — deferred.
+
+**Background sky (the skybox) — procedural, in `Composition.fs`, no geometry.** Background pixels are the
+*cleared far plane*: `main()` reconstructs each pixel's view-space depth and, when it is `≥ uSkyDistance`
+(`WorldRenderer.RenderDistance + 48`, comfortably past the farthest drawn chunk yet inside the 512 far clip
+plane), reuses the reconstructed far-plane point as the view-ray direction and shades `SkyColor(dir)` instead
+of a G-buffer lookup — so the sky costs nothing but the fullscreen pass that already runs. `SkyColor` builds a
+Minecraft-style sky from `WorldRenderer`-computed time-of-day uniforms: a vertical gradient (`uVoidColor`
+below the horizon → `uHorizonColor` haze → `uSkyColor` zenith), a sunrise/sunset orange band near the horizon
+in the sun's azimuth (`uSunsetColor`), procedural **stars** (a hashed direction grid, faded in by
+`uStarBrightness` at night and out toward the horizon), and a **textured sun and moon** drawn as angular
+billboards (`CelestialBillboard` projects the view ray onto a tangent plane at the body's direction → quad
+uv). The sun/moon textures are the real pack assets — `minecraft/textures/environment/sun.png` and
+`moon_phases.png` (full-moon cell), loaded by `WorldRenderer.LoadSkyTextures()` after the resource packs are
+indexed (alongside `Font.Load`, see resource loading) onto composition units 5/6; with **no pack** the
+`uHasSunTexture`/`uHasMoonTexture` flags are 0 and the shader falls back to a procedural disc. The moon sits
+opposite the sun (`-uSunDirection`), each hidden below its own horizon. **Water reflects this same `SkyColor`**
+(see the water section), so the sun glints and the moon/stars reflect at night — one sky function, two
+consumers. **Distance fog** then melts lit geometry into `uHorizonColor` between `uFogStart`/`uFogEnd`
+(0.72–0.97 × `RenderDistance`), hiding the hard chunk-load boundary against the sky (and fading to night
+darkness, since the horizon colour itself dims). The sky/sun/star/fog colours are all `WorldRenderer` C#
+functions (`SkyZenithColor`/`SkyHorizonColor`/`SkyVoidColor`/`SunsetColor`/`StarBrightness`, sharing
+`DayTime`/`SunHeight`/`DayFactor` with the existing `SunColor`/`SkyAmbient`/`SunDirection`), so retuning needs
+no shader recompile; the billboard sizes are the `SunSize`/`MoonSize` consts.
 
 **Directional sun shadows — one low-res shadow map (no cascades).** `DrawShadowMap` renders a **single**
 orthographic depth map into `ShadowFramebuffer` — one `Texture2D` of `ShadowFramebuffer.ShadowMapSize` (1024).
@@ -590,13 +652,14 @@ solid (0.5) and the unlit flag (1.0). Composition detects a water pixel by a snu
 value is deterministic; a future `RenderMaterial` must encode outside this band) and, on top of the
 existing Tier-A lit translucent water (`baseColor`), adds: animated **`WaveNormal`** (analytic gradient of
 three summed directional sine waves over the surface's world XZ, scrolled by `uTime` — only the **top** face,
-`faceN.y > 0.5`, is perturbed), a **Fresnel** mix toward an analytic **`SkyColor`** (horizon→zenith gradient
-over `uSkyAmbient` + a reflected sun disc — there is no skybox, so the reflection is synthesized from the same
-day/night uniforms and tracks time of day), and a **Blinn-Phong sun specular** glint. New composition uniforms:
+`faceN.y > 0.5`, is perturbed), a **Fresnel** mix toward **`SkyColor(reflect(-V, N))`** — the *same* sky
+function the background skybox paints (see "Background sky"), so the water mirrors the real gradient, sun,
+moon, and stars and tracks time of day — and a **Blinn-Phong sun specular** glint. New composition uniforms:
 `uCameraPos`, `uSunDirection`, `uTime` (set in `DrawComposition`). Reflection and specular are scaled by the
 baked sky factor (`uLight.a`) and `uSunFade` (and the glint by `shadow`), so cave/overhang water and night
 water fall straight back to the plain look — the gating is free, no special cases. Look knobs are shader
-`const`s (wave amp/freq/speed, `WaterF0`, `WaterSpecExp/Gain`, the `Sky*Gain`/`SunDisc*`).
+`const`s (wave amp/freq/speed, `WaterF0`, `WaterSpecExp/Gain`); the reflected-sky look is shared with the
+skybox uniforms.
 
 The one subtlety this needs: composition must *identify* water pixels, but the transparent pass blends **all
 three** MRT attachments, so a flag in `normal.w` would blend with the background and become unreadable. Fix:
@@ -663,20 +726,41 @@ char per key press); the owning state must call `Detach()` from `Exit()` to unsu
 **Player movement & physics** (`Entities/PlayerController.cs` + `PlayerPhysics.cs`, client-only, main
 thread). The player is a **0.6 × 1.8 AABB**; `Entity.Position` is the **feet** and the camera renders at
 `Position + EyeOffset` (1.62) via `Entity.RenderPosition`/`EyeOffset` (defaults keep non-player entities a
-point). Two modes, toggled by **double-tapping Space**:
-- **Walk (default):** exact-Minecraft constants integrated on a **fixed 0.05 s (20 tps) accumulator** —
+point). `PlayerController` is split into `UpdateFrame` (per display frame: look, fly toggle, hotbar, debug
+keys, break/place, camera) and `Tick` (one fixed **20 tps** step), driven by `StateWorld`'s accumulator (see
+the game-loop section); `ApplyInterpolation(alpha)` lerps `PrevPosition→Position` so the 20 tps motion is
+smooth at the frame rate. Two modes, toggled by **double-tapping Space**:
+- **Walk (default):** exact-Minecraft constants integrated **once per 20 tps tick** —
   gravity `v_y=(v_y−0.08)·0.98`, jump `0.42`, ground accel `0.1`/friction `0.546`, air `0.02`/`0.91`, Ctrl
   sprint `1.3×`. `PlayerPhysics.MoveWithCollision` is **swept per-axis (Y→X→Z)**: it clips each axis's
-  displacement against the AABBs of overlapping solid blocks (`!Block.CanPassThrough`; blocks are centred on
-  integer coords, ±0.5), zeroes the blocked component, and sets `OnGround` when a downward move is clipped.
-  The 20 tps physics is **render-interpolated** to the 120 Hz frame (`InterpolatedPosition =
-  Lerp(PrevPosition, Position, accumulatorFraction)`) so the camera is smooth, not 20 Hz-steppy.
-- **Fly (creative):** the original dt-scaled direct `Entity.Move` — Space/Shift up/down, Ctrl fast, **no
-  gravity/collision** (noclip). `InterpolatedPosition` just tracks `Position`.
+  displacement against the collision boxes of overlapping solid blocks and zeroes the blocked component. A
+  block contributes its boxes via **`Block.GetCollisionBoxes`** (block-local, centred ±0.5), which defaults
+  to the single `GetBoundingBox` cube but lets a block return **several** boxes — stairs return an L (slab +
+  step), so you can walk up them (each 0.5 rise is within auto-step). The clip loops iterate the boxes from a
+  reused scratch list (no per-cell allocation). `GetBoundingBox` stays a single cube and is used for the
+  *raytrace/targeting + outline* only, so targeting a stair is a simple whole-cube hit. `OnGround` is then a **velocity-independent
+  downward probe** (`ClipY(box, −GroundProbe)` clipped ⇒ grounded), not the Y-clip outcome — so a tick that
+  enters with `Velocity.Y==0` (spawn, just un-flew) or lands exactly flush doesn't read airborne for a tick.
+  **Auto-step:** when grounded, **not rising** (`velY ≤ 0`), and a horizontal axis is blocked, the move is
+  retried raised by `StepHeight` (0.6 = MC: up → horizontal → drop back down) and kept only if it advanced
+  farther — climbs slabs/partial blocks, still needs a jump for a full cube. The not-rising gate matters: on
+  the jump tick `velY = +0.42`, and stepping then would stack `StepHeight` on the jump's rise and clip the
+  player straight up a full block — so stepping only happens while settling onto the ground, and the jump
+  arc alone (apex ~1.25) decides whether a 1-block ledge is cleared.
+- **Swim (in water):** when the body overlaps a `Block.IsLiquid` block (`PlayerPhysics.IsInLiquid` samples
+  the lower + mid body), the walk tick takes the water branch instead — gentle water accel, all velocity
+  damped by `WaterDrag`, **Space buoys up** (`SwimImpulse`), otherwise a slow sink (`WaterGravity` ≪ land
+  gravity). Liquid is pass-through, so swept collision + the ground probe still run; you don't fall through.
+- **Fly (creative):** the same fixed-step `Entity.Move` — Space/Shift up/down, Ctrl fast, **no
+  gravity/collision** (noclip). Also runs in the 20 tps tick and is render-interpolated like walking.
 
 The block-target raytrace uses the **eye** (`RenderPosition + EyeOffset`); `SendMove` ships the **feet**
 position, so remote players (drawn by `EntityRenderer` as 0.6×1.8 boxes, offset up by half-height to stand
-on their feet) line up.
+on their feet) line up. **Remote entities are render-interpolated:** their positions arrive at 20 tps, so
+`Entity.SetInterpTarget` (on each `EntityMove`) aims a lerp from the current visual position toward the new
+target, advanced per display frame by `WorldClient.UpdateEntityInterpolation`, and `Entity.RenderPosition`
+returns the lerp — so they glide instead of snapping. (The local player overrides `RenderPosition` with its
+own accumulator-driven interpolation.)
 
 **Graphics options.** `GuiGraphicsOptions` (reachable from both `GuiMainMenu` and the `GuiPauseMenu` overlay
 via their "Options" button) is an **overlay** — it draws over whichever screen opened it and closing it
@@ -786,7 +870,10 @@ the game runs with placeholder blocks, no crash (the headless server tolerates a
 is GL-free and only feeds the client mesher). **The GUI font is also pack-sourced** — `Font` (`Client/GUI/
 Font.cs`) loads `minecraft/font/default.json` and its `minecraft:font/*.png` bitmaps straight from the pack
 (the System plugin ships no font any more), so with no pack `Font.Load` logs an error and text rendering is
-disabled (the rest of the game still runs).
+disabled (the rest of the game still runs). **The sky's sun/moon textures are likewise pack-sourced** —
+`WorldRenderer.LoadSkyTextures()` (called right after `Font.Load`) reads `minecraft/textures/environment/
+{sun,moon_phases}.png` from the pack; with no pack the skybox draws procedural discs instead (see "Background
+sky").
 
 ---
 
@@ -1229,14 +1316,20 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
 ## Known rough edges / deferred work
 
 - **Player physics is the "80%" walk model — several exact-MC behaviours are deferred.** Implemented: gravity,
-  jump, swept per-axis AABB collision, Ctrl sprint, walk/fly toggle. **Not** implemented: sprint-jump forward
-  boost, sneaking (no crouch/edge-stop), per-block slipperiness (no ice/slime blocks exist), **auto-step up
-  0.6-block ledges** (you must jump onto a single block), swimming/fluid physics (water has `CanPassThrough`
-  so you fall through it), **collision for creative flight** (flight is deliberately noclip, to keep the
-  original free-fly), per-block non-cube collision shapes (every solid block collides as a full cube — fine
-  today since none define a custom `GetBoundingBox`), and remote-player movement interpolation (they still
-  snap). The exact-constant *ordering* (gravity-before-move vs after) may be a tick off MC and is tunable in
-  `PlayerPhysics.Tick`.
+  jump, swept per-axis AABB collision, Ctrl sprint, walk/fly toggle, **auto-step up `StepHeight` (0.6 = MC)
+  ledges** (climbs slabs/partial blocks, still jump for a full cube). **Not** implemented: sprint-jump forward
+  boost, sneaking (no crouch/edge-stop), per-block slipperiness (no ice/slime blocks exist), and
+  **collision for creative flight** (flight is deliberately noclip, to keep the original free-fly).
+  Non-cube collision now exists (multi-box `GetCollisionBoxes`, used by stairs). The exact-constant *ordering*
+  (gravity-before-move vs after) may be a tick off MC and is tunable in `PlayerPhysics.Tick`.
+- **Stairs are the "straight, 80%" stair.** `VanillaPlugin/Blocks/BlockStairs.cs` (`Vanilla:OakStairs`) uses
+  the real `minecraft:block/oak_stairs` model from the pack; orientation (facing bits 0-1, top-half bit 2) is
+  applied as a mesh-time `GetModelTransform` rotation + matching multi-box L collision, since the engine reads
+  no blockstate. Deferred / accepted: **no corner (inner/outer) variants**; the **raytrace/outline + targeting
+  is the full cube** (not the L), so the highlight covers a bit of air over the low step; rotated faces keep
+  their un-rotated normals/`cullface` (mildly off flat shading, harmless culling); facing rides whole-chunk
+  resends like tinted glass. The **yaw→facing mapping** (high step toward the player's look) and the top-half
+  X-flip are the visual-tuning knobs — flip the sign / axis in `BlockStairs` if placement reads reversed.
 - **Walking into a not-yet-streamed chunk reads as air (could fall through an edge).** Collision uses
   `WorldBase.GetBlock`, which returns air for unloaded chunks, so a solid block in an un-streamed chunk
   doesn't collide. Bounded in practice: the join handshake pre-streams the spawn column, and the client cache
@@ -1244,14 +1337,14 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
   you reach it. A fast clip into ungenerated space could still drop the player; accepted for now.
 - **Water is Tier B (animated normals + Fresnel sky reflection + sun specular); Tier C is deferred.** Tier B
   is **done** — see "Water surface — Tier B" in the rendering section for the full design (in-shader, no extra
-  pass; flagged via `normal.w`; per-attachment blend so the flag survives; analytic — **not** cubemap — sky
-  reflection). Residual edges accepted for now: the sky reflection is **analytic** (synthesized from the
-  day/night uniforms, no real environment cubemap), so it doesn't reflect terrain or clouds, only a sky
-  gradient + sun disc; there is **no refraction or depth-based absorption** (looking down still shows the
-  Tier-A tint over the bottom, just Fresnel-mixed) — that's **Tier C** (a **forward water pass after
-  composition** reading the opaque scene colour/depth), still the deferred next step. Water is also **not a
-  fluid**: it doesn't flow, level, or fill — it's a static block placed by gen below sea level. Look knobs are
-  shader `const`s (wave amp/freq/speed, `WaterF0`, `WaterSpecExp/Gain`, `Sky*Gain`/`SunDisc*`).
+  pass; flagged via `normal.w`; per-attachment blend so the flag survives; reflects the procedural skybox —
+  **not** a cubemap). Residual edges accepted for now: the reflection is the shared **`SkyColor`** skybox
+  (gradient + sun/moon/stars; see "Background sky"), so it tracks time of day but still **doesn't reflect
+  terrain or clouds** (no real environment capture); there is **no refraction or depth-based absorption**
+  (looking down still shows the Tier-A tint over the bottom, just Fresnel-mixed) — that's **Tier C** (a
+  **forward water pass after composition** reading the opaque scene colour/depth), still the deferred next
+  step. Water is also **not a fluid**: it doesn't flow, level, or fill — it's a static block placed by gen
+  below sea level. Look knobs are shader `const`s (wave amp/freq/speed, `WaterF0`, `WaterSpecExp/Gain`).
 - **Animated textures show frame 0 only.** Strip textures are sliced and *all* frames are uploaded +
   retained (`BlockTextureManager.AnimatedTextures` with `frametime`), but nothing cycles them yet. Adding the
   animator (advance the sampled layer over time, by remesh-free means — a per-animated-texture uniform/layer
@@ -1358,11 +1451,6 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
   dirty chunk, each doing one 256 KB index rewrite. Batching all of a region's dirty chunks into a single
   index rewrite is deferred — marginal now that the index is 64× smaller, and `SaveChunk` already early-outs
   on `!NeedsSaving`.
-- **`BlockTintedGlass.OnPlaced` reads `ClientResources.Window.KeyboardState`** — client/window state touched
-  from block code that runs **server-side** (`PlaceBlock` → `OnPlaced`). On the headless dedicated server this
-  throws the moment tinted glass is placed (same class of bug as the old `BlockTorch` keyboard read). Works in
-  singleplayer only because the integrated server shares the client process. Placement metadata should come
-  from the place *request*, not a live keyboard read on the server.
 - **Sky light is "gen-seed + simple BFS" — known edit-time limitations (accepted scope).** At chunk-gen the
   `NoiseChunkGenerator` seeds the sky container directly (open air above the surface = 15, water dims with
   depth, caves stay 0; see the world-generation section), so untouched terrain is well lit without a flood.
@@ -1379,10 +1467,6 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
   client. `WorldClient.GetSkyLight` returns `LightLevel.SkyMax` for any unloaded chunk (treat unloaded space
   as open sky) so surface tops still light up. Side effect: the bottom face of a block whose neighbour chunk
   is merely *not-yet-loaded* (not actually open sky) briefly samples 15 until that chunk streams in.
-- **Day/night sun time is client-local (MP desync).** `WorldRenderer`'s clock advances in real time per
-  client, so two MP clients see different times of day and the server has no authoritative time. SP is fine.
-  Fix later via a server time packet. `DayLengthSeconds` (240) sets the cycle length.
-- No movement interpolation for remote players (they snap to the last received position).
 - `StateWorld` connects synchronously on the main thread; a far/unreachable MP host briefly blocks.
 - `ClientSession.SentChunks` shrinks only on `ChunkRelease`/dirty resend, so a misbehaving or crashed client
   could leave stale entries until it disconnects. Bounded in practice by client `CacheDistance` eviction;
