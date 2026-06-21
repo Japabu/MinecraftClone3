@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
@@ -29,6 +30,28 @@ namespace MinecraftClone3API.WorldGen
             _maxHeight = maxHeight;
             _attemptsPerChunk = attemptsPerChunk;
             _chance = chance;
+        }
+
+        /// <summary>The leaf block this feature's canopy is made of — the LOD horizon stamps it as the surface.</summary>
+        public Block Leaves => _leaves;
+
+        /// <summary>Collects the trunk position + canopy-top Y of every tree this feature places for the given
+        /// origin chunk (no chunk writes), drawing the RNG in the EXACT order <see cref="Place"/> does
+        /// (chance → x → z → [sea-level skip] → height), so the stream stays bit-identical to full-chunk gen and
+        /// the LOD canopy lands on the same columns the real trees do. Used by the horizon LOD to show trees.</summary>
+        public void CollectTrees(IChunkGenRegion region, Vector3i originColumn, ref WorldGenRandom rng,
+            List<(int X, int Z, int TopY)> into)
+        {
+            for (var a = 0; a < _attemptsPerChunk; a++)
+            {
+                if (rng.NextFloat() > _chance) continue;
+                var x = originColumn.X + rng.NextInt(Chunk.Size);
+                var z = originColumn.Z + rng.NextInt(Chunk.Size);
+                var surf = region.SurfaceHeight(x, z);
+                if (surf < region.SeaLevel) continue;
+                var height = rng.NextInt(_minHeight, _maxHeight);
+                into.Add((x, z, surf + height));
+            }
         }
 
         public override void Place(IChunkGenRegion region, Vector3i originColumn, ref WorldGenRandom rng)

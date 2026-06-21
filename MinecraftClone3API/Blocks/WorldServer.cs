@@ -627,6 +627,7 @@ namespace MinecraftClone3API.Blocks
             for (var cz = 0; cz < LodColumn.CellsPerAxis; cz++)
                 columns[cx * LodColumn.CellsPerAxis + cz] =
                     _generator.GetLodColumn(baseX + cx * LodColumn.Stride, baseZ + cz * LodColumn.Stride);
+            _generator.DecorateLodRegion(key, columns);   // stamp tree canopies (matches real tree positions)
             _lodStore.PutRegion(new LodColumn(key, columns));
         }
 

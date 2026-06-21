@@ -22,6 +22,12 @@ namespace MinecraftClone3API.WorldGen
         /// Returns 0 (an empty column) where there is no LOD surface.</summary>
         long GetLodColumn(int wx, int wz);
 
+        /// <summary>Stamps decoration (tree canopies) onto a filled LOD region's packed columns, replaying the
+        /// vegetation features' RNG so the horizon shows trees at the same positions the real chunks do. Called
+        /// on the server LOD thread after <see cref="GetLodColumn"/> filled the base surface; must stay pure
+        /// (read-only generator state + the passed array). No-op for generators without decoration.</summary>
+        void DecorateLodRegion(Vector3i regionKey, long[] columns);
+
         Vector3i Spawn();
     }
 }
