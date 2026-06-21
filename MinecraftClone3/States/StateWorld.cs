@@ -46,6 +46,8 @@ namespace MinecraftClone3.States
         private bool _loading = true;
         private bool _spawnApplied;
         private int _lastRenderDistanceChunks = -1;
+        private float _lastLodDetail = -1f;
+        private int _lastLodHorizonChunks = -1;
         private readonly Stopwatch _loadingTimer = Stopwatch.StartNew();
         private Texture _loadingBackground;
 
@@ -127,6 +129,8 @@ namespace MinecraftClone3.States
         {
             var chunks = GraphicsSettings.RenderDistanceChunks;
             _lastRenderDistanceChunks = chunks;
+            _lastLodDetail = GraphicsSettings.LodDetail;
+            _lastLodHorizonChunks = GraphicsSettings.LodHorizonChunks;
 
             // Multiplayer: the client can only LOD what the remote server streams, so leave the LOD horizon at
             // the (dormant) default and just drive the client draw distance via RenderDistance.
@@ -145,12 +149,11 @@ namespace MinecraftClone3.States
         }
 
         /// <summary>Chunks of cheap LOD horizon streamed BEYOND the full-detail render distance (the Phase-2
-        /// "distant horizon"). 20 ⇒ ~36-chunk / 576-block total horizon at RD 16 (2.25× the base render distance)
-        /// while holding ≥500 uncapped FPS on every benchmark phase (incl. the continuous-edit stress). The
-        /// geometry pass is primitive-setup-bound, so this is the FPS knob: raise it for a bigger horizon
-        /// (distance-based stride rings / greedy skirts are the deferred way to push it further without the
-        /// cost — see CLAUDE.md).</summary>
-        private const int LodRingChunks = 20;
+        /// "distant horizon"), driven live by the LOD Horizon graphics slider (0 = off). Default 16 ⇒ a
+        /// ~32-chunk / 512-block total horizon at RD 16. The geometry pass is primitive-setup-bound, so this is
+        /// the FPS knob; distance-based stride rings / greedy skirts are the deferred way to push it further
+        /// without the cost — see CLAUDE.md.</summary>
+        private int LodRingChunks => GraphicsSettings.LodHorizonChunks;
 
         public override void Update(bool focused)
         {
@@ -166,8 +169,19 @@ namespace MinecraftClone3.States
                 return;
             }
 
-            if (GraphicsSettings.RenderDistanceChunks != _lastRenderDistanceChunks)
+            // Re-apply the radius chain on a render-distance OR LOD-horizon change (both only retarget the
+            // gen/stream/draw radii — no remesh). A LOD-detail change re-meshes the loaded chunks at the new
+            // bands; RefreshLodDistances returns false when the 0.1 slider step didn't move the scaled band, so a
+            // multi-step drag collapses to one remesh once it actually changes a boundary. All main-thread.
+            if (GraphicsSettings.RenderDistanceChunks != _lastRenderDistanceChunks
+                || GraphicsSettings.LodHorizonChunks != _lastLodHorizonChunks)
                 ApplyRenderDistance();
+
+            if (GraphicsSettings.LodDetail != _lastLodDetail)
+            {
+                _lastLodDetail = GraphicsSettings.LodDetail;
+                if (_world.RefreshLodDistances()) _world.RemeshAll();
+            }
 
             // The automated benchmark drives the camera itself (no player input / no pause overlay).
             var active = focused && !_benchmark;

@@ -658,10 +658,11 @@ whose Y range holds its surface (`sy ∈ [bottom, top)`), so it's emitted exactl
 `ChunkRenderData.DesiredLod` is set by `WorldClient.ScanLod` (a distance scan gated on chunk-border crossings,
 like eviction; **bidirectional** — re-meshes on both approach *and* recede, since a recede chunk can rotate
 back into view; low-priority re-meshes so they sit behind first-load streaming) and `DrainRenderReady` (initial
-level at stream time); the mesh thread reads it in `Update`. The band thresholds are
-`Lod1Distance`/`Lod2Distance` (pushed well out so the LOD seam isn't near the player — we have GPU headroom and
-the heightmap is cheap), with a `LodHysteresis` dead-band on the hysteretic `LodFor(center, current)` so a
-chunk straddling a boundary doesn't re-mesh every border crossing. **`geomMs` ~1.2 ms at RD 16**; RD 16 +
+level at stream time); the mesh thread reads it in `Update`. The band thresholds are the cached
+`_lod1Distance`/`_lod2Distance` fields = `Lod1BaseDistance`/`Lod2BaseDistance` (144/224) **scaled by the user's
+`GraphicsSettings.LodDetail` multiplier** (the **LOD Detail** graphics slider — see the state-system section;
+`RefreshLodDistances()` snapshots it, `StateWorld` re-meshes on change), with a `LodHysteresis` dead-band on the
+hysteretic `LodFor(center, current)` so a chunk straddling a boundary doesn't re-mesh every border crossing. **`geomMs` ~1.2 ms at RD 16**; RD 16 +
 shadows off runs **~510 capped / ~600 uncapped FPS** on the dedicated GPU (every benchmark phase ≥ 500
 uncapped). Verify quality changes with the `--inspect` A/B-diff tool (see debug section). Tradeoffs / residual
 edges (accepted): distant terrain is a stepped heightmap and distant foliage is an **opaque bumpy canopy**
@@ -880,6 +881,18 @@ fires only when the snapped value changes). Controls:
   `LoginAccept` view-distance advertise+clamp is deferred). `StateWorld.Update` re-applies when the setting changes.
 - **FOV** (slider 30–110°, read by `StateWorld`'s projection), **Sensitivity** (slider, the `PlayerController`
   mouse-delta multiplier), **Brightness** (slider 0–0.3 → `uMinLight` in `Composition.fs`, the unlit floor).
+- **LOD Detail** (slider 50–200%, `GraphicsSettings.LodDetail`) — the within-RD LOD "aggressiveness" knob: a
+  multiplier on the detail-band base distances (`WorldClient.Lod1BaseDistance`/`Lod2BaseDistance`, 144/224), so
+  higher = full/near detail extends farther before coarsening = prettier but lower FPS (200% ≈ no coarsening
+  inside RD 16; 50% = max FPS). `WorldClient.RefreshLodDistances()` snapshots it into the cached band fields
+  (not live-read per chunk — `LodFor` runs over the whole `RenderList`), and `StateWorld.Update` calls it +
+  `RemeshAll()` (main thread) when the setting changes (the per-frame `_lastLodDetail` gate is the debounce, so
+  a slider drag collapses to one remesh). Default 100% = 144/224 (one chunk farther than the old 128/208 — a
+  bit less aggressive; ~460 uncapped at RD 16 / shadows-off, drag down for 500+).
+- **LOD Horizon** (slider 0–48 chunks, `GraphicsSettings.LodHorizonChunks`) — the Phase-2 distant horizon
+  extent beyond the render distance (0 = off). Drives `StateWorld.LodRingChunks` → `ApplyRenderDistance` (the
+  server gen ring / stream cull / client draw+cache radii); a change re-applies the radius chain with no
+  remesh (LOD columns just stream/evict at the new radius). Default 12.
 
 `Program.Main` calls `GraphicsSettings.Load()` before creating the window and seeds `NativeWindowSettings` from
 it, so the window opens with the saved vsync/fullscreen choice; the rest are read live each frame, so a change

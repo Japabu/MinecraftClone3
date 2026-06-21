@@ -35,7 +35,7 @@ namespace MinecraftClone3.States
             _window.CursorState = CursorState.Normal;
 
             var x = ((int) ScaledResolution.GuiResolution.X - RowWidth) / 2;
-            var y0 = 92;
+            var y0 = 76;
             var step = RowHeight + RowGap;
             var row = 0;
 
@@ -84,6 +84,17 @@ namespace MinecraftClone3.States
                 GraphicsSettings.MinBrightness, GraphicsSettings.MaxBrightness, 0.01f, GraphicsSettings.Brightness,
                 v => GraphicsSettings.Brightness = v,
                 v => Percent(v, GraphicsSettings.MinBrightness, GraphicsSettings.MaxBrightness)));
+
+            Elements.Add(new GuiSlider(Row(x, y0, step, row++), "LOD Detail",
+                GraphicsSettings.MinLodDetail, GraphicsSettings.MaxLodDetail, 0.1f, GraphicsSettings.LodDetail,
+                v => GraphicsSettings.LodDetail = v,
+                v => (int) Math.Round(v * 100) + "%"));
+
+            Elements.Add(new GuiSlider(Row(x, y0, step, row++), "LOD Horizon",
+                GraphicsSettings.MinLodHorizonChunks, GraphicsSettings.MaxLodHorizonChunks, 2f,
+                GraphicsSettings.LodHorizonChunks,
+                v => GraphicsSettings.LodHorizonChunks = (int) v,
+                v => (int) v == 0 ? "Off" : (int) v + " chunks"));
 
             Elements.Add(new GuiButton(Row(x, y0, step, row), "Done", () => IsDead = true));
         }

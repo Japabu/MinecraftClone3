@@ -35,6 +35,14 @@ namespace MinecraftClone3API.Client
         public const float MaxMouseSensitivity = 0.02f;
         public const float MinBrightness = 0f;
         public const float MaxBrightness = 0.3f;
+        // LOD Detail = a multiplier on how far full + stride-2 detail extends before coarsening (within-RD LOD).
+        // Higher = near detail extends farther = less-aggressive LOD = prettier but lower FPS; 2.0 ≈ no
+        // coarsening inside RD 16, 0.5 = max FPS. LOD Horizon = how many chunks the cheap Phase-2 distant horizon
+        // extends BEYOND the render distance (0 = no far horizon).
+        public const float MinLodDetail = 0.5f;
+        public const float MaxLodDetail = 2.0f;
+        public const int MinLodHorizonChunks = 0;
+        public const int MaxLodHorizonChunks = 48;
 
         private class Data
         {
@@ -47,6 +55,8 @@ namespace MinecraftClone3API.Client
             public float Fov = 60f;
             public float MouseSensitivity = 0.008f;
             public float Brightness = 0.01f;
+            public float LodDetail = 1.0f;
+            public int LodHorizonChunks = 12;
         }
 
         private static Data _data = new Data();
@@ -100,6 +110,18 @@ namespace MinecraftClone3API.Client
             set { _data.Brightness = Clamp(value, MinBrightness, MaxBrightness); Save(); }
         }
 
+        public static float LodDetail
+        {
+            get => _data.LodDetail;
+            set { _data.LodDetail = Clamp(value, MinLodDetail, MaxLodDetail); Save(); }
+        }
+
+        public static int LodHorizonChunks
+        {
+            get => _data.LodHorizonChunks;
+            set { _data.LodHorizonChunks = Clamp(value, MinLodHorizonChunks, MaxLodHorizonChunks); Save(); }
+        }
+
         public static void Load()
         {
             if (!File.Exists(GamePaths.GraphicsSettingsFile)) return;
@@ -119,6 +141,8 @@ namespace MinecraftClone3API.Client
             _data.Fov = Clamp(_data.Fov, MinFov, MaxFov);
             _data.MouseSensitivity = Clamp(_data.MouseSensitivity, MinMouseSensitivity, MaxMouseSensitivity);
             _data.Brightness = Clamp(_data.Brightness, MinBrightness, MaxBrightness);
+            _data.LodDetail = Clamp(_data.LodDetail, MinLodDetail, MaxLodDetail);
+            _data.LodHorizonChunks = Clamp(_data.LodHorizonChunks, MinLodHorizonChunks, MaxLodHorizonChunks);
         }
 
         private static void Save()

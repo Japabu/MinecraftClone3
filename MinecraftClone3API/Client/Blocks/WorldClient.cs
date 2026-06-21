@@ -410,12 +410,35 @@ namespace MinecraftClone3API.Client.Blocks
         // the detail is sub-pixel) are meshed at stride 2 then stride 4, cutting their face count ~4×/16×.
         // Pushed well out (full detail to 9 chunks) so the LOD seam isn't near the player — we have ample
         // GPU headroom (the heightmap LOD is cheap), so "too cheap too near" is a budget we don't need to spend.
-        private const float Lod1Distance = 128f;       // < this: LOD 0 (full per-block detail)
-        private const float Lod2Distance = 208f;       // < this: LOD 1 (stride 2); beyond: LOD 2 (stride 4)
+        // Detail-band distances (blocks): full detail (LOD 0) within _lod1Distance, stride-2 (LOD 1) within
+        // _lod2Distance, stride-4 beyond. The base values are scaled by the user's LOD Detail multiplier
+        // (GraphicsSettings.LodDetail); at 1.0 full detail reaches 11 chunks and stride-4 never appears inside
+        // RD 16 (base Lod2 = 256 = the RD-16 edge), which is the less-aggressive default. CACHED fields (not a
+        // live property read): LodFor runs per-chunk over the whole RenderList, so RefreshLodDistances snapshots
+        // the setting once on the main thread and the loop reads stable fields.
+        private const float Lod1BaseDistance = 144f;     // full detail to 9 chunks at 100% (less aggressive than 128)
+        private const float Lod2BaseDistance = 224f;     // keep a stride-4 ring (224..RD edge) — it's the big FPS saver
         private const float LodHysteresis = 16f;        // dead-band around each boundary (no re-mesh thrash)
-        private static readonly float Lod1DistanceSq = Lod1Distance * Lod1Distance;
-        private static readonly float Lod2DistanceSq = Lod2Distance * Lod2Distance;
+        private float _lod1Distance = Lod1BaseDistance;
+        private float _lod2Distance = Lod2BaseDistance;
+        private float _lod1DistanceSq = Lod1BaseDistance * Lod1BaseDistance;
+        private float _lod2DistanceSq = Lod2BaseDistance * Lod2BaseDistance;
         private Vector3i _lastLodChunk = new Vector3i(int.MinValue);
+
+        /// <summary>Snapshots <c>GraphicsSettings.LodDetail</c> into the cached band distances. Main-thread only
+        /// (called from <see cref="RemeshAll"/>'s caller before re-meshing), so an in-flight <see cref="ScanLod"/>
+        /// never reads a half-updated band. Returns true if the bands actually changed.</summary>
+        public bool RefreshLodDistances()
+        {
+            var d1 = Lod1BaseDistance * GraphicsSettings.LodDetail;
+            var d2 = Lod2BaseDistance * GraphicsSettings.LodDetail;
+            if (d1 == _lod1Distance && d2 == _lod2Distance) return false;
+            _lod1Distance = d1;
+            _lod2Distance = d2;
+            _lod1DistanceSq = d1 * d1;
+            _lod2DistanceSq = d2 * d2;
+            return true;
+        }
 
         /// <summary>Debug/inspection toggle: when true every chunk meshes at full detail (LOD 0), so the
         /// inspection tool can A/B the LOD against the ground truth. Call <see cref="RemeshAll"/> after changing.</summary>
@@ -425,8 +448,8 @@ namespace MinecraftClone3API.Client.Blocks
         {
             if (ForceLodOff) return 0;
             var distSq = (center - _playerPosition).LengthSquared;
-            if (distSq < Lod1DistanceSq) return 0;
-            if (distSq < Lod2DistanceSq) return 1;
+            if (distSq < _lod1DistanceSq) return 0;
+            if (distSq < _lod2DistanceSq) return 1;
             return 2;
         }
 
@@ -440,13 +463,13 @@ namespace MinecraftClone3API.Client.Blocks
             float lo, hi;
             switch (current)
             {
-                case 0: lo = 0; hi = Lod1Distance + LodHysteresis; break;
-                case 1: lo = Lod1Distance - LodHysteresis; hi = Lod2Distance + LodHysteresis; break;
-                default: lo = Lod2Distance - LodHysteresis; hi = float.MaxValue; break;
+                case 0: lo = 0; hi = _lod1Distance + LodHysteresis; break;
+                case 1: lo = _lod1Distance - LodHysteresis; hi = _lod2Distance + LodHysteresis; break;
+                default: lo = _lod2Distance - LodHysteresis; hi = float.MaxValue; break;
             }
             if (dist >= lo && dist < hi) return current;
-            if (dist < Lod1Distance) return 0;
-            if (dist < Lod2Distance) return 1;
+            if (dist < _lod1Distance) return 0;
+            if (dist < _lod2Distance) return 1;
             return 2;
         }
 
