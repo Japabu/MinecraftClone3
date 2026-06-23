@@ -17,7 +17,8 @@ namespace MinecraftClone3API.Networking
         EntityMove,
         EntitySpawn,
         EntityDespawn,
-        WorldTime
+        WorldTime,
+        LodColumnData
     }
 
     /// <summary>
@@ -39,7 +40,8 @@ namespace MinecraftClone3API.Networking
             {PacketId.EntityMove, () => new EntityMovePacket()},
             {PacketId.EntitySpawn, () => new EntitySpawnPacket()},
             {PacketId.EntityDespawn, () => new EntityDespawnPacket()},
-            {PacketId.WorldTime, () => new WorldTimePacket()}
+            {PacketId.WorldTime, () => new WorldTimePacket()},
+            {PacketId.LodColumnData, () => new LodColumnDataPacket()}
         };
 
         public abstract PacketId Id { get; }

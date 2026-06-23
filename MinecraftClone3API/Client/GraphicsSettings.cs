@@ -28,13 +28,21 @@ namespace MinecraftClone3API.Client
     public static class GraphicsSettings
     {
         public const int MinRenderDistanceChunks = 4;
-        public const int MaxRenderDistanceChunks = 24;
+        public const int MaxRenderDistanceChunks = 64;
         public const float MinFov = 30f;
         public const float MaxFov = 110f;
         public const float MinMouseSensitivity = 0.001f;
         public const float MaxMouseSensitivity = 0.02f;
         public const float MinBrightness = 0f;
         public const float MaxBrightness = 0.3f;
+        // Inside the render distance everything is FULL per-block detail (no within-RD LOD). LOD Horizon = how
+        // many chunks the cheap Phase-2 distant horizon extends BEYOND the render distance (0 = no far horizon).
+        // LOD Quality scales how far the horizon's detail rings (stride 4/8/16) extend before coarsening: higher
+        // = finer horizon farther out (lower FPS), lower = coarser/cheaper.
+        public const float MinLodHorizonQuality = 0.5f;
+        public const float MaxLodHorizonQuality = 2.0f;
+        public const int MinLodHorizonChunks = 0;
+        public const int MaxLodHorizonChunks = 96;
 
         private class Data
         {
@@ -47,9 +55,15 @@ namespace MinecraftClone3API.Client
             public float Fov = 60f;
             public float MouseSensitivity = 0.008f;
             public float Brightness = 0.01f;
+            public float LodHorizonQuality = 1.0f;
+            public int LodHorizonChunks = 64;
         }
 
         private static Data _data = new Data();
+
+        /// <summary>When true, setters apply in-memory but don't persist to disk — the benchmark sets this so
+        /// its deterministic overrides (render distance / shadow quality) don't clobber the user's saved file.</summary>
+        public static bool SuppressSave;
 
         public static VSyncMode VSync
         {
@@ -96,6 +110,18 @@ namespace MinecraftClone3API.Client
             set { _data.Brightness = Clamp(value, MinBrightness, MaxBrightness); Save(); }
         }
 
+        public static float LodHorizonQuality
+        {
+            get => _data.LodHorizonQuality;
+            set { _data.LodHorizonQuality = Clamp(value, MinLodHorizonQuality, MaxLodHorizonQuality); Save(); }
+        }
+
+        public static int LodHorizonChunks
+        {
+            get => _data.LodHorizonChunks;
+            set { _data.LodHorizonChunks = Clamp(value, MinLodHorizonChunks, MaxLodHorizonChunks); Save(); }
+        }
+
         public static void Load()
         {
             if (!File.Exists(GamePaths.GraphicsSettingsFile)) return;
@@ -115,10 +141,13 @@ namespace MinecraftClone3API.Client
             _data.Fov = Clamp(_data.Fov, MinFov, MaxFov);
             _data.MouseSensitivity = Clamp(_data.MouseSensitivity, MinMouseSensitivity, MaxMouseSensitivity);
             _data.Brightness = Clamp(_data.Brightness, MinBrightness, MaxBrightness);
+            _data.LodHorizonQuality = Clamp(_data.LodHorizonQuality, MinLodHorizonQuality, MaxLodHorizonQuality);
+            _data.LodHorizonChunks = Clamp(_data.LodHorizonChunks, MinLodHorizonChunks, MaxLodHorizonChunks);
         }
 
         private static void Save()
         {
+            if (SuppressSave) return;
             try
             {
                 File.WriteAllText(GamePaths.GraphicsSettingsFile,

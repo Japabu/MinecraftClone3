@@ -52,40 +52,14 @@ namespace MinecraftClone3API.Graphics
             var firstUpload = UploadedCount == 0;
             GL.BindVertexArray(VaoId);
 
-            GlBuffer.UploadArray(BufferTarget.ArrayBuffer, BufferIds[0], Positions, Vector3.SizeInBytes, firstUpload);
+            // Packed 32-byte vertex (see MeshBuffer), same layout the geometry arena uses.
+            GlBuffer.UploadArray(BufferTarget.ArrayBuffer, BufferIds[0], Positions, 12, firstUpload);
+            GlBuffer.UploadArray(BufferTarget.ArrayBuffer, BufferIds[1], Uvs, 8, firstUpload);
+            GlBuffer.UploadArray(BufferTarget.ArrayBuffer, BufferIds[2], Packed, 4, firstUpload);
+            GlBuffer.UploadArray(BufferTarget.ArrayBuffer, BufferIds[3], Colors, 4, firstUpload);
+            GlBuffer.UploadArray(BufferTarget.ArrayBuffer, BufferIds[4], Lights, 4, firstUpload);
             if (firstUpload)
-            {
-                GL.EnableVertexAttribArray(0);
-                GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 0, 0);
-            }
-
-            GlBuffer.UploadArray(BufferTarget.ArrayBuffer, BufferIds[1], TexCoords, Vector4.SizeInBytes, firstUpload);
-            if (firstUpload)
-            {
-                GL.EnableVertexAttribArray(1);
-                GL.VertexAttribPointer(1, 4, VertexAttribPointerType.Float, false, 0, 0);
-            }
-
-            GlBuffer.UploadArray(BufferTarget.ArrayBuffer, BufferIds[2], Normals, Vector4.SizeInBytes, firstUpload);
-            if (firstUpload)
-            {
-                GL.EnableVertexAttribArray(2);
-                GL.VertexAttribPointer(2, 4, VertexAttribPointerType.Float, false, 0, 0);
-            }
-
-            GlBuffer.UploadArray(BufferTarget.ArrayBuffer, BufferIds[3], Colors, Vector3.SizeInBytes, firstUpload);
-            if (firstUpload)
-            {
-                GL.EnableVertexAttribArray(3);
-                GL.VertexAttribPointer(3, 3, VertexAttribPointerType.Float, false, 0, 0);
-            }
-
-            GlBuffer.UploadArray(BufferTarget.ArrayBuffer, BufferIds[4], Lights, Vector4.SizeInBytes, firstUpload);
-            if (firstUpload)
-            {
-                GL.EnableVertexAttribArray(4);
-                GL.VertexAttribPointer(4, 4, VertexAttribPointerType.Float, false, 0, 0);
-            }
+                ChunkMeshArena.BindVertexFormat(BufferIds[0], BufferIds[1], BufferIds[2], BufferIds[3], BufferIds[4]);
 
             UploadedCount = _faceInfos.Count * 6;
 

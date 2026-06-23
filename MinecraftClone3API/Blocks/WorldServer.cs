@@ -87,6 +87,17 @@ namespace MinecraftClone3API.Blocks
         // seen promptly). The full BedrockY..WorldTop vertical column is loaded within this radius.
         public volatile int TerrainRadius = 10;
 
+        // Chunks generated per LoadThread iteration per player. Large enough that the ~11k-position interest
+        // scan amortizes over a big gen batch (the old cap of 16 meant ~275 scans to fill RD16), small enough
+        // that a moving player's interest is re-read often enough to follow them. With the no-idle-sleep change
+        // (sleep only when nothing is pending) this lets the world stream in flat-out instead of dribbling.
+        private const int MaxChunksPerLoad = 128;
+
+        // Cores the parallel chunk-gen batch may use — leave two for the client mesh pool + main/render thread.
+        private readonly System.Threading.Tasks.ParallelOptions _genParallelOptions =
+            new System.Threading.Tasks.ParallelOptions
+                {MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 2)};
+
         // The active world generator (resolved from the Vanilla:Overworld dimension, or a void fallback if
         // no dimension is registered). Sole writer of generated chunks runs on the load thread.
         private readonly IChunkGenerator _generator;
@@ -116,6 +127,24 @@ namespace MinecraftClone3API.Blocks
         private readonly Thread _loadThread;
 
         private readonly Thread _updateThread;
+
+        // Phase-2 distant-horizon LOD. A separate low-priority thread fills _lodStore with cheap surface-only
+        // columns in the ring BEYOND the real-chunk TerrainRadius, out to LodRadius. It is the SOLE writer of
+        // _lodStore (single-writer invariant for the new container) and only READS LoadedChunks/PlayerEntities;
+        // it never touches chunk storage, light, or the dirty/staging sets. LodRadius defaults to TerrainRadius
+        // so the whole LOD system is dormant (empty ring → no work, no stream, no draw) until StateWorld raises
+        // it from the render-distance config. Volatile: read live by the LOD thread.
+        private readonly Thread _lodThread;
+        private readonly LodColumnStore _lodStore = new LodColumnStore();
+        public LodColumnStore LodStore => _lodStore;
+        public volatile int LodRadius = 10;
+        private readonly List<EntityPlayer> _lodPlayersScratch = new List<EntityPlayer>();
+        private readonly List<Vector3i> _lodKeysScratch = new List<Vector3i>();
+        private const int MaxLodRegionsPerIter = 4;
+        // How far the LOD fill overlaps INWARD past the real-chunk band. Sized so the LOD store covers the
+        // client's cross-fade band [RD - FadeBandWidth, RD] with a full region of margin (a region is 128 wide,
+        // ~90 half-diagonal), so the chunks dithering OUT always have horizon to dither IN against — no holes.
+        private const int LodInnerOverlap = 160;
 
         public readonly HashSet<EntityPlayer> PlayerEntities = new HashSet<EntityPlayer>();
         public readonly HashSet<Entity> Entities = new HashSet<Entity>();
@@ -147,10 +176,12 @@ namespace MinecraftClone3API.Blocks
             _unloadThread = new Thread(UnloadThread) {Name = "Unload Thread"};
             _loadThread = new Thread(LoadThread) {Name = "Load Thread"};
             _updateThread = new Thread(UpdateThread) {Name = "Update Thread"};
+            _lodThread = new Thread(LodThread) {Name = "LOD Thread", Priority = ThreadPriority.BelowNormal};
 
             _unloadThread.Start();
             _loadThread.Start();
             _updateThread.Start();
+            _lodThread.Start();
         }
 
         private static IChunkGenerator CreateFallbackGenerator()
@@ -374,7 +405,7 @@ namespace MinecraftClone3API.Blocks
             _unloaded = true;
 
             Logger.Info("Waiting for threads to finish...");
-            while (_loadThread.IsAlive || _unloadThread.IsAlive || _updateThread.IsAlive)
+            while (_loadThread.IsAlive || _unloadThread.IsAlive || _updateThread.IsAlive || _lodThread.IsAlive)
                 Thread.Sleep(100);
 
             Logger.Info("Saving world...");
@@ -482,19 +513,22 @@ namespace MinecraftClone3API.Blocks
                     _loadSortOrigin = playerChunk;
                     playerChunksToLoad.Sort(_loadSort);
 
-                    //Cap player chunk load tasks to 16
-                    if(playerChunksToLoad.Count > 16)
-                        playerChunksToLoad.RemoveRange(16, playerChunksToLoad.Count - 16);
+                    if (playerChunksToLoad.Count > MaxChunksPerLoad)
+                        playerChunksToLoad.RemoveRange(MaxChunksPerLoad, playerChunksToLoad.Count - MaxChunksPerLoad);
                 }
 
                 ExtensionHelper.ZipMerge(_loadPlayerChunkLists, _loadMerged);
-                foreach (var chunkPos in _loadMerged)
+                // Generate the batch in PARALLEL across cores — chunk gen is the streaming bottleneck (a
+                // single thread was ~95% busy) and is embarrassingly parallel (the generator's per-thread
+                // scratch makes Generate thread-safe; _populatedChunks is concurrent, disk load is lock-guarded,
+                // staging is locked). Bounded so the mesh pool + main thread keep their cores.
+                System.Threading.Tasks.Parallel.ForEach(_loadMerged, _genParallelOptions, chunkPos =>
                 {
                     // Players with overlapping interest produce duplicate positions in the merged
                     // list; skip ones already queued or known so we don't load (or add) them twice.
-                    if (_populatedChunks.ContainsKey(chunkPos)) continue;
+                    if (_populatedChunks.ContainsKey(chunkPos)) return;
                     lock (_chunksReadyToAdd)
-                        if (_chunksReadyToAdd.ContainsKey(chunkPos)) continue;
+                        if (_chunksReadyToAdd.ContainsKey(chunkPos)) return;
 
                     ChunkTracer.Born(chunkPos);
                     var cachedChunk = LoadChunk(chunkPos);
@@ -515,13 +549,111 @@ namespace MinecraftClone3API.Blocks
 
                         ChunkTracer.Staged(chunkPos);
                     }
-                }
+                });
 
                 Profiler.AddLoadAlloc(GC.GetAllocatedBytesForCurrentThread() - allocStart);
-                Thread.Sleep(10);
+                // Only idle-sleep when nothing was loaded (world fully streamed around every player); under
+                // load run flat out so streaming is gen-throughput-bound, not 16-chunks-per-10ms throttled.
+                if (_loadMerged.Count == 0) Thread.Sleep(10);
             }
         }
 
+
+        // Sole writer of _lodStore. Fills the ring [TerrainRadius .. LodRadius] with cheap surface-only LOD
+        // columns around each player, evicts regions no player is near, and idles when caught up. Dormant
+        // (no work) while LodRadius <= TerrainRadius (the default), so Phase-2 is provably zero-cost until
+        // StateWorld raises LodRadius. Reads PlayerEntities (under lock) + the generator (pure); writes only
+        // _lodStore — never LoadedChunks/light/dirty/staging (respects the per-container single-writer rule).
+        private void LodThread()
+        {
+            while (!_unloaded)
+            {
+                var lodRadius = LodRadius;
+                if (lodRadius <= TerrainRadius)   // dormant until the horizon is pushed past the real-chunk band
+                {
+                    Thread.Sleep(100);
+                    continue;
+                }
+
+                _lodPlayersScratch.Clear();
+                lock (PlayerEntities)
+                    foreach (var player in PlayerEntities) _lodPlayersScratch.Add(player);
+                if (_lodPlayersScratch.Count == 0) { Thread.Sleep(100); continue; }
+
+                var lodBlocks = lodRadius * Chunk.Size;
+                var innerBlocks = TerrainRadius * Chunk.Size - LodInnerOverlap;
+                var lodBlocksSq = (float) lodBlocks * lodBlocks;
+                var innerBlocksSq = (float) innerBlocks * innerBlocks;
+                var regionReach = lodBlocks / LodColumn.RegionBlocks + 1;
+
+                var filled = 0;
+                for (var p = 0; p < _lodPlayersScratch.Count && filled < MaxLodRegionsPerIter; p++)
+                {
+                    var pb = _lodPlayersScratch[p].Position.ToVector3i();
+                    var prX = pb.X >> 7;
+                    var prZ = pb.Z >> 7;
+
+                    for (var rx = -regionReach; rx <= regionReach && filled < MaxLodRegionsPerIter; rx++)
+                    for (var rz = -regionReach; rz <= regionReach && filled < MaxLodRegionsPerIter; rz++)
+                    {
+                        var key = new Vector3i(prX + rx, 0, prZ + rz);
+                        if (_lodStore.HasRegion(key)) continue;
+                        if (!RegionInRing(key, pb, innerBlocksSq, lodBlocksSq)) continue;
+
+                        FillLodRegion(key);
+                        filled++;
+                    }
+                }
+
+                EvictDistantLodRegions(lodBlocks + LodColumn.RegionBlocks);
+
+                if (filled == 0) Thread.Sleep(20);
+            }
+        }
+
+        private static bool RegionInRing(Vector3i key, Vector3i playerBlock, float innerSq, float outerSq)
+        {
+            var cx = (key.X << 7) + LodColumn.RegionBlocks / 2;
+            var cz = (key.Z << 7) + LodColumn.RegionBlocks / 2;
+            var dx = cx - playerBlock.X;
+            var dz = cz - playerBlock.Z;
+            var distSq = (float) dx * dx + (float) dz * dz;
+            return distSq >= innerSq && distSq <= outerSq;
+        }
+
+        private void FillLodRegion(Vector3i key)
+        {
+            var columns = new long[LodColumn.ColumnCount];
+            var baseX = key.X << 7;
+            var baseZ = key.Z << 7;
+            for (var cx = 0; cx < LodColumn.CellsPerAxis; cx++)
+            for (var cz = 0; cz < LodColumn.CellsPerAxis; cz++)
+                columns[cx * LodColumn.CellsPerAxis + cz] =
+                    _generator.GetLodColumn(baseX + cx * LodColumn.Stride, baseZ + cz * LodColumn.Stride);
+            _generator.DecorateLodRegion(key, columns);   // stamp tree canopies (matches real tree positions)
+            _lodStore.PutRegion(new LodColumn(key, columns));
+        }
+
+        private void EvictDistantLodRegions(int dropBlocks)
+        {
+            _lodStore.SnapshotKeys(_lodKeysScratch);
+            var dropSq = (float) dropBlocks * dropBlocks;
+            for (var i = 0; i < _lodKeysScratch.Count; i++)
+            {
+                var key = _lodKeysScratch[i];
+                var cx = (key.X << 7) + LodColumn.RegionBlocks / 2;
+                var cz = (key.Z << 7) + LodColumn.RegionBlocks / 2;
+                var keep = false;
+                for (var p = 0; p < _lodPlayersScratch.Count; p++)
+                {
+                    var pb = _lodPlayersScratch[p].Position.ToVector3i();
+                    var dx = cx - pb.X;
+                    var dz = cz - pb.Z;
+                    if ((float) dx * dx + (float) dz * dz <= dropSq) { keep = true; break; }
+                }
+                if (!keep) _lodStore.RemoveRegion(key);
+            }
+        }
 
         private struct LightNode
         {

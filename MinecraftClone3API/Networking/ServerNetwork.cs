@@ -38,7 +38,11 @@ namespace MinecraftClone3API.Networking
         /// smoothly instead of stalling the tick by serializing every loaded chunk at once. Sized for the
         /// 20 tps tick (the loop used to run at the ~120 Hz display rate); ~6× the old per-frame cap keeps
         /// the same chunks/second streaming throughput.</summary>
-        private const int MaxChunksPerTick = 48;
+        // Raised to keep up with the parallel LoadThread gen: streaming only fires on the 20 tps tick, so the
+        // per-tick batch must be large or it caps throughput (192 → only 3840 chunks/s). Over loopback a chunk
+        // is carried by reference (no serialize/GZip) so a big batch is cheap; the client pumps packets every
+        // display frame (≫ 20 tps) and decodes off-thread. 512/tick × 20 tps ≈ 10 000 chunks/s.
+        private const int MaxChunksPerTick = 512;
 
         // World-clock broadcast cadence (in ticks) — ~1 s at 20 tps; clients advance time locally between.
         private const int TimeSyncTicks = 20;
@@ -62,6 +66,19 @@ namespace MinecraftClone3API.Networking
         // allocates nothing steady-state.
         private readonly List<Vector3i> _newChunksScratch = new List<Vector3i>();
 
+        // Phase-2 LOD streaming scratch (tick thread only). _lodRadiusSq defaults to ViewDistance so the ring
+        // is empty (nothing to stream) until StateWorld raises it; the LOD store is also dormant by default.
+        private float _lodRadiusSq = 160f * 160f;
+        public float LodRadius
+        {
+            get => MathF.Sqrt(_lodRadiusSq);
+            set => _lodRadiusSq = value * value;
+        }
+        private const int MaxLodRegionsPerTick = 8;
+        private readonly List<Vector3i> _lodKeysScratch = new List<Vector3i>();
+        private readonly List<Vector3i> _newLodScratch = new List<Vector3i>();
+        private Vector3 _lodSortOrigin;
+
         // Reused per FlushBlockChanges tick: groups the drained per-block changes by chunk before
         // sending one BlockChanges packet per chunk per interested session.
         private readonly Dictionary<Vector3i, List<BlockChange>> _changesByChunk =
@@ -70,7 +87,7 @@ namespace MinecraftClone3API.Networking
         // Per-Pump timings + volumes, surfaced to the profiler (singleplayer: Pump runs on the main
         // thread, so a frame spike inside Pump shows up here split into chunk streaming vs delta flushing).
         public double LastStreamMs, LastFlushMs;
-        public int LastChunksStreamed, LastChangesDrained, LastChangesPackets;
+        public int LastChunksStreamed, LastChangesDrained, LastChangesPackets, LastLodStreamed;
         private readonly Stopwatch _pumpTimer = new Stopwatch();
 
         public ServerNetwork(WorldServer world)
@@ -141,6 +158,9 @@ namespace MinecraftClone3API.Networking
             _pumpTimer.Restart();
             StreamChunks();
             LastStreamMs = _pumpTimer.Elapsed.TotalMilliseconds;
+
+            // Backfill the distant LOD ring AFTER the detail chunks so it never starves gameplay streaming.
+            StreamLodRegions();
 
             SendReadySignals();
             SendTimeSync();
@@ -331,6 +351,66 @@ namespace MinecraftClone3API.Networking
                 // dirtied (ResendDirtyChunks) or the client releases it.
             }
         }
+
+        /// <summary>Streams Phase-2 LOD regions (the distant horizon) nearest-first to each session, capped
+        /// per tick, gated on (player chunk, LOD-store region count) like <see cref="StreamChunks"/> so a
+        /// stationary player does no per-tick region scan. Prunes per-session entries that fell out of range
+        /// (so a returning player re-streams) — there is no client-side LOD release packet. Dormant by default
+        /// (empty store + LodRadius == ViewDistance ⇒ nothing to send).</summary>
+        private void StreamLodRegions()
+        {
+            var lodStore = _world.LodStore;
+            var regionCount = lodStore.RegionCount;
+            LastLodStreamed = 0;
+
+            foreach (var session in _sessions)
+            {
+                if (!session.LoggedIn) continue;
+                var playerPos = session.Player.Position;
+                var playerChunk = WorldBase.ChunkInWorld(playerPos.ToVector3i());
+                if (playerChunk == session.LodScanChunk && regionCount == session.LodScanRegionCount)
+                    continue;
+
+                lodStore.SnapshotKeys(_lodKeysScratch);
+                _newLodScratch.Clear();
+                for (var i = 0; i < _lodKeysScratch.Count; i++)
+                {
+                    var key = _lodKeysScratch[i];
+                    if (LodRegionDistSq(key, playerPos) > _lodRadiusSq) { session.SentLodRegions.Remove(key); continue; }
+                    if (!session.SentLodRegions.Contains(key)) _newLodScratch.Add(key);
+                }
+
+                _lodSortOrigin = playerPos;
+                _newLodScratch.Sort(LodNearestFirst);
+
+                var sent = 0;
+                foreach (var key in _newLodScratch)
+                {
+                    if (sent >= MaxLodRegionsPerTick) break;
+                    if (!lodStore.TryGetRegion(key, out var region)) continue;
+                    session.Connection.Send(LodColumnDataPacket.From(region));
+                    session.SentLodRegions.Add(key);
+                    sent++;
+                }
+                LastLodStreamed += sent;
+
+                if (_newLodScratch.Count <= MaxLodRegionsPerTick)
+                {
+                    session.LodScanChunk = playerChunk;
+                    session.LodScanRegionCount = regionCount;
+                }
+            }
+        }
+
+        private static float LodRegionDistSq(Vector3i key, Vector3 playerPos)
+        {
+            var dx = (key.X << 7) + LodColumn.RegionBlocks / 2 - playerPos.X;
+            var dz = (key.Z << 7) + LodColumn.RegionBlocks / 2 - playerPos.Z;
+            return dx * dx + dz * dz;
+        }
+
+        private int LodNearestFirst(Vector3i a, Vector3i b)
+            => LodRegionDistSq(a, _lodSortOrigin).CompareTo(LodRegionDistSq(b, _lodSortOrigin));
 
         /// <summary>Drains the server's per-block change buffer and sends one compact BlockChanges
         /// packet per chunk to every session holding that chunk. Edits and light propagation flow

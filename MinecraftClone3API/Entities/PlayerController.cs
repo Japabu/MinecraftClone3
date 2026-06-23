@@ -73,6 +73,7 @@ namespace MinecraftClone3API.Entities
             if (ks.IsKeyPressed(Keys.F4)) ChunkBorderRenderer.Enabled = !ChunkBorderRenderer.Enabled;
             if (ks.IsKeyPressed(Keys.F7)) RenderDebug.ShadowFactor = !RenderDebug.ShadowFactor;
             if (ks.IsKeyPressed(Keys.F10)) Profiler.Toggle();
+            if (ks.IsKeyPressed(Keys.F2)) WorldRenderer.FixedTimeOfDay = WorldRenderer.FixedTimeOfDay == null ? 220.0 : 0;
 
             if (ms.IsButtonDown(MouseButton.Left) && !ms.WasButtonDown(MouseButton.Left))
                 BreakBlock(world);
@@ -127,7 +128,7 @@ namespace MinecraftClone3API.Entities
             if (ks.IsKeyDown(Keys.S)) inputZ -= 1;
             if (ks.IsKeyDown(Keys.W)) inputZ += 1;
 
-            var forward = new Vector2((float) Math.Sin(PlayerEntity.Yaw), (float) Math.Cos(PlayerEntity.Yaw));
+            var forward = new Vector2((float)Math.Sin(PlayerEntity.Yaw), (float)Math.Cos(PlayerEntity.Yaw));
             var wish = PlayerEntity.Right.Xz * inputX + forward * inputZ;
             if (wish.LengthSquared > 1f) wish = wish.Normalized();
 

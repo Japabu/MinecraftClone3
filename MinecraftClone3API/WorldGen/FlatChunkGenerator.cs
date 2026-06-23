@@ -21,6 +21,10 @@ namespace MinecraftClone3API.WorldGen
                 chunk.SetSkyLight(x, y, z, LightLevelSkyMax);
         }
 
+        public long GetLodColumn(int wx, int wz) => 0;   // void world has no LOD surface
+
+        public void DecorateLodRegion(Vector3i regionKey, long[] columns) { }
+
         public Vector3i Spawn() => new Vector3i(0, 4, 0);
 
         private const int LightLevelSkyMax = 15;

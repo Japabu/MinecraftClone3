@@ -147,6 +147,15 @@ namespace MinecraftClone3
             // or the GPU itself — the two stalls a CPU sampler can't see.
             Profiler.Record(e.Time, _lastUpdateMs, renderMs, _lastSwapMs, _lastGapMs, _lastGpuMs,
                 _updateCalls, renderAlloc);
+            if (Inspect.Active)
+            {
+                Inspect.Tick(FramebufferSize.X, FramebufferSize.Y);
+            }
+            else
+            {
+                Benchmark.Tick(e.Time, _lastUpdateMs, renderMs, _lastGpuMs);
+                Benchmark.CaptureFrame(FramebufferSize.X, FramebufferSize.Y);
+            }
             _updateCalls = 0;
 
             _swapTimer.Restart();
@@ -154,6 +163,9 @@ namespace MinecraftClone3
             _lastSwapMs = _swapTimer.Elapsed.TotalMilliseconds;
 
             _gapTimer.Restart();
+
+            // The benchmark/inspect modes close the window when their scripted run completes.
+            if (Benchmark.Finished || Inspect.Finished) Close();
         }
 
         protected override void OnUnload()
@@ -184,21 +196,34 @@ namespace MinecraftClone3
             // runtime changes go through the GraphicsSettings setters (which push onto the live window).
             GraphicsSettings.Load();
 
+            // Automated modes: --benchmark boots into the FPS flythrough; --inspect boots into the LOD A/B
+            // capture tool (its own large window so artifacts are visible). Both force VSync off and apply
+            // deterministic settings in-memory (no save).
+            Benchmark.Configure(args);
+            Inspect.Configure(args);
+            if (Inspect.Enabled) Inspect.ApplySettings();
+            else if (Benchmark.Enabled) Benchmark.ApplySettings();
+
+            var clientSize = Inspect.Enabled ? new Vector2i(Inspect.Width, Inspect.Height) : new Vector2i(1280, 720);
+
             var nativeWindowSettings = new NativeWindowSettings
             {
-                ClientSize = new Vector2i(1280, 720),
+                ClientSize = clientSize,
                 Title = "MinecraftClone3",
                 Profile = ContextProfile.Core,
                 // macOS only exposes OpenGL up to 4.1 Core.
                 APIVersion = new Version(4, 1),
-                Vsync = GraphicsSettings.VSync,
+                Vsync = (Benchmark.Enabled || Inspect.Enabled) ? VSyncMode.Off : GraphicsSettings.VSync,
                 WindowState = GraphicsSettings.Fullscreen ? WindowState.Fullscreen : WindowState.Normal
             };
 
             var gameWindowSettings = new GameWindowSettings
             {
                 // OpenTK 4.9 runs OnUpdateFrame and OnRenderFrame at one shared rate = UpdateFrequency.
-                UpdateFrequency = 120
+                // 0 = uncapped — frame pacing is left to VSync (SwapBuffers blocks at the refresh when VSync
+                // is on; with VSync off the loop runs as fast as the CPU/GPU allow). A hard UpdateFrequency
+                // cap was what pinned the game at 120 FPS regardless of how fast the engine actually was.
+                UpdateFrequency = 0
             };
 
             Window = new GameClient(gameWindowSettings, nativeWindowSettings);

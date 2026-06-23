@@ -71,6 +71,10 @@ namespace MinecraftClone3API.Client.Blocks
         public readonly ConcurrentDictionary<Vector3i, ChunkRenderData> RenderData =
             new ConcurrentDictionary<Vector3i, ChunkRenderData>();
 
+        // Shared vertex/index arena holding every chunk's OPAQUE mesh, drawn with one batched multidraw per
+        // pass (see ChunkMeshArena). Created/uploaded/freed/disposed on the main thread only.
+        public readonly ChunkMeshArena OpaqueArena;
+
         // Main-thread mirror of RenderData's values, iterated by the renderer each frame in place of
         // enumerating the ConcurrentDictionary (a per-frame O(bucket) scan + enumerator allocation a
         // trace showed dominating the render thread). Kept in sync O(1) on add (DrainRenderReady) and
@@ -136,6 +140,38 @@ namespace MinecraftClone3API.Client.Blocks
         private readonly ConcurrentQueue<(Vector3i Position, bool HighPriority)> _renderReady =
             new ConcurrentQueue<(Vector3i, bool)>();
 
+        // Phase-2 LOD horizon (mirrors the chunk pipeline). The apply thread is the SOLE client writer of
+        // LodStore (decoding LodColumnData on the same ordered _applyQueue); decoded regions are handed to the
+        // main thread via _lodRenderReady for GL render-data creation + meshing (Stage 7).
+        public readonly LodColumnStore LodStore = new LodColumnStore();
+        private readonly ConcurrentQueue<Vector3i> _lodRenderReady = new ConcurrentQueue<Vector3i>();
+        private int _lodRenderReadyDepth;
+        public int LodRenderReadyQueueDepth => _lodRenderReadyDepth;
+
+        // Phase-2 LOD render side (main-thread owned, like RenderData/RenderList). LodRegions is a by-key
+        // lookup; LodRenderList mirrors its values for the renderer to iterate. Meshing + uploading reuse the
+        // chunk mesh pool + upload loop as a lowest-priority branch (separate queues under the same locks).
+        public ChunkMeshArena LodArena;
+        public readonly ConcurrentDictionary<Vector3i, LodRenderData> LodRegions =
+            new ConcurrentDictionary<Vector3i, LodRenderData>();
+        public readonly List<LodRenderData> LodRenderList = new List<LodRenderData>();
+        private readonly Queue<Vector3i> _lodMeshQueue = new Queue<Vector3i>();
+        private readonly HashSet<Vector3i> _lodMeshPending = new HashSet<Vector3i>();
+        private readonly Queue<Vector3i> _lodUploadQueue = new Queue<Vector3i>();
+        private readonly HashSet<Vector3i> _lodUploadPending = new HashSet<Vector3i>();
+        private readonly List<Vector3i> _lodUploadRequeueScratch = new List<Vector3i>(64);
+        private readonly ConcurrentQueue<LodRenderData> _lodDisposeQueue = new ConcurrentQueue<LodRenderData>();
+        private readonly List<Vector3i> _lodEvictScratch = new List<Vector3i>();
+        private Vector3i _lastLodEvictChunk = new Vector3i(int.MinValue);
+
+        // Block radius for the LOD draw cull + cache eviction. Set by StateWorld from the render-distance config
+        // (= server LodRadius in blocks); 0 by default ⇒ LOD dormant. CacheDistance kept a region past the draw
+        // distance so a region isn't evicted-then-re-streamed at the boundary.
+        public float LodRenderDistance;
+        private float _lodCacheDistanceSq;
+        public float LodCacheDistance { set => _lodCacheDistanceSq = value * value; }
+        public int LodRegionCount => LodRenderList.Count;
+
         private readonly object _meshLock = new object();
         // High priority = edits/light resends (re-applies of already-rendered chunks) so interactive
         // changes mesh promptly instead of waiting behind the initial first-load chunk flood.
@@ -165,6 +201,10 @@ namespace MinecraftClone3API.Client.Blocks
         {
             _connection = connection;
 
+            // GL: constructed on the main thread (StateWorld ctor runs in the state update with a live context).
+            OpaqueArena = new ChunkMeshArena();
+            LodArena = new ChunkMeshArena();
+
             _applyThread = new Thread(ApplyThread) {Name = "Client Apply Thread", IsBackground = true};
             _applyThread.Start();
 
@@ -176,10 +216,19 @@ namespace MinecraftClone3API.Client.Blocks
             // GL upload (Invariant 1), so a pool scales throughput ~linearly with cores. Leave two cores for
             // the main (render) and server load threads.
             var meshWorkers = Math.Max(1, Environment.ProcessorCount - 2);
+            // Reserve a fraction of the pool as LOD-first workers so the distant horizon can never be fully
+            // starved by chunk meshing. The chunk-first workers still treat LOD as lowest priority (near terrain
+            // stays responsive), but with sustained movement the detail-chunk queue is *never* empty, so without
+            // a reserved worker the LOD mesh queue grows unboundedly and the whole horizon goes unmeshed (the
+            // "walk far → every LOD super low-res" bug). Both kinds fall through to the other queue when their
+            // own is empty, so no worker idles while any mesh work remains. Single-core pools keep one
+            // chunk-first worker (can't dedicate the only one).
+            var lodWorkers = Math.Min(Math.Max(1, meshWorkers / 4), meshWorkers - 1);
             _meshThreads = new Thread[meshWorkers];
             for (var i = 0; i < meshWorkers; i++)
             {
-                _meshThreads[i] = new Thread(MeshThread) {Name = $"Client Mesh Thread {i}", IsBackground = true};
+                var lodFirst = i < lodWorkers;
+                _meshThreads[i] = new Thread(() => MeshThread(lodFirst)) {Name = $"Client Mesh Thread {i}", IsBackground = true};
                 _meshThreads[i].Start();
             }
         }
@@ -197,6 +246,7 @@ namespace MinecraftClone3API.Client.Blocks
 
             _phaseTimer.Restart();
             DrainRenderReady();
+            DrainLodRenderReady();
             LastDrainMs = _phaseTimer.Elapsed.TotalMilliseconds;
 
             _phaseTimer.Restart();
@@ -231,7 +281,7 @@ namespace MinecraftClone3API.Client.Blocks
                 // lock. That blocking wait was the per-edit frame-time spike. See ChunkRenderData.TryUpload.
                 if (RenderData.TryGetValue(pos, out var renderData))
                 {
-                    if (renderData.TryUpload())
+                    if (renderData.TryUpload(OpaqueArena))
                     {
                         ChunkTracer.Uploaded(pos);
                         uploadChunks++;
@@ -248,18 +298,52 @@ namespace MinecraftClone3API.Client.Blocks
 
             foreach (var pos in requeue) RequeueUpload(pos);
 
+            // LOD region uploads share the same per-frame budget, drained AFTER chunks (lowest priority) so the
+            // distant horizon never delays detail-chunk uploads. Whatever budget remains this frame drains LOD.
+            var lodRequeue = _lodUploadRequeueScratch;
+            lodRequeue.Clear();
+            while (Stopwatch.GetTimestamp() < uploadDeadline)
+            {
+                Vector3i key;
+                lock (_uploadLock)
+                {
+                    if (_lodUploadQueue.Count == 0) break;
+                    key = _lodUploadQueue.Dequeue();
+                    _lodUploadPending.Remove(key);
+                }
+                if (LodRegions.TryGetValue(key, out var lodData))
+                {
+                    if (lodData.TryUpload(LodArena))
+                    {
+                        uploadChunks++;
+                        uploadIndices += lodData.OpaqueAlloc.IndexCount;
+                    }
+                    else lodRequeue.Add(key);
+                }
+            }
+            foreach (var key in lodRequeue) RequeueLodUpload(key);
+
             LastUploadChunks = uploadChunks;
             LastUploadIndices = uploadIndices;
             LastUploadMs = _phaseTimer.Elapsed.TotalMilliseconds;
 
             _phaseTimer.Restart();
             EvictDistantChunks();
+            EvictDistantLod();
+            ScanLodForMeshStep();
             LastEvictMs = _phaseTimer.Elapsed.TotalMilliseconds;
 
             while (_disposeQueue.TryDequeue(out var disposed))
             {
                 Interlocked.Decrement(ref _disposeQueueDepth);
+                disposed.FreeArena(OpaqueArena);
                 disposed.Dispose();
+            }
+
+            while (_lodDisposeQueue.TryDequeue(out var lodDisposed))
+            {
+                lodDisposed.FreeArena(LodArena);
+                lodDisposed.Dispose();
             }
 
             // Advance remote-entity interpolation at the display rate (positions arrive at 20 tps).
@@ -291,6 +375,105 @@ namespace MinecraftClone3API.Client.Blocks
                 renderData.Chunk = chunk;
                 QueueMesh(ready.Position, ready.HighPriority);
             }
+        }
+
+        /// <summary>Main thread: creates LOD render-data (GL-free CPU buffer; arena alloc happens at upload) for
+        /// regions the apply thread decoded, and queues them for meshing on the shared pool. Mirrors
+        /// <see cref="DrainRenderReady"/>.</summary>
+        private void DrainLodRenderReady()
+        {
+            var processed = 0;
+            while (processed < MaxRenderReadyPerTick && _lodRenderReady.TryDequeue(out var key))
+            {
+                processed++;
+                Interlocked.Decrement(ref _lodRenderReadyDepth);
+
+                if (!LodRegions.TryGetValue(key, out var lodData))
+                {
+                    LodRegions[key] = lodData = new LodRenderData(key);
+                    lodData.DesiredMeshStep = MeshStepFor(lodData.Middle);
+                    lodData.RenderListIndex = LodRenderList.Count;
+                    LodRenderList.Add(lodData);
+                }
+
+                QueueLodMesh(key);
+            }
+        }
+
+        private void QueueLodMesh(Vector3i key)
+        {
+            lock (_meshLock)
+                if (_lodMeshPending.Add(key))
+                    _lodMeshQueue.Enqueue(key);
+        }
+
+        // DH power-of-two detail rings, RELATIVE to the render distance, scaled by LOD Quality. With the stride-2
+        // LOD store, meshStep 1/2/4/8 = stride 2/4/8/16. The NEAREST ring is stride-2 (the store's finest), so the
+        // horizon just past the render distance is fine (a gentle step down from full detail) and only coarsens
+        // farther out (fog-hidden) to stay cheap. Rings are >= 1 region (8 chunks) wide so adjacent regions never
+        // differ by more than one step (no >2x crack).
+        private const float LodRing1Distance = 16 * Chunk.Size;   // stride-2 within this many blocks past RD
+        private const float LodRing2Distance = 32 * Chunk.Size;   // then stride-4
+        private const float LodRing3Distance = 64 * Chunk.Size;   // then stride-8; beyond: stride-16
+        private Vector3i _lastLodStepChunk = new Vector3i(int.MinValue);
+
+        private int MeshStepFor(Vector3 middle)
+        {
+            // Horizontal (XZ) distance: the LOD regions form a horizontal annulus and the rings are defined in the
+            // ground plane (EvictDistantLod uses XZ too), so a region's stride must not change with the player's
+            // altitude — a full 3D distance would spuriously coarsen the whole horizon when flying high.
+            var dx = middle.X - _playerPosition.X;
+            var dz = middle.Z - _playerPosition.Z;
+            var d = MathF.Sqrt(dx * dx + dz * dz) - GraphicsSettings.RenderDistanceChunks * Chunk.Size;
+            // LOD Quality pushes the rings out (finer horizon farther) or pulls them in (coarser, faster).
+            var q = GraphicsSettings.LodHorizonQuality;
+            if (d < LodRing1Distance * q) return 1;   // stride-2
+            if (d < LodRing2Distance * q) return 2;   // stride-4
+            if (d < LodRing3Distance * q) return 4;   // stride-8
+            return 8;                                  // stride-16
+        }
+
+        /// <summary>Forces the next <see cref="ScanLodForMeshStep"/> to re-evaluate every LOD region's stride
+        /// (after a LOD-Quality change, which shifts the ring distances). Main-thread only.</summary>
+        public void ForceLodMeshRescan() => _lastLodStepChunk = new Vector3i(int.MinValue);
+
+        /// <summary>Re-evaluates each LOD region's mesh stride against the player's new position and re-queues any
+        /// whose ring changed. Gated on a chunk-border crossing (own gate), so a stationary player does no work.
+        /// Main-thread only (touches LodRenderList).</summary>
+        private void ScanLodForMeshStep()
+        {
+            var playerChunk = ChunkInWorld(_playerPosition.ToVector3i());
+            if (playerChunk == _lastLodStepChunk) return;
+            _lastLodStepChunk = playerChunk;
+
+            for (var i = 0; i < LodRenderList.Count; i++)
+            {
+                var rd = LodRenderList[i];
+                var want = MeshStepFor(rd.Middle);
+                if (want == rd.DesiredMeshStep) continue;
+                rd.DesiredMeshStep = want;
+                QueueLodMesh(rd.RegionKey);
+            }
+        }
+
+        private void RequeueLodUpload(Vector3i key)
+        {
+            lock (_uploadLock)
+                if (_lodUploadPending.Add(key))
+                    _lodUploadQueue.Enqueue(key);
+        }
+
+        /// <summary>Debug/inspection toggle: when true the Phase-2 distant horizon is not drawn (so the
+        /// inspection tool can A/B the horizon against full-detail-only). There is no within-RD LOD to toggle —
+        /// chunks inside the render distance always mesh at full per-block detail.</summary>
+        public volatile bool ForceLodOff;
+
+        /// <summary>Re-queues every rendered chunk for re-meshing (used by the inspection tool). Main-thread only
+        /// (touches RenderList).</summary>
+        public void RemeshAll()
+        {
+            for (var i = 0; i < RenderList.Count; i++)
+                QueueMesh(RenderList[i].Chunk.Position, false);
         }
 
         /// <summary>Drops chunks the player has moved away from and tells the server it released them.
@@ -337,6 +520,9 @@ namespace MinecraftClone3API.Client.Blocks
             _stopped = true;
             _applySignal.Set();
             _connection.Close();
+            // Main-thread GL teardown of the shared arenas (the mesh/apply threads no longer touch them).
+            OpaqueArena.Dispose();
+            LodArena.Dispose();
         }
 
         /// <summary>Runs on the main thread. Chunk streaming and block-change deltas are routed to the
@@ -361,6 +547,11 @@ namespace MinecraftClone3API.Client.Blocks
                     _applySignal.Set();
                     break;
                 case BlockChangesPacket _:
+                    _applyQueue.Enqueue(packet);
+                    Interlocked.Increment(ref _applyQueueDepth);
+                    _applySignal.Set();
+                    break;
+                case LodColumnDataPacket _:
                     _applyQueue.Enqueue(packet);
                     Interlocked.Increment(ref _applyQueueDepth);
                     _applySignal.Set();
@@ -412,6 +603,9 @@ namespace MinecraftClone3API.Client.Blocks
                         case BlockChangesPacket changes:
                             ApplyBlockChanges(changes);
                             break;
+                        case LodColumnDataPacket lod:
+                            ApplyLodColumn(lod);
+                            break;
                     }
                 }
                 catch (Exception e)
@@ -456,6 +650,28 @@ namespace MinecraftClone3API.Client.Blocks
             foreach (var offset in NeighbourOffsets)
                 if (LoadedChunks.ContainsKey(position + offset))
                     EnqueueRenderReady(position + offset, isUpdate);
+        }
+
+        /// <summary>Apply-thread: decodes one LOD region (loopback clone or TCP decompress + deserialize),
+        /// publishes it to the client LOD store (sole writer), and hands its key to the main thread for GL
+        /// render-data creation + meshing. No GL, no chunk/light state touched.</summary>
+        private void ApplyLodColumn(LodColumnDataPacket packet)
+        {
+            LodColumn region;
+            if (packet.LodColumn != null)
+                // Loopback: a published LOD region is IMMUTABLE (filled once, never mutated — unlike a Chunk),
+                // so the client shares the server's array by reference instead of cloning it. This is the big
+                // allocation win for a deep/fine horizon (no 32 KB clone per streamed region → no GC churn /
+                // hitch as regions stream and re-stream while moving). The server only ever replaces a region
+                // with a new object, never mutates a live one (see LodColumnStore), so the shared array is safe.
+                region = packet.LodColumn;
+            else
+                using (var reader = new BinaryReader(new MemoryStream(CompressionHelper.DecompressBytes(packet.CompressedData))))
+                    region = new LodColumn(reader, packet.Position);
+
+            LodStore.PutRegion(region);
+            _lodRenderReady.Enqueue(packet.Position);
+            Interlocked.Increment(ref _lodRenderReadyDepth);
         }
 
         /// <summary>Enqueues a position for the main-thread GL render-data step, keeping the lock-free
@@ -533,6 +749,51 @@ namespace MinecraftClone3API.Client.Blocks
             renderData.RenderListIndex = -1;
         }
 
+        /// <summary>Drops LOD regions the player has moved out of <see cref="LodCacheDistance"/> of. Gated on a
+        /// chunk-border crossing (regions are large and far, so this rarely fires). Main-thread only.</summary>
+        private void EvictDistantLod()
+        {
+            if (_lodCacheDistanceSq <= 0) return;
+            var playerChunk = ChunkInWorld(_playerPosition.ToVector3i());
+            if (playerChunk == _lastLodEvictChunk) return;
+            _lastLodEvictChunk = playerChunk;
+
+            _lodEvictScratch.Clear();
+            for (var i = 0; i < LodRenderList.Count; i++)
+            {
+                var rd = LodRenderList[i];
+                var dx = rd.Middle.X - _playerPosition.X;
+                var dz = rd.Middle.Z - _playerPosition.Z;
+                if (dx * dx + dz * dz > _lodCacheDistanceSq) _lodEvictScratch.Add(rd.RegionKey);
+            }
+            foreach (var key in _lodEvictScratch) UnloadLodRegion(key);
+        }
+
+        private void UnloadLodRegion(Vector3i key)
+        {
+            // The client LOD store is lock-based (not the lock-free paletted containers the single-writer rule
+            // guards), so a main-thread removal here is safe alongside the apply thread's PutRegion.
+            LodStore.RemoveRegion(key);
+            if (LodRegions.TryRemove(key, out var lodData))
+            {
+                RemoveFromLodRenderList(lodData);
+                _lodDisposeQueue.Enqueue(lodData);
+            }
+        }
+
+        private void RemoveFromLodRenderList(LodRenderData lodData)
+        {
+            var index = lodData.RenderListIndex;
+            if (index < 0) return;
+
+            var last = LodRenderList.Count - 1;
+            var moved = LodRenderList[last];
+            LodRenderList[index] = moved;
+            moved.RenderListIndex = index;
+            LodRenderList.RemoveAt(last);
+            lodData.RenderListIndex = -1;
+        }
+
         /// <summary>Re-queues a chunk whose <see cref="ChunkRenderData.TryUpload"/> found the mesh thread
         /// mid-remesh, so it uploads on a later frame. The mesh thread also re-enqueues on remesh
         /// completion; the pending set dedups so the chunk sits in the queue at most once.</summary>
@@ -559,59 +820,103 @@ namespace MinecraftClone3API.Client.Blocks
             }
         }
 
-        private void MeshThread()
+        private void MeshThread(bool lodFirst)
         {
             while (!_stopped)
             {
-                Vector3i position = default;
-                var found = false;
-                lock (_meshLock)
+                // A LOD-first worker drains the horizon queue first and only helps with chunks when no LOD work
+                // remains; a chunk-first worker is the reverse (near terrain is the priority). Either way the
+                // worker falls through to the other queue rather than idling, then sleeps only when both are dry.
+                if (lodFirst)
                 {
-                    if (_meshQueueHigh.Count > 0)
-                    {
-                        position = _meshQueueHigh.Dequeue();
-                        found = true;
-                    }
-                    else if (_meshQueueLow.Count > 0)
-                    {
-                        position = _meshQueueLow.Dequeue();
-                        found = true;
-                    }
-
-                    // Drop duplicates: a promoted position may sit in both queues; only the first
-                    // dequeue (which clears the pending flag) does the work.
-                    if (found && !_meshPending.Remove(position)) found = false;
-                    _meshQueueDepth = _meshPending.Count;
+                    if (TryMeshOneLod()) continue;
+                    if (TryMeshOneChunk()) continue;
+                }
+                else
+                {
+                    if (TryMeshOneChunk()) continue;
+                    if (TryMeshOneLod()) continue;
                 }
 
-                // Sleep OUTSIDE the lock: holding _meshLock across the idle sleep would block the main
-                // thread's QueueMesh on every empty poll.
-                if (!found)
-                {
-                    Thread.Sleep(2);
-                    continue;
-                }
-
-                if (!RenderData.TryGetValue(position, out var renderData)) continue;
-                if (!LoadedChunks.TryGetValue(position, out var chunk)) continue;
-
-                var allocStart = GC.GetAllocatedBytesForCurrentThread();
-                var meshStart = Stopwatch.GetTimestamp();
-                ChunkTracer.MeshStart(position);
-                renderData.Chunk = chunk;
-                renderData.Update();
-                ChunkTracer.MeshDone(position);
-                Profiler.AddMeshTicks(Stopwatch.GetTimestamp() - meshStart);
-                Profiler.AddMeshAlloc(GC.GetAllocatedBytesForCurrentThread() - allocStart);
-                Profiler.IncMeshed();
-
-                lock (_uploadLock)
-                {
-                    if (_uploadPending.Add(position))
-                        _uploadQueue.Enqueue(position);
-                    _uploadQueueDepth = _uploadQueue.Count;
-                }
+                Thread.Sleep(2);
             }
+        }
+
+        /// <summary>Dequeues and meshes one pending detail chunk (high queue before low). Returns false when no
+        /// chunk work is pending. Mesh-pool worker only.</summary>
+        private bool TryMeshOneChunk()
+        {
+            Vector3i position = default;
+            var found = false;
+            lock (_meshLock)
+            {
+                if (_meshQueueHigh.Count > 0)
+                {
+                    position = _meshQueueHigh.Dequeue();
+                    found = true;
+                }
+                else if (_meshQueueLow.Count > 0)
+                {
+                    position = _meshQueueLow.Dequeue();
+                    found = true;
+                }
+
+                // Drop duplicates: a promoted position may sit in both queues; only the first
+                // dequeue (which clears the pending flag) does the work.
+                if (found && !_meshPending.Remove(position)) found = false;
+                _meshQueueDepth = _meshPending.Count;
+            }
+
+            if (!found) return false;
+            MeshChunk(position);
+            return true;
+        }
+
+        private void MeshChunk(Vector3i position)
+        {
+            if (!RenderData.TryGetValue(position, out var renderData)) return;
+            if (!LoadedChunks.TryGetValue(position, out var chunk)) return;
+
+            var allocStart = GC.GetAllocatedBytesForCurrentThread();
+            var meshStart = Stopwatch.GetTimestamp();
+            ChunkTracer.MeshStart(position);
+            renderData.Chunk = chunk;
+            renderData.Update();
+            ChunkTracer.MeshDone(position);
+            Profiler.AddMeshTicks(Stopwatch.GetTimestamp() - meshStart);
+            Profiler.AddMeshAlloc(GC.GetAllocatedBytesForCurrentThread() - allocStart);
+            Profiler.IncMeshed();
+
+            lock (_uploadLock)
+            {
+                if (_uploadPending.Add(position))
+                    _uploadQueue.Enqueue(position);
+                _uploadQueueDepth = _uploadQueue.Count;
+            }
+        }
+
+        /// <summary>Mesh-pool worker: meshes one queued LOD region from the streamed run-list (CPU only, no GL).
+        /// One worker per region via the _lodMeshPending claim. Returns true if it found a region to consider
+        /// (so the worker doesn't idle while LOD work remains).</summary>
+        private bool TryMeshOneLod()
+        {
+            Vector3i key;
+            bool claimed;
+            lock (_meshLock)
+            {
+                if (_lodMeshQueue.Count == 0) return false;
+                key = _lodMeshQueue.Dequeue();
+                claimed = _lodMeshPending.Remove(key);
+            }
+            if (!claimed) return true;
+            if (!LodRegions.TryGetValue(key, out var lodData)) return true;
+
+            lodData.Update(LodStore);
+
+            lock (_uploadLock)
+                if (_lodUploadPending.Add(key))
+                    _lodUploadQueue.Enqueue(key);
+            return true;
         }
 
         public override void SetBlock(int x, int y, int z, Block block, bool update, bool lowPriority)

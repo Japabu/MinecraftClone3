@@ -20,6 +20,7 @@ namespace MinecraftClone3API.Graphics
 
         // Per-frame stats written by WorldRenderer.BuildVisibleSet / RenderWorld, read by the overlay.
         public static int DrawnChunks;
+        public static int LodDrawn;
         public static bool ShadowPass;
 
         // Per-frame timings written by the game loop (GameClient.OnRenderFrame), read by the overlay.

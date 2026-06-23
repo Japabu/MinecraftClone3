@@ -32,6 +32,7 @@ namespace MinecraftClone3.States
 
         private readonly GameWindow _window;
         private readonly bool _multiplayer;
+        private readonly bool _benchmark;
 
         private readonly EntityPlayer _player;
         private readonly WorldClient _world;
@@ -45,6 +46,8 @@ namespace MinecraftClone3.States
         private bool _loading = true;
         private bool _spawnApplied;
         private int _lastRenderDistanceChunks = -1;
+        private float _lastLodHorizonQuality = -1f;
+        private int _lastLodHorizonChunks = -1;
         private readonly Stopwatch _loadingTimer = Stopwatch.StartNew();
         private Texture _loadingBackground;
 
@@ -59,18 +62,23 @@ namespace MinecraftClone3.States
         private const int MaxCatchUpTicks = 5;
 
         /// <summary>Singleplayer: runs the given world in an in-process server over a loopback connection.</summary>
-        public StateWorld(GameWindow window, WorldInfo world) : this(window, false, world) { }
+        public StateWorld(GameWindow window, WorldInfo world) : this(window, false, world, false) { }
+
+        /// <summary>Benchmark: singleplayer world driven by the automated <see cref="Benchmark"/> flythrough.</summary>
+        public StateWorld(GameWindow window, WorldInfo world, bool benchmark) : this(window, false, world, benchmark) { }
 
         /// <summary>Multiplayer: connects to the dedicated server over TCP.</summary>
-        public StateWorld(GameWindow window, bool multiplayer = false) : this(window, multiplayer, null) { }
+        public StateWorld(GameWindow window, bool multiplayer = false) : this(window, multiplayer, null, false) { }
 
-        private StateWorld(GameWindow window, bool multiplayer, WorldInfo world)
+        private StateWorld(GameWindow window, bool multiplayer, WorldInfo world, bool benchmark)
         {
             _window = window;
             _multiplayer = multiplayer;
+            _benchmark = benchmark;
 
-            // Grab the cursor so relative mouse movement drives the camera (FPS-style).
-            _window.CursorState = CursorState.Grabbed;
+            // Grab the cursor so relative mouse movement drives the camera (FPS-style). The benchmark drives the
+            // camera itself and runs unattended, so it must NOT grab the cursor (that would trap the user's mouse).
+            _window.CursorState = benchmark ? CursorState.Hidden : CursorState.Grabbed;
             PlayerController.ResetMouse();
 
             _player = new EntityPlayer {Position = SpawnPos};
@@ -121,13 +129,32 @@ namespace MinecraftClone3.States
         {
             var chunks = GraphicsSettings.RenderDistanceChunks;
             _lastRenderDistanceChunks = chunks;
+            _lastLodHorizonQuality = GraphicsSettings.LodHorizonQuality;
+            _lastLodHorizonChunks = GraphicsSettings.LodHorizonChunks;
+            _world.ForceLodMeshRescan();   // a render-distance / horizon change shifts the LOD stride rings
 
+            // Multiplayer: the client can only LOD what the remote server streams, so leave the LOD horizon at
+            // the (dormant) default and just drive the client draw distance via RenderDistance.
             if (_integratedServer == null) return;
 
             _network.ViewDistance = chunks * Chunk.Size;
             _integratedServer.TerrainRadius = chunks + 1;
             _world.CacheDistance = chunks * Chunk.Size + WorldClient.CacheHysteresis;
+
+            // Phase-2 LOD horizon: full detail to `chunks`, then cheap LOD columns out to chunks + LodRingChunks.
+            var lodChunks = chunks + LodRingChunks;
+            _integratedServer.LodRadius = lodChunks;                         // server gen ring (chunks)
+            _network.LodRadius = lodChunks * Chunk.Size;                     // server stream cull (blocks)
+            _world.LodRenderDistance = lodChunks * Chunk.Size;              // client draw cull (blocks)
+            _world.LodCacheDistance = lodChunks * Chunk.Size + LodColumn.RegionBlocks;
         }
+
+        /// <summary>Chunks of cheap LOD horizon streamed BEYOND the full-detail render distance (the Phase-2
+        /// "distant horizon"), driven live by the LOD Horizon graphics slider (0 = off). Default 16 ⇒ a
+        /// ~32-chunk / 512-block total horizon at RD 16. The geometry pass is primitive-setup-bound, so this is
+        /// the FPS knob; distance-based stride rings / greedy skirts are the deferred way to push it further
+        /// without the cost — see CLAUDE.md.</summary>
+        private int LodRingChunks => GraphicsSettings.LodHorizonChunks;
 
         public override void Update(bool focused)
         {
@@ -143,18 +170,30 @@ namespace MinecraftClone3.States
                 return;
             }
 
-            if (GraphicsSettings.RenderDistanceChunks != _lastRenderDistanceChunks)
+            // Re-apply the radius chain on a render-distance / LOD-horizon change (ApplyRenderDistance also
+            // re-steps the LOD rings). A LOD-Quality change just re-steps the existing LOD regions (no chunk
+            // remesh — chunks are always full detail now). All main-thread (touches RenderList). Per-frame gate
+            // debounces a slider drag.
+            if (GraphicsSettings.RenderDistanceChunks != _lastRenderDistanceChunks
+                || GraphicsSettings.LodHorizonChunks != _lastLodHorizonChunks)
                 ApplyRenderDistance();
+            if (GraphicsSettings.LodHorizonQuality != _lastLodHorizonQuality)
+            {
+                _lastLodHorizonQuality = GraphicsSettings.LodHorizonQuality;
+                _world.ForceLodMeshRescan();
+            }
 
-            var active = focused;
-            if (focused && _window.KeyboardState.IsKeyPressed(Keys.Escape))
+            // The automated benchmark drives the camera itself (no player input / no pause overlay).
+            var active = focused && !_benchmark;
+            if (active && _window.KeyboardState.IsKeyPressed(Keys.Escape))
             {
                 StateEngine.AddOverlay(new GuiPauseMenu(_window));
                 active = false;
             }
 
-            // Singleplayer freezes the world while paused; multiplayer can't pause a shared server.
-            var simulate = focused || _multiplayer;
+            // Singleplayer freezes the world while paused; multiplayer can't pause a shared server. The
+            // benchmark always pumps so chunks keep streaming/regenerating even with the window unfocused.
+            var simulate = focused || _multiplayer || _benchmark;
             if (simulate)
             {
                 var dt = _simTimer.Elapsed.TotalSeconds;
@@ -180,7 +219,15 @@ namespace MinecraftClone3.States
 
             PlayerController.ApplyInterpolation(simulate ? (float) (_simAccumulator / PlayerPhysics.TickSeconds) : 1f);
 
-            if (active) PlayerController.UpdateFrame(_window, _world);
+            if (_benchmark)
+            {
+                // Automated mode drives the camera each frame (overwrites the interpolation above): the
+                // benchmark flies a path, the inspector parks at fixed A/B poses.
+                if (Inspect.Enabled) Inspect.DriveCamera(_player);
+                else Benchmark.DriveCamera(_player, _world);
+                PlayerController.Camera.Update();
+            }
+            else if (active) PlayerController.UpdateFrame(_window, _world);
 
             var c = GC.GetAllocatedBytesForCurrentThread();
             _phaseTimer.Restart();
@@ -248,6 +295,12 @@ namespace MinecraftClone3.States
                 // The camera never updated during loading; sync it to the spawn so the first world
                 // frame doesn't flash the default origin view before PlayerController.UpdateFrame runs.
                 PlayerController.Camera.Update();
+                // Anchor the automated flythrough at the spawn now that terrain is under the player.
+                if (_benchmark)
+                {
+                    if (Inspect.Enabled) Inspect.Begin(_player.Position);
+                    else Benchmark.Begin(_player.Position);
+                }
             }
         }
 
@@ -271,8 +324,13 @@ namespace MinecraftClone3.States
             }
 
             var aspect = (float)_window.FramebufferSize.X / _window.FramebufferSize.Y;
+            // Far plane must clear the LOD horizon (well past the render distance) or the distant ring is
+            // clipped; covers LodRenderDistance + a region of margin. The near plane is raised from 0.01 to 0.1
+            // so a huge far plane (a 96-chunk horizon reaches ~1800 blocks) keeps enough depth precision to not
+            // z-fight near full-detail terrain — 0.1 still only clips when the camera is right against a block.
+            var farPlane = MathF.Max(512f, _world.LodRenderDistance + LodColumn.RegionBlocks * 2);
             var projection = Matrix4.CreatePerspectiveFieldOfView(
-                MathHelper.DegreesToRadians(GraphicsSettings.Fov), aspect, 0.01f, 512);
+                MathHelper.DegreesToRadians(GraphicsSettings.Fov), aspect, 0.1f, farPlane);
             WorldRenderer.RenderWorld(_world, projection);
 
             if (!Profiler.Recording && !RenderDebug.ShowDiagnostics && !RenderDebug.ShowControls) return;
@@ -341,6 +399,10 @@ namespace MinecraftClone3.States
             Font.DrawString($"gpu {RenderDebug.GpuMs:0.0} ms   cpu upd {RenderDebug.UpdateMs:0.0} ms", 4, y, scale, OverlayText); y += lh;
 
             Font.DrawString($"chunks drawn {RenderDebug.DrawnChunks} / {_world.RenderList.Count}", 4, y, scale, OverlayText); y += lh;
+
+            var srvLod = _integratedServer != null ? $" / srv {_integratedServer.LodStore.RegionCount}" : "";
+            Font.DrawString($"lod drawn {RenderDebug.LodDrawn} / {_world.LodRegionCount}{srvLod}" +
+                            $"   readyQ {_world.LodRenderReadyQueueDepth}", 4, y, scale, OverlayText); y += lh;
 
             var shadows = RenderDebug.ShadowPass ? "on" : "off";
             Font.DrawString($"shadows {shadows}   loaded {_world.LoadedChunkCount}" +

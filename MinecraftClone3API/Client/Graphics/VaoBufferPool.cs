@@ -14,14 +14,17 @@ namespace MinecraftClone3API.Graphics
     /// </summary>
     internal static class VaoBufferPool
     {
-        private const int InitialCapacity = 1024;
+        // Pre-sized to a typical surface chunk's vertex count so a freshly-allocated burst list (when the pool
+        // is drained under heavy streaming) doesn't grow 1024→2048→…→8192, discarding every intermediate array
+        // — that doubling churn was the mesh thread's per-burst allocation spike (tens of MB/frame → GC hitch).
+        private const int InitialCapacity = 6144;
 
         private static readonly ConcurrentBag<List<Vector3>> Vector3Lists = new ConcurrentBag<List<Vector3>>();
-        private static readonly ConcurrentBag<List<Vector4>> Vector4Lists = new ConcurrentBag<List<Vector4>>();
+        private static readonly ConcurrentBag<List<Vector2>> Vector2Lists = new ConcurrentBag<List<Vector2>>();
         private static readonly ConcurrentBag<List<uint>> UintLists = new ConcurrentBag<List<uint>>();
 
         public static List<Vector3> RentVector3() => Vector3Lists.TryTake(out var list) ? list : new List<Vector3>(InitialCapacity);
-        public static List<Vector4> RentVector4() => Vector4Lists.TryTake(out var list) ? list : new List<Vector4>(InitialCapacity);
+        public static List<Vector2> RentVector2() => Vector2Lists.TryTake(out var list) ? list : new List<Vector2>(InitialCapacity);
         public static List<uint> RentUint() => UintLists.TryTake(out var list) ? list : new List<uint>(InitialCapacity);
 
         public static void Return(List<Vector3> list)
@@ -31,11 +34,11 @@ namespace MinecraftClone3API.Graphics
             Vector3Lists.Add(list);
         }
 
-        public static void Return(List<Vector4> list)
+        public static void Return(List<Vector2> list)
         {
             if (list == null) return;
             list.Clear();
-            Vector4Lists.Add(list);
+            Vector2Lists.Add(list);
         }
 
         public static void Return(List<uint> list)

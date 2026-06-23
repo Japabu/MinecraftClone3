@@ -32,12 +32,30 @@ namespace MinecraftClone3API.Graphics
         private static readonly List<ChunkRenderData> _transparentSortedChunks = new List<ChunkRenderData>(1024);
         private static readonly List<ChunkRenderData> _transparentChunks = new List<ChunkRenderData>(1024);
 
+        // Phase-2 distant-horizon LOD regions to draw this frame (the ring beyond the real-chunk render
+        // distance). Main-thread scratch, refilled each frame like _chunksToDraw. _lodRenderDistance is the
+        // block radius the LOD ring extends to (0 ⇒ LOD dormant), captured per frame from the world.
+        private static readonly List<LodRenderData> _lodToDraw = new List<LodRenderData>(256);
+        private static float _lodRenderDistance;
+
+        // Width (blocks) of the dithered cross-fade band just inside the render distance, where full-detail
+        // chunks dissolve into the Phase-2 horizon LOD instead of popping. The smoothness↔overdraw knob.
+        private const float FadeBandWidth = 32f;
+
         // Read by the cached transparent-sort comparator so the delegate is allocated once instead of
         // capturing a fresh closure (over camera position) every frame.
         private static Vector3 _sortCameraPos;
         private static readonly Comparison<ChunkRenderData> _transparentSort = (chunk1, chunk2)
             => (int) ((_sortCameraPos - chunk2.Middle).LengthSquared * 1000 -
                       (_sortCameraPos - chunk1.Middle).LengthSquared * 1000);
+
+        // Opaque chunks are drawn FRONT-TO-BACK (near first) so early-Z rejects occluded far fragments before
+        // the costly 3-MRT + texture-array fragment shader runs — pure overdraw reduction, identical pixels
+        // (depth resolves visibility either way). Without this the opaque list was in arbitrary RenderList
+        // order, shading then overwriting hidden fragments on the fill-bound iGPU.
+        private static readonly Comparison<ChunkRenderData> _opaqueSortNearFirst = (chunk1, chunk2)
+            => ((_sortCameraPos - chunk1.Middle).LengthSquared).CompareTo(
+                (_sortCameraPos - chunk2.Middle).LengthSquared);
 
         // Refilled in place each frame instead of allocating a fresh Plane[6] + 6 planes per call.
         private static readonly Frustum _viewFrustum = new Frustum();
@@ -155,6 +173,11 @@ namespace MinecraftClone3API.Graphics
             }
         }
 
+        /// <summary>When set (the benchmark sets it), the day clock is pinned to this many seconds instead of
+        /// the server-authoritative time, so every benchmark run sees identical sun/shadow conditions. Null in
+        /// normal play (then <see cref="_dayTimeSeconds"/> tracks <c>WorldClient.WorldTimeSeconds</c>).</summary>
+        public static double? FixedTimeOfDay;
+
         /// <summary>Sun colour/intensity for the current time of day: bright warm white at noon, orange at
         /// the horizon (sunrise/sunset), a dim blue at night. Multiplied by the baked sky factor in the
         /// composition shader.</summary>
@@ -247,8 +270,9 @@ namespace MinecraftClone3API.Graphics
 
         public static void RenderWorld(WorldClient world, Matrix4 projection)
         {
-            // Server-authoritative time of day; sampled once so every sun term this frame is consistent.
-            _dayTimeSeconds = world.WorldTimeSeconds;
+            // Server-authoritative time of day; sampled once so every sun term this frame is consistent. The
+            // benchmark pins it (FixedTimeOfDay) for reproducible sun/shadow conditions.
+            _dayTimeSeconds = FixedTimeOfDay ?? world.WorldTimeSeconds;
 
             var viewProjection = PlayerController.Camera.View * projection;
             var viewProjectionInv = viewProjection.Inverted();
@@ -269,6 +293,8 @@ namespace MinecraftClone3API.Graphics
             // Build the visible set (frustum + render-distance scan): fills the draw lists and flags whether
             // any visible chunk is sky-exposed, so the shadow passes can be skipped when none is (deep cave).
             BuildVisibleSet(world, PlayerController.Camera, viewFrustum);
+            _lodRenderDistance = world.LodRenderDistance;
+            BuildLodVisibleSet(world, PlayerController.Camera, viewFrustum);
 
             RenderDebug.ShadowPass = sunUp && _anyShadowReceiver && GraphicsSettings.ShadowsEnabled;
             if (RenderDebug.ShadowPass)
@@ -342,7 +368,6 @@ namespace MinecraftClone3API.Graphics
 
             var shader = ClientResources.ShadowDepthShader;
             shader.Bind();
-            var uWorld = shader.GetUniformLocation("uWorld");
             var uLightViewProj = shader.GetUniformLocation("uLightViewProj");
 
             // Analytic bounding sphere of the whole [ShadowNear, ShadowDistance] frustum slice. Centre rides
@@ -372,9 +397,10 @@ namespace MinecraftClone3API.Graphics
             for (var i = 0; i < renderList.Count; i++)
             {
                 var renderData = renderList[i];
-                if (renderData.HasTransparency) continue;
-                var chunkMiddle = (renderData.Chunk.Position * Chunk.Size + new Vector3i(Chunk.Size / 2)).ToVector3();
-                if (!_shadowFrustum.SpehereIntersection(chunkMiddle, Chunk.Radius)) continue;
+                // Transparent chunks don't cast shadows (a solid shadow from translucent geometry is wrong);
+                // skip chunks with no opaque geometry entirely (they'd contribute zero-index sub-draws).
+                if (renderData.HasTransparency || !renderData.HasOpaque) continue;
+                if (!_shadowFrustum.SpehereIntersection(renderData.Middle, Chunk.Radius)) continue;
                 shadowChunks.Add(renderData);
             }
 
@@ -382,13 +408,8 @@ namespace MinecraftClone3API.Graphics
             GL.Clear(ClearBufferMask.DepthBufferBit);
             GL.UniformMatrix4(uLightViewProj, false, ref _lightViewProj);
 
-            foreach (var chunk in shadowChunks)
-            {
-                var worldMat = Matrix4.CreateTranslation(chunk.Chunk.Position.X * Chunk.Size, chunk.Chunk.Position.Y * Chunk.Size,
-                    chunk.Chunk.Position.Z * Chunk.Size);
-                GL.UniformMatrix4(uWorld, false, ref worldMat);
-                chunk.Draw();
-            }
+            // One batched multidraw over the shadow casters' shared arena sub-ranges (position-only VAO).
+            world.OpaqueArena.Draw(shadowChunks, true);
 
             GL.Disable(EnableCap.PolygonOffsetFill);
             ClientResources.ShadowFramebuffer.Unbind(ClientResources.Window.FramebufferSize.X, ClientResources.Window.FramebufferSize.Y);
@@ -414,10 +435,12 @@ namespace MinecraftClone3API.Graphics
             for (var i = 0; i < renderList.Count; i++)
             {
                 var renderData = renderList[i];
-                var chunkMiddle = (renderData.Chunk.Position * Chunk.Size + new Vector3i(Chunk.Size / 2)).ToVector3();
-                if (!viewFrustum.SpehereIntersection(chunkMiddle, Chunk.Radius)) continue;
+                var chunkMiddle = renderData.Middle;
+                // Distance cull FIRST (one subtract + dot) so the ~3000 loaded-but-out-of-render-distance
+                // chunks at high render distance are rejected before the 6-plane frustum test.
                 var lengthSq = (camera.Position - chunkMiddle).LengthSquared;
                 if (lengthSq > renderDistanceSq) continue;
+                if (!viewFrustum.SpehereIntersection(chunkMiddle, Chunk.Radius)) continue;
 
                 if (renderData.HasTransparency)
                 {
@@ -443,6 +466,33 @@ namespace MinecraftClone3API.Graphics
             RenderDebug.DrawnChunks = _chunksToDraw.Count;
         }
 
+        /// <summary>Frustum + distance cull of the Phase-2 LOD regions into <see cref="_lodToDraw"/>. Keeps any
+        /// region overlapping the ring [RenderDistance, LodRenderDistance] (nearest/farthest-point test so the
+        /// boundary never gaps); the geometry pass draws them under the real chunks (DepthFunc.Less), so the
+        /// inner overlap is hidden behind loaded chunks. Empty (no work) when the LOD horizon is dormant.</summary>
+        private static void BuildLodVisibleSet(WorldClient world, Camera camera, Frustum viewFrustum)
+        {
+            _lodToDraw.Clear();
+            var far = _lodRenderDistance;
+            // Inner edge pulled in by the fade band so the horizon has geometry to dither IN against the chunks
+            // dithering OUT (else the band would be chunk-discard against empty horizon = holes).
+            var near = RenderDistance - FadeBandWidth;
+            if (far <= RenderDistance || world.ForceLodOff) { RenderDebug.LodDrawn = 0; return; }
+
+            var list = world.LodRenderList;
+            for (var i = 0; i < list.Count; i++)
+            {
+                var rd = list[i];
+                var dist = (camera.Position - rd.Middle).Length;
+                if (dist - rd.Radius > far) continue;        // entirely beyond the LOD horizon
+                if (dist + rd.Radius < near) continue;        // entirely inside the real-chunk core
+                if (!viewFrustum.SpehereIntersection(rd.Middle, rd.Radius)) continue;
+                _lodToDraw.Add(rd);
+            }
+
+            RenderDebug.LodDrawn = _lodToDraw.Count;
+        }
+
         private static void DrawGeometryFramebuffer(WorldClient world, Camera camera, Matrix4 projection)
         {
             RenderState.Set(new GlState {CullFace = true, DepthTest = true, DepthFunc = DepthFunction.Lequal});
@@ -456,7 +506,6 @@ namespace MinecraftClone3API.Graphics
             shader.Bind();
             // Uniform/sampler locations are queried by name (GLSL 4.10 has no explicit
             // layout(location=)/layout(binding=) for uniforms; macOS caps OpenGL at 4.1).
-            var uWorld = shader.GetUniformLocation("uWorld");
             var uCutoff = shader.GetUniformLocation("uCutoff");
             GL.UniformMatrix4(shader.GetUniformLocation("uView"), false, ref camera.View);
             GL.UniformMatrix4(shader.GetUniformLocation("uProjection"), false, ref projection);
@@ -466,19 +515,39 @@ namespace MinecraftClone3API.Graphics
             GL.Uniform1(shader.GetUniformLocation("uTextures256"), 2);
             GL.Uniform1(shader.GetUniformLocation("uTextures1024"), 3);
 
+            // LOD cross-fade band: full-detail chunks dissolve into the horizon over [RD - FadeBandWidth, RD].
+            // Disabled (start past the far plane) when the horizon is dormant, so chunks never fade into nothing.
+            var uFadeMode = shader.GetUniformLocation("uFadeMode");
+            var fadeActive = _lodRenderDistance > RenderDistance;
+            GL.Uniform3(shader.GetUniformLocation("uCameraPos"), camera.Position.X, camera.Position.Y, camera.Position.Z);
+            GL.Uniform1(shader.GetUniformLocation("uFadeStart"), fadeActive ? RenderDistance - FadeBandWidth : 1e9f);
+            GL.Uniform1(shader.GetUniformLocation("uFadeEnd"), fadeActive ? RenderDistance : 1e9f + 1f);
+
             BlockTextureManager.Bind();
             Samplers.BindBlockTextureSampler();
 
-            //Draw opaque blocks front to back
+            // Draw all opaque chunk geometry (incl. the opaque faces of transparent chunks) front-to-back in
+            // ONE batched multidraw over the shared arena (positions are baked world-space → no per-chunk matrix).
+            // uFadeMode 0 = these near chunks fade OUT across the band.
+            GL.Uniform1(uFadeMode, 0);
             GraphicsDebug.PushGroup("Opaque");
-            foreach (var chunk in _chunksToDraw)
-            {
-                var worldMat = Matrix4.CreateTranslation(chunk.Chunk.Position.X * Chunk.Size, chunk.Chunk.Position.Y * Chunk.Size,
-                    chunk.Chunk.Position.Z * Chunk.Size);
-                GL.UniformMatrix4(uWorld, false, ref worldMat);
-                chunk.Draw();
-            }
+            world.OpaqueArena.Draw(_chunksToDraw, false);
             GraphicsDebug.PopGroup();
+
+            // Phase-2 distant horizon: draw the LOD ring UNDER the real chunks — DepthFunc.Less means an
+            // already-drawn (nearer) real chunk wins, so the inner overlap is hidden and the streaming frontier
+            // never holes or double-images. Same shader + G-buffer, just coarse baked-light geometry past the
+            // render distance. Restore Lequal so RenderState's tracked state stays consistent.
+            if (_lodToDraw.Count > 0)
+            {
+                GraphicsDebug.PushGroup("LodHorizon");
+                GL.Uniform1(uFadeMode, 1);   // LOD fades IN across the band (complementary to the chunks)
+                GL.DepthFunc(DepthFunction.Less);
+                world.LodArena.Draw(_lodToDraw, false);
+                GL.DepthFunc(DepthFunction.Lequal);
+                GL.Uniform1(uFadeMode, 0);   // restore for the transparent chunk pass (near → no fade)
+                GraphicsDebug.PopGroup();
+            }
 
             RenderState.Set(new GlState
             {
@@ -493,15 +562,10 @@ namespace MinecraftClone3API.Graphics
             GL.Disable(IndexedEnableCap.Blend, 2);
             GL.Uniform1(uCutoff, 0);
 
-            //Draw transparent blocks back to front
+            //Draw transparent blocks back to front (per-chunk: each needs its own back-to-front face sort)
             GraphicsDebug.PushGroup("Transparent");
             foreach (var chunk in _transparentChunks)
-            {
-                var worldMat = Matrix4.CreateTranslation(chunk.Chunk.Position.X * Chunk.Size, chunk.Chunk.Position.Y * Chunk.Size,
-                    chunk.Chunk.Position.Z * Chunk.Size);
-                GL.UniformMatrix4(uWorld, false, ref worldMat);
                 chunk.DrawTransparent();
-            }
             GraphicsDebug.PopGroup();
 
             GL.Enable(IndexedEnableCap.Blend, 1);
@@ -650,12 +714,15 @@ namespace MinecraftClone3API.Graphics
             GL.Uniform1(comp.GetUniformLocation("uStarBrightness"), StarBrightness());
             GL.Uniform1(comp.GetUniformLocation("uSunSize"), SunSize);
             GL.Uniform1(comp.GetUniformLocation("uMoonSize"), MoonSize);
-            // Far-plane (sky) vs terrain split: comfortably past the farthest drawn chunk yet inside the far
-            // clip plane (512). Distance fog hides the chunk-load boundary just before the render edge.
-            var renderDistance = RenderDistance;
-            GL.Uniform1(comp.GetUniformLocation("uSkyDistance"), renderDistance + 48f);
-            GL.Uniform1(comp.GetUniformLocation("uFogStart"), renderDistance * 0.72f);
-            GL.Uniform1(comp.GetUniformLocation("uFogEnd"), renderDistance * 0.97f);
+            // Far-plane (sky) vs terrain split + distance fog. When the Phase-2 LOD horizon is active the drawn
+            // geometry reaches LodRenderDistance (well past RenderDistance), so the sky-distance threshold and
+            // the fog band move out to that horizon — otherwise the LOD ring would be painted as sky (depth ≥
+            // uSkyDistance) or fully fogged out. The fog melts the coarse far ring into uHorizonColor right
+            // before the sky takes over, hiding the LOD edge. Dormant LOD ⇒ this is just RenderDistance as before.
+            var horizonDistance = _lodRenderDistance > RenderDistance ? _lodRenderDistance : RenderDistance;
+            GL.Uniform1(comp.GetUniformLocation("uSkyDistance"), horizonDistance + 48f);
+            GL.Uniform1(comp.GetUniformLocation("uFogStart"), horizonDistance * 0.72f);
+            GL.Uniform1(comp.GetUniformLocation("uFogEnd"), horizonDistance * 0.97f);
 
             GL.Uniform1(comp.GetUniformLocation("uSunTexture"), 5);
             GL.Uniform1(comp.GetUniformLocation("uMoonTexture"), 6);

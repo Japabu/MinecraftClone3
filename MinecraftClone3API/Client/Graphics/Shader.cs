@@ -18,7 +18,13 @@ namespace MinecraftClone3API.Graphics
 
 
         private readonly int _programId;
-        
+
+        // Uniform locations are stable for the life of a linked program. GetUniformLocation otherwise marshals
+        // the managed name to native UTF-8 and does a driver name lookup on EVERY call — and the renderer looks
+        // up ~50 uniforms by name every frame. Memoize so it costs one lookup + dictionary hit thereafter (off
+        // the render-thread critical path + kills the per-frame string-marshal Gen0 allocations).
+        private readonly Dictionary<string, int> _uniformLocations = new Dictionary<string, int>();
+
         public Shader(string resourcePath)
         {
             _programId = GL.CreateProgram();
@@ -50,7 +56,13 @@ namespace MinecraftClone3API.Graphics
 
         public void Bind() => GL.UseProgram(_programId);
 
-        public int GetUniformLocation(string name) => GL.GetUniformLocation(_programId, name);
+        public int GetUniformLocation(string name)
+        {
+            if (_uniformLocations.TryGetValue(name, out var loc)) return loc;
+            loc = GL.GetUniformLocation(_programId, name);
+            _uniformLocations[name] = loc;
+            return loc;
+        }
 
 
         private void AttachShader(string path, ShaderType type, string source)

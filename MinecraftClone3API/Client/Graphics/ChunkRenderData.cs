@@ -7,87 +7,91 @@ using OpenTK.Mathematics;
 namespace MinecraftClone3API.Graphics
 {
     /// <summary>
-    /// Client-side GPU mesh for a <see cref="Chunk"/>. Holds the vertex array objects and the
-    /// meshing/upload/draw logic that used to live on <see cref="Chunk"/>, keeping chunk storage
-    /// free of any GL types so a headless server can construct chunks without a GL context.
+    /// Client-side GPU mesh for a <see cref="Chunk"/>. The OPAQUE mesh is built into a CPU
+    /// <see cref="MeshBuffer"/> (mesh thread) and uploaded into the shared <see cref="ChunkMeshArena"/> so the
+    /// whole visible opaque set draws with one batched multidraw; the TRANSPARENT mesh keeps a per-chunk
+    /// <see cref="SortedVertexArrayObject"/> (it needs an independent per-frame back-to-front sort). Chunk
+    /// storage stays GL-free so a headless server can build chunks without a GL context.
     /// </summary>
     public class ChunkRenderData : IDisposable
     {
         /// <summary>The chunk currently meshed. Replaced when the server resends fresh chunk data.</summary>
         public Chunk Chunk;
 
+        /// <summary>Fresh CPU mesh pending upload (set by the mesh thread, cleared by the main-thread upload).
+        /// Gates the upload so a redundant upload doesn't blank the chunk (see TryUpload).</summary>
         public bool Updated;
         public bool Uploaded;
 
         /// <summary>Index into <see cref="MinecraftClone3API.Client.Blocks.WorldClient"/>'s main-thread
-        /// render list (the renderer iterates that list instead of enumerating the RenderData
-        /// ConcurrentDictionary each frame); -1 when not listed. Enables O(1) swap-removal on eviction.
-        /// Main-thread only.</summary>
+        /// render list; -1 when not listed. Enables O(1) swap-removal on eviction. Main-thread only.</summary>
         public int RenderListIndex = -1;
 
-        /// <summary>True iff any cell in the chunk carries sky light (<see cref="Chunk.HasAnySkyLight"/>):
-        /// gates the sun shadow passes, which are skipped when no visible chunk is sky-exposed (deep cave).
-        /// Mesh-thread write / main-thread read; a benign torn read self-corrects on the next remesh (same
-        /// race rule as <see cref="MinecraftClone3API.Blocks.PaletteStorage"/>).</summary>
+        /// <summary>True iff any cell in the chunk carries sky light: gates the sun shadow passes.
+        /// Mesh-thread write / main-thread read; a benign torn read self-corrects on the next remesh.</summary>
         public bool SkyExposed = true;
 
-        public Vector3 Middle => (Chunk.Position * Chunk.Size + new Vector3i(Chunk.Size / 2)).ToVector3();
+        /// <summary>This chunk's opaque sub-range in the shared arena. IndexCount == 0 ⇒ no opaque geometry.
+        /// Main-thread only (written by the upload loop, freed by the dispose drain).</summary>
+        public ChunkMeshArena.Allocation OpaqueAlloc;
+
+        /// <summary>World-space chunk centre. Constant for this render-data's lifetime (the Chunk is only ever
+        /// replaced by another at the same position), so it's computed once instead of every access.</summary>
+        public readonly Vector3 Middle;
+
+        public bool HasOpaque => OpaqueAlloc.IndexCount > 0;
         public bool HasTransparency => _transparentVao.UploadedCount > 0;
 
-        /// <summary>Total uploaded index count (opaque + transparent) — surfaced so the profiler can
-        /// report per-frame GPU upload volume.</summary>
-        public int UploadedIndexCount => _vao.UploadedCount + _transparentVao.UploadedCount;
+        /// <summary>Total uploaded index count (opaque + transparent) — for the profiler's GPU upload volume.</summary>
+        public int UploadedIndexCount => OpaqueAlloc.IndexCount + _transparentVao.UploadedCount;
 
-        private readonly VertexArrayObject _vao = new VertexArrayObject();
+        // Opaque CPU mesh (no GL) uploaded into the arena; transparent keeps its own GL VAO.
+        private readonly MeshBuffer _opaque = new MeshBuffer();
         private readonly SortedVertexArrayObject _transparentVao = new SortedVertexArrayObject();
 
         public ChunkRenderData(Chunk chunk)
         {
             Chunk = chunk;
+            Middle = (chunk.Position * Chunk.Size + new Vector3i(Chunk.Size / 2)).ToVector3();
         }
 
         public void Update()
         {
-            lock (_vao)
+            lock (_opaque)
             lock (_transparentVao)
             {
                 //Re-mesh from scratch; the chunk may have changed since the last pass.
-                _vao.Clear();
+                _opaque.Clear();
                 _transparentVao.Clear();
                 AddBlocksToVao();
                 Updated = true;
             }
 
-            // Outside the VAO locks (reads chunk storage only, no GL/VAO state) so it doesn't lengthen the
-            // window the non-blocking TryUpload contends with. Flags whether the chunk receives sky light,
-            // which gates the sun shadow passes.
+            // Outside the locks (reads chunk storage only) so it doesn't lengthen the non-blocking-upload
+            // contention window. Flags whether the chunk receives sky light, which gates the shadow passes.
             SkyExposed = Chunk.HasAnySkyLight();
         }
 
         /// <summary>
-        /// Uploads the pending mesh to the GPU, returning false <b>without blocking</b> when the mesh
-        /// thread currently holds the VAO locks (a remesh is in progress). The caller retries next frame
-        /// instead of stalling the render thread for the whole remesh: a single edit remeshes the chunk
-        /// plus up to six face neighbours, and one remesh is tens of ms (per-vertex smooth-lighting
-        /// neighbour sampling), so a <i>blocking</i> upload waiting on those locks was the per-edit
-        /// frame-time spike. The render path (Draw/Sort) never takes these locks, so rendering itself is
-        /// unaffected — only the upload handoff needed decoupling.
+        /// Uploads the pending mesh — the opaque CPU buffer into the <paramref name="arena"/>, the transparent
+        /// mesh into its own VAO — returning false <b>without blocking</b> when the mesh thread holds the
+        /// buffers (a remesh is in progress). The caller retries next frame instead of stalling the render
+        /// thread on the whole remesh (the per-edit frame spike this avoids; see CLAUDE.md).
         /// </summary>
-        public bool TryUpload()
+        public bool TryUpload(ChunkMeshArena arena)
         {
-            if (!Monitor.TryEnter(_vao)) return false;
+            if (!Monitor.TryEnter(_opaque)) return false;
             try
             {
                 if (!Monitor.TryEnter(_transparentVao)) return false;
                 try
                 {
-                    // Only upload when a fresh mesh is pending. A redundant Upload would otherwise see
-                    // the lists already consumed+cleared and zero UploadedCount, blanking the chunk until
-                    // the next re-mesh.
+                    // Only upload when a fresh mesh is pending; a redundant upload would otherwise re-allocate
+                    // an empty range and blank the chunk until the next remesh.
                     if (!Updated) return true;
 
-                    _vao.Upload();
-                    _vao.Clear();
+                    OpaqueAlloc = arena.Upload(OpaqueAlloc, _opaque);
+                    _opaque.Clear();
 
                     _transparentVao.Upload();
                     _transparentVao.Clear();
@@ -101,30 +105,37 @@ namespace MinecraftClone3API.Graphics
             }
             finally
             {
-                Monitor.Exit(_vao);
+                Monitor.Exit(_opaque);
             }
 
             Uploaded = true;
             return true;
         }
 
-        public void Draw() => _vao.Draw();
         public void DrawTransparent() => _transparentVao.Draw();
-
         public void SortTransparentFaces() => _transparentVao.Sort();
+
+        /// <summary>Frees the arena sub-range. Main-thread only; call before <see cref="Dispose"/>.</summary>
+        public void FreeArena(ChunkMeshArena arena)
+        {
+            arena.Free(OpaqueAlloc);
+            OpaqueAlloc = default;
+        }
 
         public void Dispose()
         {
-            lock (_vao)
+            lock (_opaque)
             lock (_transparentVao)
             {
-                _vao.Dispose();
+                _opaque.Clear();
                 _transparentVao.Dispose();
             }
         }
 
         private void AddBlocksToVao()
         {
+            // Chunks within the render distance always mesh at FULL per-block detail (no within-RD LOD — it
+            // looked bad up close). The cheap LOD is the Phase-2 horizon, beyond the render distance only.
             var chunk = Chunk;
             var min = chunk.Min;
             var max = chunk.Max;
@@ -135,7 +146,7 @@ namespace MinecraftClone3API.Graphics
                 var id = chunk.GetBlock(new Vector3i(x, y, z));
                 if (id != 0) //Remove GetBlock overhead of Air
                     ChunkMesher.AddBlockToVao(chunk.World, chunk.Position * Chunk.Size + new Vector3i(x, y, z), x, y, z,
-                        GameRegistry.BlockRegistry[id], _vao, _transparentVao);
+                        GameRegistry.BlockRegistry[id], _opaque, _transparentVao);
             }
         }
     }

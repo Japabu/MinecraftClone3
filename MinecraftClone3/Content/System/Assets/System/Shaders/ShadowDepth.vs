@@ -2,10 +2,10 @@
 
 layout(location = 0) in vec3 inPosition;
 
-uniform mat4 uWorld;
 uniform mat4 uLightViewProj;
 
 void main()
 {
-	gl_Position = uLightViewProj*uWorld*vec4(inPosition, 1);
+	// World-space baked positions (see WorldGeometry.vs) - no per-chunk model matrix.
+	gl_Position = uLightViewProj*vec4(inPosition, 1);
 }
