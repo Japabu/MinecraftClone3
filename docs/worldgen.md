@@ -71,3 +71,14 @@ distance sort, dedup); resident chunk count grows (tune `TerrainRadius`/`ChunkLi
 
 **Spawn** comes from `NoiseChunkGenerator.Spawn()` (spiral out from origin for the first land column);
 `ServerNetwork` caches it and seeds `LoginAccept`.
+
+**Server LOD generation.** For the distant horizon (the `LodColumn`/`LodColumnStore` data model lives in
+[world-model.md](world-model.md)), the server fills a region surface-only — no full 16³ chunk, no carving, no
+light. `NoiseChunkGenerator.GetLodColumn` computes one column's topmost visible surface (land `TopBlock` /
+ocean water) directly from the existing pure noise/biome functions (a couple of noise evals), so it is far
+cheaper than `Generate`. `DecorateLodRegion` then stamps tree canopies: it replays the vegetation feature RNG
+**once per region** (not per column) via `TreeFeature.CollectTrees` — the shared replay entry point —
+producing the exact same draws as `TreeFeature.Place` (bit-identical RNG order: chance → x → z →
+sea-level-skip → height), and raises the covered stride representative columns to the canopy top with
+`StampCanopy`. So the far-horizon forests land on the **same positions as the real trees**, with no tree pop
+at the render-distance boundary.

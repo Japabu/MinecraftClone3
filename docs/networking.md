@@ -30,6 +30,8 @@ tolerates the server mutating the source chunk concurrently (a torn entry self-c
   C→S/S→C  EntityMove         own player up; relayed to others down
   S→C  EntitySpawn/EntityDespawn   remote players appearing/leaving
   S→C  WorldTime             world clock in seconds (TickCount·SecondsPerTick); on join + ~1/s, drives day/night
+  S→C  LodColumnData         Phase-2 distant horizon: one region of surface-only LOD columns (loopback: by ref;
+                             TCP: GZip), streamed nearest-first BEYOND the chunk view distance (see rendering.md)
 ```
 
 **Placement metadata is computed client-side, never read on the server.** `Block.OnPlaced(world, pos,
@@ -76,3 +78,12 @@ session's packets (incl. `ChunkRelease`) → drop disconnected sessions → **st
 in-range-not-yet-sent only, capped at `MaxChunksPerTick` per session per tick) → **send `PlayerReady`** to
 any session whose `SentChunks` now covers the spawn column → **flush block changes** (delta packets) →
 **resend dirty chunks** (block-data only).
+
+**LOD horizon streaming.** `LodColumnData` mirrors `ChunkDataPacket` exactly — `From` carries the live region
+by reference (loopback never serializes), and compression + serialization are **lazy inside `Write`/`Read`** at
+the TCP boundary (a region of mostly-equal `long`s GZips hard). `ServerNetwork.StreamLodRegions` runs **after
+`StreamChunks`** so it never starves detail-chunk streaming: per session, nearest-first, capped at
+`MaxLodRegionsPerTick`, gated on `(playerChunk, RegionCount)` the way chunk streaming is gated on
+`SentChunks`. It prunes `SentLodRegions` entries that fell out of range — but unlike chunks there is **no
+client release packet**; the client evicts distant LOD on its own. Client-apply rides the same ordered apply
+queue and meshes on the shared pool (see [threading.md](threading.md), [rendering.md](rendering.md)).

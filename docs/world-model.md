@@ -52,3 +52,18 @@ tolerated), while a `Set` introducing a new value returns a NEW storage the chun
 = light/Update thread, plus the LoadThread seeds sky at gen before publish; client: all three = apply
 thread), so concurrent readers (mesher, network serialize, raytrace) always see a structurally consistent
 snapshot. **Do not introduce a second writer to any container.**
+
+## LOD columns: the distant-horizon storage model
+
+The Phase-2 distant horizon streams a second, far cheaper representation for terrain *beyond* the render
+distance (see [worldgen.md](worldgen.md) for how the server generates it). A `LodColumn`
+(`Blocks/LodColumn.cs`) is one **region** — a 128-block XZ footprint — of **surface-only** columns sampled at
+a stride (stride-2 is the store's finest), each column a single packed `long` (block id, surface Y, sky
+light). It is **Y-agnostic**: no full 16³ chunk, no light volume, no palette — the store *is* the heightmap at
+render stride.
+
+A filled region's `Columns` array is **immutable once published** — a re-fill replaces the whole `LodColumn`
+object rather than mutating it in place. This makes the loopback by-reference share race-free, the same
+single-writer discipline as `Chunk`/`PaletteStorage` above: readers always see a consistent snapshot.
+`LodColumnStore` (`Blocks/LodColumnStore.cs`) is a lock-based region dict with exactly one writer thread
+(server: the LOD thread; client: the apply thread). **Do not add a second writer.**

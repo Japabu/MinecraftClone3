@@ -9,13 +9,18 @@
                  (sky BFS flood, same edited cell) per edit; blocks on _lightSignal (AutoResetEvent set by
                  SetBlock/SetBlockData) when idle, waking on a 100 ms timeout to observe _unloaded. Sole
                  writer of both the light and sky containers (post-publish)
+   LodThread     (BelowNormal) fills _lodStore with cheap surface-only LOD columns + tree canopies
+                 (GetLodColumn + DecorateLodRegion) in the ring beyond TerrainRadius out to LodRadius.
+                 Sole writer of _lodStore; reads LoadedChunks/PlayerEntities; writes NOTHING to
+                 chunks/light/dirty. Dormant until LodRadius > TerrainRadius (see [rendering.md](rendering.md))
    WorldServer.Update()  (caller's thread) drains add/remove into LoadedChunks; runs entity updates
 
  WorldClient:
    ApplyThread   the SOLE writer of chunk contents: drains _applyQueue in packet order → decodes streamed
                  chunks (SP: clone the carried Chunk; MP: decompress + deserialize) and applies BlockChanges
                  deltas in place → publishes to LoadedChunks → hands positions to the main thread via
-                 _renderReady. NO GL. Sleeps on _applySignal when idle.
+                 _renderReady. NO GL. Sleeps on _applySignal when idle. ALSO the sole client writer of
+                 LodStore (decodes LodColumnData off the same ordered queue → _lodRenderReady).
    MeshThread    a POOL of workers (Environment.ProcessorCount-2, ≥1), each draining the shared mesh queues →
                  ChunkRenderData.Update()  (CPU vertex lists only, NO GL; holds the VAO locks for the whole
                  remesh, so the main-thread upload must not block on them). It parallelizes because the
@@ -29,6 +34,11 @@
                  serialize on lock(_vao)+lock(_transparentVao), each is a complete self-contained remesh (own
                  pooled lists, read-only storage), and TryUpload's Monitor.TryEnter never observes a half-built
                  mesh — the only cost is a redundant remesh (cannot fire during the edit-free load burst).
+                 A small fraction of the pool is reserved *LOD-first* (lodWorkers = min(max(1, workers/4),
+                 workers-1)); the rest are chunk-first, and each kind falls through to the other queue when
+                 its own is empty. Without a reserved LOD worker, sustained movement keeps the chunk queue
+                 permanently non-empty, so LOD meshing starved completely and the horizon went unmeshed; the
+                 reserved workers keep the LOD mesh queue ~0 (see [rendering.md](rendering.md)).
    Update()      (MAIN thread) pumps packets (routing ChunkData/BlockChanges to _applyQueue, handling
                  entity/login inline), DrainRenderReady → creates ChunkRenderData (GL) + queues meshing,
                  TryUploads meshed chunks (GL, non-blocking, time-budgeted per frame), evicts, disposes

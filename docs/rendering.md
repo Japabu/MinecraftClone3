@@ -158,3 +158,57 @@ when glass overlapped an unlit pixel. `WorldGeometry.vs/.fs` are untouched.
 OpenGL is capped at **4.1 Core / GLSL 4.10** (macOS limit). Consequences: **uniform and sampler locations are
 queried by name** (no `layout(location=)`/`layout(binding=)` on uniforms); vertex-attribute and
 fragment-output locations *do* use `layout(location=)`.
+
+## Phase-2 distant horizon (LOD)
+
+**Full detail to the render distance — the only LOD is the Phase-2 horizon beyond it.** Loaded chunks
+(≤ `ServerNetwork.ViewDistance`) always mesh at full per-block detail (`ChunkRenderData.AddBlocksToVao`); a
+within-RD heightmap LOD that coarsened near chunks looked bad and is not done. Coarse terrain only appears
+*past* the render distance, where it is far and fog-hidden — a second streaming channel of surface-only
+columns that lets terrain recede to a fogged horizon `LodRingChunks` (= `LodHorizonChunks`, default 64, max
+96) chunks past the render distance, the Distant-Horizons look. RD 16 + a 64-chunk horizon runs ~180 uncapped FPS on the
+dedicated GPU; the horizon is nearly free (far rings are 4×/16× cheaper + fog-occluded). The data model
+(`LodColumn`/`LodColumnStore`, stride-2 packed columns), server-side LOD generation/decoration, the
+`LodColumnData` packet, and the split-priority mesh worker that keeps the horizon from starving live elsewhere
+— see [world-model.md](world-model.md), [worldgen.md](worldgen.md), [networking.md](networking.md),
+[threading.md](threading.md). The rendering-side pipeline:
+
+**Client render data + mesh.** On the main thread `WorldClient.DrainLodRenderReady` creates a GL-free
+`LodRenderData` per region + a `LodRenderList` entry; the **shared mesh pool** meshes it (`TryMeshOneLod` →
+`ChunkMesher.AddLodColumnRegionToVao`), and the main-thread upload loop uploads it into a **second
+`ChunkMeshArena` (`LodArena`)** after the chunk uploads, inside the same frame budget. `EvictDistantLod` drops
+regions past `LodCacheDistance`. All GL is main-thread (Invariant 1).
+
+**The run-list mesher (`ChunkMesher.AddLodColumnRegionToVao(store, key, vao, meshStep)`).** Same flat-top +
+skirt + `IsLodSurface` + skirt-shade emission as the within-RD mesher, but driven by the packed columns (no
+world, no real blocks): `GameRegistry.BlockRegistry[blockId]` for the block, world-free
+`GetTintColor`/`GetRenderMaterial` (grass/water tint by position, water reflection flag), sky-only light. Tops
+are **greedy-merged** (runs of identical columns → one quad — water/plains collapse, the big geometry win);
+**skirts stay per-cell**. `meshStep` is the DH detail ring: the store is **stride-2**, so meshStep 1/2/4/8 =
+stride 2/4/8/16. The mesher downsamples the stride-2 store to a super-grid by **MAX surface** (`MaxSurfaceCell`
+— keeps trees/peaks from sinking, so forests stay canopy plateaus when coarsened), computing neighbour
+super-cells on demand (`SuperNeighbourY`). `LodRenderData.DesiredMeshStep` is set by
+`WorldClient.ScanLodForMeshStep` (own chunk-cross gate) from the region's **horizontal (XZ) distance**
+(`MeshStepFor` — XZ not 3D, matching the horizontal annulus + `EvictDistantLod`, so altitude doesn't coarsen
+the horizon): **stride-2 for the first `LodRing1Distance` (16 chunks) past the render distance** (the nearest,
+most-visible horizon stays fine — a gentle step down from full detail), then stride-4/8/16, with **rings ≥ 1
+region (8 chunks) wide so adjacent regions never differ by >1 step (no >2× crack)**, scaled by the **LOD
+Quality** option. The loopback apply path **shares the server's immutable region by reference** (no per-region
+clone).
+
+**Render integration (`WorldRenderer`).** `BuildLodVisibleSet` frustum + distance-culls `LodRenderList` to
+`[RenderDistance − FadeBandWidth, LodRenderDistance]` (inner edge pulled in for the cross-fade band). The
+geometry pass draws `LodArena` **after** the real chunks with **`DepthFunc.Less`** (already-drawn nearer real
+chunks win → the inner overlap is hidden, DH overdraw-prevention), same G-buffer + shader. Because drawn
+geometry now reaches past the render distance, the **projection far plane** (`StateWorld`, near plane raised to
+0.1 for precision) and the composition **`uSkyDistance` + fog band** are widened to the LOD horizon, so the fog
+melts the coarse far ring into `uHorizonColor` before the sky. **No LOD in the shadow pass.**
+
+**Dithered cross-fade (LOD morph, no pop).** Full-detail chunks dissolve into the horizon over a 32-block band
+(`FadeBandWidth`) just inside the render distance instead of popping when a chunk loads/unloads at the edge.
+`WorldGeometry.vs` passes `vWorldPos`; the `.fs` does a complementary **Bayer-4×4 dither discard** (chunk fades
+OUT where `dither < fade`, LOD fades IN where `dither >= fade`, `fade` = camera distance across the band) so
+**exactly one of {chunk, horizon} survives per pixel** — no gaps, no double-draw, no z-fight. `WorldRenderer`
+sets `uFadeMode` 0 (chunk) / 1 (LOD) per batch + the band uniforms; disabled (start past the far plane) when
+the horizon is dormant. The server LOD inner overlap (`LodInnerOverlap`) is widened so the store covers the
+band with no holes to fade into.

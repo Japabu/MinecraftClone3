@@ -3,6 +3,18 @@
 Why hot-path code looks the way it does, so a later change doesn't unknowingly undo a measured win. Settled,
 not open work.
 
+- **The geometry pass is triangle / primitive-setup bound — NOT fill, bandwidth, draw-call, or overdraw
+  bound.** Every other suspect was ruled out by measurement: batching all opaque draws into one
+  `glMultiDrawElementsBaseVertex` cut `renderMs` but left GPU time unchanged (Mesa non-indirect multidraw is a
+  CPU loop); removing the cutout `discard` to enable early-Z moved `geomMs` ~5 % (overdraw is negligible —
+  exposed-face meshing); the fullscreen composition pass is ~0.18 ms (fill is cheap). `geomMs` scales linearly
+  with **drawn-chunk count** (≈ triangle count), so the only lever is **fewer triangles** — which is what the
+  Phase-2 flat-top + skirt LOD meshing of distant terrain buys (`geomMs` ~4.8→1.2 ms, the big win; see
+  [state-gameloop.md](state-gameloop.md) for the LOD options). **The shadow PCF pass is the exception — it is
+  fill-bound and dominant on the integrated UHD 630**, so shorten `ShadowDistance` / `ShadowMapSize` there, not
+  geometry.
+- **`WorldClient.MeshStepFor` keys LOD on horizontal (XZ) distance**, matching the horizontal LOD annulus +
+  `EvictDistantLod`, so altitude never coarsens the horizon (flying up doesn't stair-step the ground).
 - **Chunk storage is bit-packed paletted** (`PaletteStorage`; see [world-model.md](world-model.md)). It
   replaced dense `ushort[4096]` + `LightLevel[4096]`, whose per-chunk clone dominated the render thread and
   whose resident heap drove a worsening GC stall. Paletted storage shrinks both ~10–50× (uniform chunks +

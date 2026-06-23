@@ -97,6 +97,16 @@ toolkit is **`GuiButton`** (cycles a discrete value, relabelling itself) and **`
   change.
 - **FOV** (slider 30–110°), **Sensitivity** (slider, the mouse-delta multiplier), **Brightness** (slider
   0–0.3 → `uMinLight` in `Composition.fs`, the unlit floor).
+- **LOD Quality** (slider 50–200%, `GraphicsSettings.LodHorizonQuality`) — scales how far the Phase-2
+  horizon's **detail rings** (stride-4 → 8 → 16) extend before coarsening: higher = finer horizon farther out
+  (lower FPS), lower = coarser/cheaper. Does **not** touch render distance (chunks there are always full
+  detail). `WorldClient.MeshStepFor` reads it live; a change calls `WorldClient.ForceLodMeshRescan()`
+  (`StateWorld.Update`) to re-step the existing LOD regions. Default 100%.
+- **LOD Horizon** (slider 0–96 chunks, `GraphicsSettings.LodHorizonChunks`) — how many chunks of cheap LOD
+  extend past the render distance (0 = horizon dormant / Phase-2 fully off). Drives `StateWorld.LodRingChunks`
+  → `ApplyRenderDistance`, which sets `_world.LodRenderDistance` (the server gen ring / stream cull / client
+  draw+cache radii) **and raises the projection far plane to clear `LodRenderDistance`**. A change re-applies
+  the radius chain (no chunk remesh — LOD columns stream/evict at the new radius). Default 64.
 
 `Program.Main` calls `GraphicsSettings.Load()` before creating the window and seeds `NativeWindowSettings`
 from it, so the window opens with the saved vsync/fullscreen choice; the rest are read live each frame.

@@ -26,6 +26,31 @@ relevant permanent doc. Not a changelog.
   (looking down shows the Tier-A tint over the bottom, Fresnel-mixed) — that's **Tier C** (a forward water
   pass after composition reading the opaque scene colour/depth). Water is also **not a fluid** — it doesn't
   flow, level, or fill; it's a static block placed by gen below sea level.
+- **Distant-Horizons LOD is shipped (quality-first); a few refinements are deferred.** Default config: full
+  per-block detail across the whole render distance (no within-RD LOD), then a huge Phase-2 horizon
+  (`LodHorizonChunks` 64, max 96) of cheap LOD columns coarsening with distance (stride-4 → 8 → 16 rings,
+  scaled by the **LOD Quality** option), with far-ring trees matched to real positions and a dithered
+  cross-fade at the render-distance seam. See [rendering.md](rendering.md), [networking.md](networking.md),
+  [worldgen.md](worldgen.md), [threading.md](threading.md). Residual edges:
+  - **LOD throughput while moving — meshing is solved; gen/alloc is the remaining cost.** Reserved *LOD-first*
+    mesh workers keep the visible horizon meshed even while cruising far out with a big render distance (peak
+    visible-unmeshed ~3% in the far+heavy benchmark). What's still stride-2-driven: the store is stride-2
+    (finest LOD = nearest ring), ~4× the column data of stride-4 → ~3× the allocation, **and** the server
+    `FillLodRegion` does the full 4096-column noise even for a region that meshes away to stride-16 — so fast
+    movement churns Gen2 GC / wasted gen. The clean fix is a **variable-resolution store**: generate near
+    regions at stride-2 and far regions at stride-4/8/16, so the bulk of the horizon carries ¼–1/64 the data
+    (needs per-region stride in the gen + packet + re-gen on band change). Until then a LOD-mesh queue drained
+    **nearest-first** (it's a plain FIFO) would further insure the visible band against bursts.
+  - **Trees coarsen out at the far rings.** A super-cell takes its tallest member (max-surface downsample), so
+    a forest stays a canopy plateau but an isolated tree shrinks to a blob and may drop out at stride-8/16. The
+    canopy is leaf-only (no trunk).
+  - **Stride-ring seams.** Wide rings keep adjacent regions within one step, so cracks are bounded; per-cell
+    skirts (to the neighbour super-cell or `LodFloorY`) hide most, but a hairline gap at a step boundary on a
+    steep slope is possible. Greedy-merging skirt runs would tighten this (deferred).
+  - **No LOD light BFS / single surface section.** Columns are sky-15 flat (no torches/AO at the horizon) and
+    K=1 (one surface run), so overhangs/floating islands aren't represented; a 2-section run-list is the
+    deferred fix. **No LOD disk persistence** (regenerated on revisit). **No LOD shadows.**
+  - **Tall coastline skirts read as bright vertical walls** where water meets a steep drop (harmless, no holes).
 - **Animated textures show frame 0 only.** Strips are sliced and all frames uploaded + retained
   (`BlockTextureManager.AnimatedTextures` with `frametime`), but nothing cycles them yet. The animator
   (advance the sampled layer by a remesh-free uniform/layer swap) is the deferred path. The `.mcmeta`

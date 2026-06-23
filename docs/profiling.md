@@ -98,3 +98,34 @@ programs get names. Every call is a no-op unless `Enabled` (same detection, or `
 depth-only pass being the GPU bottleneck means geometry/draw-call-bound, not fill/shader-bound** — the shadow
 pass redraws all in-range opaque chunks from the sun's POV, so the fix is reducing geometry submitted (shorter
 `ShadowDistance`, smaller `ShadowMapSize`), not shader work.
+
+**Automated flythrough benchmark (`--benchmark`).** The client boots straight into a fresh fixed-seed world
+and an automated camera flies a deterministic scripted path while `Profiler` + `ChunkTracer` record, then
+prints a percentile report and exits — the reliable, repeatable way to measure a render/pipeline change.
+Code: `Util/Benchmark.cs`, wired from `Program.Main` (CLI parse + vsync-off + settings pin), `StateWorld`
+(drives the camera via `Benchmark.DriveCamera` instead of player input), and `GameClient.OnRenderFrame`
+(`Benchmark.Tick` per frame, `Close()` on `Finished`). **Benchmark Release, not Debug — Debug understates FPS
+hugely.**
+
+```
+bin/Release/net10.0/MinecraftClone3 --benchmark   # boots the flythrough, prints report, exits
+  --benchmark-seconds=60   --benchmark-warmup=6    --benchmark-seed=1337
+  --benchmark-rd=8         --benchmark-shadows=Medium   # Off|Low|Medium|High
+  --benchmark-edits=off    --benchmark-time=220         # pinned day-clock seconds (sun pos)
+  --benchmark-offset=N     # anchor the run N blocks from the world origin (far-from-origin behaviour)
+```
+
+The report (also written to `benchmark-report.txt`) gives overall + per-phase avg / 1%-low / 0.1%-low FPS,
+the GPU per-pass split (shadow/geom/comp), CPU update/render ms, drawn chunks, GC/alloc, and **peak visible-
+unmeshed %** (the LOD horizon's health — how much of the on-screen frustum lacked a mesh at the worst frame).
+
+**LOD A/B-diff inspector (`--inspect`).** The honest "what does my render change actually do" tool, for
+catching real LOD artifacts (black faces, stair-stepping) that low-res screenshots hide. `Util/Inspect.cs`
+boots the fixed-seed world at a large window (default 1920×1080, `--inspect-width/-height`), **waits for the
+world to fully stream in** (loaded count stable + server staging drained + client mesh/upload queues empty),
+then at each fixed pose captures the *same* view twice — LOD forced off (`WorldClient.ForceLodOff` + `RemeshAll`,
+the ground truth) and LOD on — writing `inspect-<pose>-{full,lod,diff}.png` to `UserDataDir`. The **diff** is
+an amplified per-pixel `|full−lod|` (`Screenshot.WriteDiff`): a near-black image where every pixel the LOD
+changed lights up, so a regression can't hide. `Read` the PNGs to review; pick poses framing **mid-distance
+terrain** (where LOD1/2 kick in, before the fog) — a low horizontal look just frames sky+fog (full==LOD → black
+diff, a non-result). `--inspect-offset=N` anchors the run N blocks from the world origin.

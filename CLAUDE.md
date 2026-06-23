@@ -1,7 +1,8 @@
 # CLAUDE.md
 
-A from-scratch Minecraft-like voxel engine in C# on OpenTK (OpenGL). Custom deferred renderer, plugin
-system, chunked world with RGB block-light + sky-light propagation and a dynamic day/night cycle, a
+A from-scratch Minecraft-like voxel engine in C# on OpenTK (OpenGL). Custom deferred renderer with a
+Distant-Horizons-style far-terrain LOD horizon, plugin system, chunked world with RGB block-light +
+sky-light propagation and a dynamic day/night cycle, a
 plugin-extensible world generator (biomes, ores, trees, caves, oceans), player movement (MC-exact walking +
 a creative free-flight toggle), and client/server multiplayer (singleplayer runs an in-process server over a
 loopback connection; multiplayer connects to a dedicated server over TCP).
@@ -132,7 +133,7 @@ the linked doc; this is the short "don't violate this" list.
 | Terrain gen, biomes, features, carvers, determinism | [docs/worldgen.md](docs/worldgen.md) |
 | Packets, chunk streaming, block-change deltas, caching/eviction | [docs/networking.md](docs/networking.md) |
 | Threads, the tick loop, the 5 invariants in full | [docs/threading.md](docs/threading.md) |
-| Deferred renderer, shadows, sky/water shaders, the G-buffer | [docs/rendering.md](docs/rendering.md) |
+| Deferred renderer, shadows, sky/water shaders, the G-buffer, the Phase-2 distant-horizon LOD | [docs/rendering.md](docs/rendering.md) |
 | States/overlays, the game loop, player physics, graphics options | [docs/state-gameloop.md](docs/state-gameloop.md) |
 | Resource cascade, plugin loading, resource packs, models/textures | [docs/resources.md](docs/resources.md) |
 | F1/F3/F4/F7/F10 debug keys, the profiler CSVs, dotnet-trace, RenderDoc | [docs/profiling.md](docs/profiling.md) |
