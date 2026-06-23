@@ -55,6 +55,7 @@ namespace MinecraftClone3API.Util
         // Pins the day clock so sun/shadow conditions are identical every run (≈ mid-morning: sun well up,
         // long shadows, the shadow passes active — the heavy, representative case). See WorldRenderer.
         public static double FixedTimeOfDay = 220.0;
+        public static float OriginOffset;   // diagnostic: shift spawn/path this far from the world origin (X=Z)
 
         // ── Scripted path tuning (blocks, blocks/s, radians) ─────────────────────────────────────────────
         private const float CruiseAltitude = 42f;     // height above the spawn surface for the sweeps
@@ -129,6 +130,7 @@ namespace MinecraftClone3API.Util
                     case "benchmark-lodhorizon": if (int.TryParse(val, out var lh)) LodHorizonChunks = lh; break;
                     case "benchmark-edits": DoEdits = !(val.Equals("off", StringComparison.OrdinalIgnoreCase) || val == "0"); break;
                     case "benchmark-time": if (double.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var t)) FixedTimeOfDay = t; break;
+                    case "benchmark-offset": if (float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var of)) OriginOffset = of; break;
                     case "benchmark-shadows":
                         if (Enum.TryParse<ShadowQuality>(val, true, out var sq)) Shadows = sq;
                         break;
@@ -170,8 +172,8 @@ namespace MinecraftClone3API.Util
         public static void Begin(Vector3 origin)
         {
             if (Active) return;
-            _origin = origin;
-            _phaseAnchor = origin;
+            _origin = origin + new Vector3(OriginOffset, 0, OriginOffset);
+            _phaseAnchor = _origin;
             _phase = Phase.Warmup;
             Active = true;
             _clock.Restart();
@@ -217,6 +219,7 @@ namespace MinecraftClone3API.Util
                     pos = _phaseAnchor + new Vector3(CruiseSpeed * local, 4f * (float) Math.Sin(local * 0.6), 0);
                     yaw = 0.45f * (float) Math.Sin(local * 0.4);
                     pitch = -0.32f;
+                    if ((int) local != _lastLodLogSecond) { _lastLodLogSecond = (int) local; SampleLodHealth(pos); }
                     break;
                 }
                 case Phase.Orbit:
@@ -271,6 +274,35 @@ namespace MinecraftClone3API.Util
             player.Yaw = yaw;
             player.Pitch = pitch;
             player.Rotate(0, 0); // recompute Forward/Right from Yaw/Pitch
+        }
+
+        private static int _lastLodLogSecond = -1;
+        private static float _peakLodUnmeshedFrac;   // worst fraction of visible LOD regions left unmeshed while moving
+
+        /// <summary>Samples LOD horizon health while cruising: the fraction of regions inside the LOD draw distance
+        /// that are NOT yet meshed/uploaded. A sustained high value means the LOD mesh pipeline is starving behind
+        /// continuous movement (the "walk far → horizon goes coarse/empty" regression) — surfaced in the report.</summary>
+        private static void SampleLodHealth(Vector3 p)
+        {
+            var world = Profiler.World;
+            if (world == null) return;
+            var list = world.LodRenderList;
+            var drawSq = world.LodRenderDistance * world.LodRenderDistance;
+            int vis = 0, unmeshed = 0;
+            for (var i = 0; i < list.Count; i++)
+            {
+                var rd = list[i];
+                var dx = rd.Middle.X - p.X;
+                var dz = rd.Middle.Z - p.Z;
+                if (dx * dx + dz * dz > drawSq) continue;   // only regions the player can actually see
+                vis++;
+                if (!rd.Uploaded) unmeshed++;
+            }
+            if (vis > 0)
+            {
+                var frac = (float) unmeshed / vis;
+                if (frac > _peakLodUnmeshedFrac) _peakLodUnmeshedFrac = frac;
+            }
         }
 
         private static void RunEdits(EntityPlayer player, WorldBase world, double rt)
@@ -451,6 +483,8 @@ namespace MinecraftClone3API.Util
             if (DoEdits) AppendSection(sb, "  edit", Phase.Edit);
 
             sb.AppendLine();
+            sb.AppendLine($"LOD horizon:  peak visible-unmeshed {_peakLodUnmeshedFrac * 100:0}%  " +
+                          "(high => LOD mesh pipeline starving behind movement)");
             sb.AppendLine($"GC over run:  gen0={dGc0}  gen1={dGc1}  gen2={dGc2}  totalAlloc={allocMB:0.0} MB" +
                           (_samples.Count > 0 ? $"  ({allocMB / _samples.Count * 1024:0.0} KB/frame)" : ""));
             sb.AppendLine("=================================================");

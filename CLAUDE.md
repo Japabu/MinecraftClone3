@@ -400,7 +400,9 @@ spawn column (one-shot join signal, see the handshake above) → **flush block c
                  benign, NOT a bug: both Update calls serialize on lock(_vao)+lock(_transparentVao), each is a
                  complete self-contained remesh (its own pooled lists, read-only storage), and TryUpload's
                  Monitor.TryEnter never observes a half-built mesh — the only cost is a redundant remesh (it
-                 cannot fire during the edit-free load burst)
+                 cannot fire during the edit-free load burst). A small fraction of the pool is reserved
+                 *LOD-first* (the rest chunk-first) so the Phase-2 horizon can't be starved by chunk meshing
+                 during sustained movement — see the Phase-2 rendering section.
    Update()      (MAIN thread) pumps packets (routing ChunkData/BlockChanges to _applyQueue, handling
                  entity/login inline), DrainRenderReady → creates ChunkRenderData (GL) + queues meshing,
                  TryUploads meshed chunks (GL, non-blocking, time-budgeted per frame — requeues a chunk being
@@ -678,10 +680,20 @@ look. End-to-end data flow:
 - **Client pipeline** (`WorldClient`): `LodColumnData` rides the **same ordered `_applyQueue`**; the apply
   thread decodes it into the client `LodStore` (sole writer) and enqueues `_lodRenderReady`. The main thread
   (`DrainLodRenderReady`) creates a `LodRenderData` per region (GL-free) + a `LodRenderList` entry; the **shared
-  mesh pool** meshes it as a *lowest-priority* branch (`TryMeshOneLod`, after all chunk work) via
-  `ChunkMesher.AddLodColumnRegionToVao`; the main-thread upload loop uploads it into a **second
-  `ChunkMeshArena` (`LodArena`)** after the chunk uploads, within the same frame budget. Eviction
-  (`EvictDistantLod`) drops regions past `LodCacheDistance`. All GL is main-thread (Invariant 1).
+  mesh pool** meshes it (`TryMeshOneLod`) via `ChunkMesher.AddLodColumnRegionToVao`; the main-thread upload loop
+  uploads it into a **second `ChunkMeshArena` (`LodArena`)** after the chunk uploads, within the same frame
+  budget. Eviction (`EvictDistantLod`) drops regions past `LodCacheDistance`. All GL is main-thread (Invariant 1).
+  **Mesh-pool priority is split so the horizon can't starve.** Most workers are *chunk-first* (treat LOD as
+  lowest priority — near terrain stays responsive), but a small fraction (`lodWorkers = min(max(1, workers/4),
+  workers−1)`, e.g. 2 of 10) are *LOD-first*; both fall through to the other queue when their own is empty, so no
+  worker idles. Without a reserved LOD worker, sustained movement keeps the detail-chunk queue **permanently
+  non-empty**, so the old "LOD only when no chunk work" rule starved the horizon completely — the LOD mesh queue
+  grew unboundedly and the **whole visible horizon went unmeshed** ("walk far with a large render distance ⇒
+  every LOD super low-res", which *looked* like a broken LOD-level calc but was pure mesh starvation: stationary
+  or after stopping it meshed fine). The reserved worker(s) keep the LOD mesh queue at ~0 even while cruising far
+  out with RD 16 + a 96-chunk horizon. (`Benchmark` reports **peak visible-unmeshed %** to catch a regression;
+  `--benchmark-offset=N` / `--inspect-offset=N` anchor the run N blocks from the origin to test far-from-origin
+  behaviour — the bug was first mis-attributed to coordinate precision, which both confirmed is *not* the cause.)
 - **The run-list mesher** (`ChunkMesher.AddLodColumnRegionToVao(store, key, vao, meshStep)`): the *same* flat-top
   + skirt + `IsLodSurface` + skirt-shade emission as the within-RD mesher, but driven by the packed columns (no
   world, no real blocks) — `GameRegistry.BlockRegistry[blockId]` for the block, world-free
@@ -691,8 +703,9 @@ look. End-to-end data flow:
   stride 2/4/8/16): the mesher downsamples the stride-2 store to a super-grid by **MAX surface** (`MaxSurfaceCell`
   — keeps trees/peaks from sinking, so forests stay canopy plateaus when coarsened) and meshes the super-grid;
   neighbour super-cells are computed on demand (`SuperNeighbourY`). `LodRenderData.DesiredMeshStep` is set by
-  `WorldClient.ScanLodForMeshStep` (own chunk-cross gate) from the region's distance: **stride-2 for the first
-  `LodRing1Distance` (16 chunks) past the render distance** (so the nearest, most-visible horizon is fine — a
+  `WorldClient.ScanLodForMeshStep` (own chunk-cross gate) from the region's **horizontal (XZ) distance**
+  (`MeshStepFor` — XZ not 3D, matching the horizontal annulus + `EvictDistantLod`, so altitude doesn't coarsen
+  the horizon): **stride-2 for the first `LodRing1Distance` (16 chunks) past the render distance** (so the nearest, most-visible horizon is fine — a
   gentle step down from full detail), then stride-4, then stride-8, then stride-16 — **rings ≥ 1 region (8
   chunks) wide so adjacent regions never differ by >1 step (no >2× crack)**, scaled by the **LOD Quality** option.
   Doubling the horizon adds ~0 geom (the far rings are 4×/16× cheaper + fog-occluded). The loopback apply path
@@ -1446,15 +1459,18 @@ win. They are settled — not open work. (Each was the top allocator/cost in a t
     (harmless, no holes).
   - **No LOD light BFS / single surface section.** Columns are sky-15 flat (no torches/AO at the horizon) and
     K=1 (one surface run), so overhangs/floating islands aren't represented; a 2-section run-list is the
-    deferred fix. **No disk persistence** for LOD columns (regenerated on revisit). **No LOD shadows.** Occasional
-    frame hitches at a huge horizon (LOD mesh/stream bursts) — the deferred "optimize later" pass.
-  - **Motion GC hitches from the stride-2 store.** The store is stride-2 (finest LOD = the nearest ring) so the
-    near horizon looks fine, but that's 4× the column data of stride-4 → ~3× the allocation, so MOVING (the
-    benchmark orbit) churns Gen2 GC: ~1.3 fps 0.1%-low, worst frame ~0.7 s (the average stays ~140). Quality-
-    first / optimize-later per the maintainer. The clean fix is a **variable-resolution store** — generate near
-    regions at stride-2 and far regions at stride-4/8 (the far rings don't need stride-2 data they mesh away), so
-    the bulk of the horizon carries ¼ the data; deferred (needs per-region stride in the gen + packet + re-gen on
-    band change).
+    deferred fix. **No disk persistence** for LOD columns (regenerated on revisit). **No LOD shadows.**
+  - **LOD throughput while moving — meshing is fixed; gen/alloc is the remaining cost.** The reserved *LOD-first*
+    mesh workers (see the Phase-2 client-pipeline section) keep the visible horizon meshed even while cruising far
+    out with a big render distance — *peak visible-unmeshed ~3 %* in the far+heavy benchmark, vs the whole horizon
+    going unmeshed before (the "walk far ⇒ every LOD super low-res" bug). What's **still** stride-2-driven: the
+    store is stride-2 (finest LOD = the nearest ring), 4× the column data of stride-4 → ~3× the allocation **and**
+    the server `FillLodRegion` does the full 4096-column noise even for a region that meshes away to stride-16, so
+    fast movement still churns Gen2 GC / wasted gen. The clean fix is a **variable-resolution store** — generate
+    near regions at stride-2 and far regions at stride-4/8/16 (the far rings don't need stride-2 data they mesh
+    away), so the bulk of the horizon carries ¼–1/64 the data; deferred (needs per-region stride in the gen +
+    packet + re-gen on band change). Until then a LOD-mesh queue drained **nearest-first** (it's a plain FIFO) would
+    further insure the *visible* band against any burst.
 - **Player physics is the "80%" walk model — several exact-MC behaviours are deferred.** Implemented: gravity,
   jump, swept per-axis AABB collision, Ctrl sprint, walk/fly toggle, **auto-step up `StepHeight` (0.6 = MC)
   ledges** (climbs slabs/partial blocks, still jump for a full cube). **Not** implemented: sprint-jump forward

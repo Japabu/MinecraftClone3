@@ -31,6 +31,7 @@ namespace MinecraftClone3API.Util
         public static int Height = 1080;
         public static int RenderDistanceChunks = 16;
         public static double FixedTimeOfDay = 220.0;
+        public static Vector3 OriginShift;   // diagnostic: anchor the poses this far from the world origin
 
         private struct Pose
         {
@@ -91,6 +92,10 @@ namespace MinecraftClone3API.Util
                     case "inspect-height": int.TryParse(val, out Height); break;
                     case "inspect-rd": int.TryParse(val, out RenderDistanceChunks); break;
                     case "inspect-time": double.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out FixedTimeOfDay); break;
+                    case "inspect-offset":
+                        if (float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var off))
+                            OriginShift = new Vector3(off, 0, off);
+                        break;
                 }
             }
         }
@@ -122,7 +127,7 @@ namespace MinecraftClone3API.Util
         {
             if (!Active || _poseIndex >= Poses.Length) return;
             var pose = Poses[_poseIndex];
-            var pos = _origin + pose.Offset;
+            var pos = _origin + OriginShift + pose.Offset;
             player.Position = pos;
             player.PrevPosition = pos;
             player.InterpolatedPosition = pos;
@@ -166,6 +171,7 @@ namespace MinecraftClone3API.Util
                     if (_poseIndex == 0)
                         Logger.Info($"[inspect] world streamed in {_fillTimer.Elapsed.TotalSeconds:0.0}s " +
                                     $"({loaded} chunks loaded)");
+                    LogLodSteps(world);
                     Goto(State.FullSettle, () => { world.ForceLodOff = true; world.RemeshAll(); });
                     break;
 
@@ -221,6 +227,37 @@ namespace MinecraftClone3API.Util
             world.MeshQueueDepth == 0 && world.UploadQueueDepth == 0 &&
             world.RenderReadyQueueDepth == 0 && world.ApplyQueueDepth == 0 &&
             world.LodRenderReadyQueueDepth == 0;
+
+        private static void LogLodSteps(WorldClient world)
+        {
+            var pose = Poses[_poseIndex];
+            var p = _origin + OriginShift + pose.Offset;
+            int s1 = 0, s2 = 0, s4 = 0, s8 = 0, other = 0;
+            var minD = float.MaxValue;
+            var maxD = 0f;
+            var list = world.LodRenderList;
+            for (var i = 0; i < list.Count; i++)
+            {
+                var rd = list[i];
+                var dx = rd.Middle.X - p.X;
+                var dz = rd.Middle.Z - p.Z;
+                var d = MathF.Sqrt(dx * dx + dz * dz);
+                if (d < minD) minD = d;
+                if (d > maxD) maxD = d;
+                switch (rd.DesiredMeshStep)
+                {
+                    case 1: s1++; break;
+                    case 2: s2++; break;
+                    case 4: s4++; break;
+                    case 8: s8++; break;
+                    default: other++; break;
+                }
+            }
+            Logger.Info($"[inspect] LOD steps @pose '{pose.Name}' player=({p.X:0},{p.Z:0}) regions={list.Count} " +
+                        $"step1={s1} step2={s2} step4={s4} step8={s8} other={other} " +
+                        $"distXZ=[{(list.Count == 0 ? 0 : minD):0}..{maxD:0}] " +
+                        $"rd={GraphicsSettings.RenderDistanceChunks} q={GraphicsSettings.LodHorizonQuality:0.0}");
+        }
 
         private static void Finish()
         {

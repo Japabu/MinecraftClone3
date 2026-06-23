@@ -216,10 +216,19 @@ namespace MinecraftClone3API.Client.Blocks
             // GL upload (Invariant 1), so a pool scales throughput ~linearly with cores. Leave two cores for
             // the main (render) and server load threads.
             var meshWorkers = Math.Max(1, Environment.ProcessorCount - 2);
+            // Reserve a fraction of the pool as LOD-first workers so the distant horizon can never be fully
+            // starved by chunk meshing. The chunk-first workers still treat LOD as lowest priority (near terrain
+            // stays responsive), but with sustained movement the detail-chunk queue is *never* empty, so without
+            // a reserved worker the LOD mesh queue grows unboundedly and the whole horizon goes unmeshed (the
+            // "walk far → every LOD super low-res" bug). Both kinds fall through to the other queue when their
+            // own is empty, so no worker idles while any mesh work remains. Single-core pools keep one
+            // chunk-first worker (can't dedicate the only one).
+            var lodWorkers = Math.Min(Math.Max(1, meshWorkers / 4), meshWorkers - 1);
             _meshThreads = new Thread[meshWorkers];
             for (var i = 0; i < meshWorkers; i++)
             {
-                _meshThreads[i] = new Thread(MeshThread) {Name = $"Client Mesh Thread {i}", IsBackground = true};
+                var lodFirst = i < lodWorkers;
+                _meshThreads[i] = new Thread(() => MeshThread(lodFirst)) {Name = $"Client Mesh Thread {i}", IsBackground = true};
                 _meshThreads[i].Start();
             }
         }
@@ -410,7 +419,12 @@ namespace MinecraftClone3API.Client.Blocks
 
         private int MeshStepFor(Vector3 middle)
         {
-            var d = (middle - _playerPosition).Length - GraphicsSettings.RenderDistanceChunks * Chunk.Size;
+            // Horizontal (XZ) distance: the LOD regions form a horizontal annulus and the rings are defined in the
+            // ground plane (EvictDistantLod uses XZ too), so a region's stride must not change with the player's
+            // altitude — a full 3D distance would spuriously coarsen the whole horizon when flying high.
+            var dx = middle.X - _playerPosition.X;
+            var dz = middle.Z - _playerPosition.Z;
+            var d = MathF.Sqrt(dx * dx + dz * dz) - GraphicsSettings.RenderDistanceChunks * Chunk.Size;
             // LOD Quality pushes the rings out (finer horizon farther) or pulls them in (coarser, faster).
             var q = GraphicsSettings.LodHorizonQuality;
             if (d < LodRing1Distance * q) return 1;   // stride-2
@@ -806,43 +820,56 @@ namespace MinecraftClone3API.Client.Blocks
             }
         }
 
-        private void MeshThread()
+        private void MeshThread(bool lodFirst)
         {
             while (!_stopped)
             {
-                Vector3i position = default;
-                var found = false;
-                lock (_meshLock)
+                // A LOD-first worker drains the horizon queue first and only helps with chunks when no LOD work
+                // remains; a chunk-first worker is the reverse (near terrain is the priority). Either way the
+                // worker falls through to the other queue rather than idling, then sleeps only when both are dry.
+                if (lodFirst)
                 {
-                    if (_meshQueueHigh.Count > 0)
-                    {
-                        position = _meshQueueHigh.Dequeue();
-                        found = true;
-                    }
-                    else if (_meshQueueLow.Count > 0)
-                    {
-                        position = _meshQueueLow.Dequeue();
-                        found = true;
-                    }
-
-                    // Drop duplicates: a promoted position may sit in both queues; only the first
-                    // dequeue (which clears the pending flag) does the work.
-                    if (found && !_meshPending.Remove(position)) found = false;
-                    _meshQueueDepth = _meshPending.Count;
+                    if (TryMeshOneLod()) continue;
+                    if (TryMeshOneChunk()) continue;
                 }
-
-                if (found)
+                else
                 {
-                    MeshChunk(position);
-                    continue;
+                    if (TryMeshOneChunk()) continue;
+                    if (TryMeshOneLod()) continue;
                 }
-
-                // No detail-chunk work pending: mesh one distant LOD region (lowest priority — the horizon
-                // always yields to the near terrain). Sleep OUTSIDE the lock only when neither queue has work.
-                if (TryMeshOneLod()) continue;
 
                 Thread.Sleep(2);
             }
+        }
+
+        /// <summary>Dequeues and meshes one pending detail chunk (high queue before low). Returns false when no
+        /// chunk work is pending. Mesh-pool worker only.</summary>
+        private bool TryMeshOneChunk()
+        {
+            Vector3i position = default;
+            var found = false;
+            lock (_meshLock)
+            {
+                if (_meshQueueHigh.Count > 0)
+                {
+                    position = _meshQueueHigh.Dequeue();
+                    found = true;
+                }
+                else if (_meshQueueLow.Count > 0)
+                {
+                    position = _meshQueueLow.Dequeue();
+                    found = true;
+                }
+
+                // Drop duplicates: a promoted position may sit in both queues; only the first
+                // dequeue (which clears the pending flag) does the work.
+                if (found && !_meshPending.Remove(position)) found = false;
+                _meshQueueDepth = _meshPending.Count;
+            }
+
+            if (!found) return false;
+            MeshChunk(position);
+            return true;
         }
 
         private void MeshChunk(Vector3i position)
