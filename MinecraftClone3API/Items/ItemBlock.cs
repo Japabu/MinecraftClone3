@@ -14,8 +14,13 @@ namespace MinecraftClone3API.Items
 
         public ItemBlock(Block block) : base(block.Name) => Block = block;
 
+        public override string MinecraftId => Block.MinecraftId;
+
         public override Block GetBlock() => Block;
 
-        public override string GetUnlocalizedName() => I18N.UnlocalizedName(Block.RegistryKey, "blocks");
+        public override string GetUnlocalizedName() =>
+            Block.MinecraftId != null
+                ? Identifier.TranslationKey("block", Block.MinecraftId)
+                : I18N.UnlocalizedName(Block.RegistryKey, "blocks");
     }
 }

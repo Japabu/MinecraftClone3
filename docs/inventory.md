@@ -2,15 +2,17 @@
 
 A creative-mode inventory: a 9-slot hotbar plus a 27-slot main inventory, every item available in infinite
 supply, server-authoritative and persisted per player. The held hotbar item is what placement uses. Items are
-a first-class registry (not just blocks), and a shaped/shapeless crafting system turns items into others.
+a first-class registry (not just blocks), and crafting recipes loaded from the resource pack turn items into
+others.
 
 ## Item model (`Items/`, GL-free, shared)
 
 - **`Item`** (`Items/Item.cs`) — a `RegistryEntry` with a ushort `Id`, a `MaxStackSize`, `GetBlock()` (the
-  block it places, or null), a 2D inventory-sprite `TexturePath` (for non-block items), and `GetName()` (the
-  localized display name). The base class is GL-free so the headless server uses it. A non-block item can set
-  `IsUsable` and override `OnUseServer` for a server-side right-click action (e.g. Vanilla's `ItemSpawnEgg`
-  spawns a creature — see [entities.md](entities.md)); right-clicking a usable item sends a `UseItemRequestPacket`.
+  block it places, or null), a 2D inventory-sprite `TexturePath` (for non-block items), a `MinecraftId` (its
+  `namespace:name` content id), and `GetName()` (the localized display name). The base class is GL-free so the
+  headless server uses it. A non-block item can set `IsUsable` and override `OnUseServer` for a server-side
+  right-click action (e.g. Vanilla's `ItemSpawnEgg` spawns a creature — see [entities.md](entities.md));
+  right-clicking a usable item sends a `UseItemRequestPacket`.
 - **`ItemBlock`** (`Items/ItemBlock.cs`) — the auto-generated item form of a block. Registering a block
   (`PluginContext.Register(Block)`) also registers an `ItemBlock` for it under the same registry key, so every
   block is an item: placeable (`GetBlock()` returns the block) and rendered as a 3D isometric icon.
@@ -25,34 +27,62 @@ a first-class registry (not just blocks), and a shaped/shapeless crafting system
   assignment is a deep copy — relied on when cloning inventories across the loopback transport.
 - **`Inventory`** — `Slots[36]` (hotbar `0..8`, main `9..35`) + `SelectedHotbar`. `Write`/`Read` serialize it.
 
-**Display names.** `I18N.UnlocalizedName(registryKey, category)` maps a `"Vanilla:Stone"` registry key to the
-lang key `"vanilla.blocks.Stone"` (`"vanilla.items.Stick"` for items). `Block.GetUnlocalizedName` /
-`Item.GetUnlocalizedName` use it, so adding a block/item only needs a matching `vanilla.<category>.<Name>` line
-in `VanillaPlugin/Content/Lang/en-US.lang`.
+**Minecraft identity & display names.** Each block/item carries a `MinecraftId` (e.g. `"minecraft:stone"`,
+`"minecraft:stick"`) — `BlockBasic` derives it from the model path and `ItemSimple` from the texture path;
+custom blocks whose path doesn't match (water) set it explicitly. `Identifier` (`Util/Identifier.cs`) derives
+ids from resource paths and builds the Minecraft translation key (`block.minecraft.stone`,
+`item.minecraft.stick`). `Block`/`Item.GetName` resolve through that key, so names come straight from the
+resource pack's `lang/*.json` (see [resources.md](resources.md)) — there is no hand-written Vanilla lang file.
 
 ## Crafting (`Items/`, GL-free engine; `Client/GUI/`, client logic + screens)
 
 - **`CraftingRecipe`** (`Items/CraftingRecipe.cs`) — abstract; matches an N×N grid (row-major `ItemStack[]`)
-  and yields a `Result`. `ShapedRecipe` (a trimmed pattern of item ids, placeable anywhere in the grid and
-  horizontally mirrorable) and `ShapelessRecipe` (a multiset of ingredient ids filling the grid). Matching
-  compares item ids only (metadata ignored). `Recipes.Shaped/Shapeless` (`Items/Recipes.cs`) build them from
-  registry keys; `PluginContext.Register(CraftingRecipe)` registers them. `GameRegistry.MatchRecipe(grid,w,h)`
-  returns the first matching result. Vanilla's recipes live in `VanillaPlugin/VanillaRecipes.cs` (planks,
-  sticks, crafting table, oak stairs, torches, stone bricks).
-- **`CraftingState`** (`Client/GUI/CraftingState.cs`) — shared client crafting logic: an N×N scratch grid plus
-  the cursor-held stack, with the standard pick/place/swap slot interaction, the recipe result, ingredient
-  consumption on take, and returning grid contents to the inventory on close. Player-inventory edits mutate
-  the server-authoritative replica and mirror up via `WorldClient.SendInventoryAction`; the grid is pure local
-  scratch.
+  and yields a `Result`. `ShapedRecipe` (a trimmed pattern, placeable anywhere in the grid and horizontally
+  mirrorable) and `ShapelessRecipe` (a multiset filling the grid). **Each ingredient cell is a *set* of
+  acceptable item ids**, so a Minecraft tag (`#planks`) or an explicit list of alternatives both reduce to
+  "any of these ids"; matching is a cheap id-set membership test (metadata ignored).
+  `GameRegistry.MatchRecipe(grid,w,h)` returns the first matching result.
+- **Recipes come from the resource pack** — `RecipeLoader` (`Items/RecipeLoader.cs`) runs once after all
+  plugins load. It maps every Minecraft item id to the item we actually registered (by `MinecraftId`), then
+  reads the pack's `data/<ns>/recipe/*.json` (the Minecraft data format), resolving ingredient tags from
+  `data/<ns>/tags/item/*.json` (recursively). A recipe registers **only when its result and every ingredient
+  cell resolve to at least one item we have**, so a pack with thousands of recipes contributes exactly those
+  craftable from the registered content (planks, sticks, crafting table, oak stairs, torches, stone bricks
+  with the current Vanilla set). Only shaped/shapeless crafting recipes are used; smelting/stonecutting/etc.
+  are ignored.
+- **`CraftingState`** (`Client/GUI/CraftingState.cs`) — the backing state of a crafting grid: the N×N scratch
+  grid (local, not part of the inventory), the recipe result, consuming one batch's ingredients
+  (`ConsumeOne`), and returning leftovers to the inventory on close. The cursor and all slot interaction live
+  in `ContainerScreen`. Player-inventory edits mutate the server-authoritative replica and mirror up via
+  `WorldClient.SendInventoryAction`.
 - **3×3 crafting table** — `GuiCraftingTable` (`Client/GUI/GuiCraftingTable.cs`), opened by **right-clicking a
   crafting table block**, over the official `container/crafting_table.png` (placeholder slot frames without a
-  pack). Shows the 3×3 grid, the result slot, and the full player inventory.
-- **2×2 player crafting** — embedded in `GuiCreativeInventory` (the free area left of the item grid; Minecraft
-  puts player crafting in the creative survival tab), reusing `CraftingState`.
+  pack). The 3×3 grid + result slot + the full player inventory. The creative inventory has **no** crafting
+  grid (crafting is the table's job, matching vanilla creative).
 
 **Right-click interaction.** `Block.OnActivated(window, world, pos, player)` (default false) lets a block
 handle a right-click (and suppress placing the held item). It is **client-only** — `PlayerController` calls it
 before `PlaceBlock`; the headless server never does — so a block may open a GUI there (`BlockCraftingTable`).
+
+## Container screens & slot interaction (`Client/GUI/ContainerScreen.cs`, `Slot.cs`)
+
+`ContainerScreen` is the shared base for the crafting-table and creative screens. It owns the cursor-held
+stack and implements the **full vanilla slot interaction** against the `Slot`s a subclass declares; a `Slot`
+is a GUI-space rect plus get/set accessors onto wherever the stack lives (a grid cell, a server-mirrored
+inventory slot, a crafting result, or a creative infinite source):
+
+- **Left-click** — pick up / place / swap / merge same-item stacks (up to max stack).
+- **Right-click** — pick up half (ceil) from a slot, or place one onto an empty/matching slot.
+- **Left-drag** across ≥2 slots — distribute the held stack evenly, remainder back to the cursor.
+- **Right-drag** across slots — one item per slot.
+- **Output slot** — can't be placed into; taking crafts one batch (`OnTakeOutput` → `ConsumeOne`); merges with
+  a matching cursor. **Shift-click** the output crafts as many batches as the grid allows into the inventory.
+- **Source slot** (creative item list) — left-click takes a full stack, right-click one; dropping a held stack
+  onto it discards it (vanilla trash behavior).
+
+Clicks resolve on button release so a press-move-release can become a drag; a press+release on one slot is a
+normal click. Inventory `Slot.Set` closures write the replica and call `SendInventoryAction`, so every edit
+syncs to the server automatically.
 
 ## Authority, networking, persistence
 
@@ -79,9 +109,9 @@ optimistically, and sends `InventoryAction` / `HeldSlot` on changes. Inputs are 
   re-asserts alpha blending before blitting because `GetIcon` may have just rendered (depth on, blend off).
 - **`HotbarRenderer`** draws the always-on HUD hotbar from `widgets.png` (placeholder boxes without a pack).
 - **`GuiCreativeInventory`** (overlay, **E**) — scrollable grid of every registered item over
-  `creative_inventory/tab_items.png`, a cursor-held stack, the clickable hotbar row, and the 2×2 crafting panel.
+  `creative_inventory/tab_items.png`, a cursor-held stack, and the clickable hotbar row.
 - **`GuiTooltip`** (`Client/GUI/GuiTooltip.cs`) — the item-name tooltip drawn next to the cursor when hovering
-  a non-empty slot; used by the creative and crafting-table screens.
+  a non-empty slot; used by both container screens.
 
 **No Minecraft assets are shipped.** GUI/item textures load at runtime from the user's resource pack by asset
 path (guarded by `ResourceReader.Exists`); absent a pack, screens draw placeholders.

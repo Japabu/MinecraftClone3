@@ -26,6 +26,7 @@ namespace MinecraftClone3API.IO
 
         private static string ResourceSettingsFile => GamePaths.ResourceSettingsFile;
         private const string AssetsDir = "Assets/";
+        private const string DataDir = "data/";
         private const string LangDir = "Lang/";
         private const string LangExt = ".lang";
 
@@ -42,6 +43,7 @@ namespace MinecraftClone3API.IO
         }
 
         private static readonly Dictionary<string, AssetSource> AssetIndices = new Dictionary<string, AssetSource>();
+        private static readonly Dictionary<string, AssetSource> DataIndices = new Dictionary<string, AssetSource>();
 
         internal static readonly List<LangLine> LangEntries = new List<LangLine>();
 
@@ -76,6 +78,18 @@ namespace MinecraftClone3API.IO
 
                     AssetIndices[key] = new AssetSource(fileSystem, f);
                 }
+                //Add data index (recipes, tags, …) — the pack's data/ tree drives crafting/tag content
+                else if (f.StartsWith(DataDir, StringComparison.OrdinalIgnoreCase))
+                {
+                    var key = f.Substring(DataDir.Length);
+                    if (DataIndices.TryGetValue(key, out var existing))
+                    {
+                        var otherIndex = resourceSettings.IndexOf(existing.FileSystem.Name);
+                        if (otherIndex > index) return;
+                    }
+
+                    DataIndices[key] = new AssetSource(fileSystem, f);
+                }
                 //Import language
                 else if (f.StartsWith(LangDir, StringComparison.OrdinalIgnoreCase) &&
                          f.EndsWith(LangExt, StringComparison.OrdinalIgnoreCase))
@@ -92,6 +106,8 @@ namespace MinecraftClone3API.IO
             });
         }
 
+        internal static IEnumerable<string> AssetKeys => AssetIndices.Keys;
+
         internal static byte[] LoadAsset(string path)
         {
             if (!AssetIndices.TryGetValue(path, out var source))
@@ -101,6 +117,18 @@ namespace MinecraftClone3API.IO
         }
 
         internal static bool ExistsAsset(string path) => AssetIndices.ContainsKey(path);
+
+        internal static IEnumerable<string> DataKeys => DataIndices.Keys;
+
+        internal static byte[] LoadData(string path)
+        {
+            if (!DataIndices.TryGetValue(path, out var source))
+                throw new FileNotFoundException("File could not be found in Resources!", path);
+
+            return source.FileSystem.ReadFile(source.FullPath);
+        }
+
+        internal static bool ExistsData(string path) => DataIndices.ContainsKey(path);
 
         private static string GetLangName(string path)
         {

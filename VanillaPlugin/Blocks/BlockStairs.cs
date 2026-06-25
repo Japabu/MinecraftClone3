@@ -27,6 +27,7 @@ namespace VanillaPlugin.Blocks
 
         public BlockStairs() : base("OakStairs")
         {
+            MinecraftId = "minecraft:oak_stairs";
             Model = ResourceReader.ReadBlockModel("minecraft:block/oak_stairs");
         }
 

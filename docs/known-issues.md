@@ -155,13 +155,14 @@ relevant permanent doc. Not a changelog.
   Singleplayer is fine; distinct MP inventories need actual player names plumbed through login. Inventory edits
   are also **unvalidated** (creative sandbox) — the server stores whatever `InventoryAction`/`HeldSlot` sends
   beyond a slot-range clamp, same trust model as placement.
-- **Inventory is creative-only; crafting is client-trusted.** Items are first-class now (`Item`/`ItemBlock`
-  registry, standalone items, shaped/shapeless recipes, 2×2 in the creative menu + 3×3 crafting table — see
-  [inventory.md](inventory.md)). Accepted scope: crafting is computed **client-side** and the result mutations
-  go up as ordinary (unvalidated) `InventoryAction`s — fine for a creative sandbox, exploitable in real MP.
-  No survival pickup/drop, no shift-click bulk craft (one batch per result click), no recipe book. Standalone
-  items are inert (the apple isn't edible, no tools/durability). Shaped recipes match an exact item per cell
-  (mirrorable) — no ingredient tags/alternatives.
+- **Inventory is creative-only; crafting is client-trusted.** Items are first-class (`Item`/`ItemBlock`
+  registry, standalone items), recipes are loaded from the pack's `data/` tree with tag resolution, and the
+  3×3 crafting table has full vanilla slot interaction (pick/place/split/drag) — see [inventory.md](inventory.md).
+  Accepted scope: crafting is computed **client-side** and the result mutations go up as ordinary (unvalidated)
+  `InventoryAction`s — fine for a creative sandbox, exploitable in real MP. No survival pickup/drop, no recipe
+  book. Standalone items are inert (the apple isn't edible, no tools/durability). **Shift-click quick-move is
+  only implemented for the crafting result** (craft a full batch into the inventory); shift-clicking inventory
+  or grid slots is a no-op (no inventory↔grid/hotbar transfer yet).
 - **Item ids aren't remapped from disk.** Like block ids, the `registry.bin` save/load path exists but is
   unwired, so item ids are assigned by registration order — stable only for a fixed plugin set. A changed
   plugin set shifts ids and a saved inventory would show wrong items (delete the world, per the no-back-compat

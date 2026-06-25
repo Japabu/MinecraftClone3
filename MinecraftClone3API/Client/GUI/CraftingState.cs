@@ -6,11 +6,11 @@ using MinecraftClone3API.Util;
 namespace MinecraftClone3API.Client.GUI
 {
     /// <summary>
-    /// Client-side crafting logic shared by the 3×3 crafting-table screen and the 2×2 grid in the creative
-    /// inventory: an N×N scratch grid plus the cursor-held stack, with the standard pick/place/swap slot
-    /// interaction, recipe matching for the result, and consuming ingredients on take. The N×N grid is local
-    /// scratch (not part of the inventory); player-inventory slots are mutated on the server-authoritative
-    /// replica and mirrored up with <see cref="WorldClient.SendInventoryAction"/>.
+    /// The backing state of a crafting grid: an N×N scratch grid (local, not part of the inventory) plus recipe
+    /// matching for the result and the rules for consuming ingredients and returning leftovers. The cursor and
+    /// all slot interaction live in <see cref="ContainerScreen"/>; this just owns the grid contents. Player
+    /// inventory edits are mirrored to the server-authoritative replica via
+    /// <see cref="WorldClient.SendInventoryAction"/>.
     /// </summary>
     public class CraftingState
     {
@@ -30,82 +30,30 @@ namespace MinecraftClone3API.Client.GUI
         /// <summary>The crafting result for the current grid (empty if nothing matches).</summary>
         public ItemStack Result => GameRegistry.MatchRecipe(Grid, Size, Size);
 
-        /// <summary>Standard slot click against the cursor: pick up, drop, merge same items, or swap.</summary>
-        public void InteractGrid(int index, ref ItemStack cursor) => Interact(ref Grid[index], ref cursor);
-
-        public void InteractInventory(int index, ref ItemStack cursor)
+        /// <summary>Consume one item from each filled grid cell — one crafted batch's ingredients.</summary>
+        public void ConsumeOne()
         {
-            Interact(ref _world.Inventory.Slots[index], ref cursor);
-            _world.SendInventoryAction(index, _world.Inventory.Slots[index]);
-        }
-
-        private static void Interact(ref ItemStack slot, ref ItemStack cursor)
-        {
-            if (cursor.IsEmpty)
-            {
-                cursor = slot;
-                slot = ItemStack.Empty;
-                return;
-            }
-
-            if (slot.IsEmpty)
-            {
-                slot = cursor;
-                cursor = ItemStack.Empty;
-                return;
-            }
-
-            if (slot.SameItem(cursor))
-            {
-                var max = slot.Item?.MaxStackSize ?? ItemStack.MaxStackSize;
-                var move = Math.Min(max - slot.Count, cursor.Count);
-                slot.Count += move;
-                cursor.Count -= move;
-                if (cursor.Count <= 0) cursor = ItemStack.Empty;
-                return;
-            }
-
-            var tmp = slot;
-            slot = cursor;
-            cursor = tmp;
-        }
-
-        /// <summary>Take one crafted batch into the cursor, consuming one item from each filled grid cell.
-        /// No-op if nothing matches or the cursor can't hold the result.</summary>
-        public void TakeResult(ref ItemStack cursor)
-        {
-            var result = Result;
-            if (result.IsEmpty) return;
-
-            var max = result.Item?.MaxStackSize ?? ItemStack.MaxStackSize;
-            if (!cursor.IsEmpty && (!cursor.SameItem(result) || cursor.Count + result.Count > max)) return;
-
             for (var i = 0; i < Grid.Length; i++)
             {
                 if (Grid[i].IsEmpty) continue;
-                Grid[i].Count--;
-                if (Grid[i].Count <= 0) Grid[i] = ItemStack.Empty;
+                Grid[i] = Grid[i].Count - 1 <= 0 ? ItemStack.Empty : Grid[i].WithCount(Grid[i].Count - 1);
             }
-
-            if (cursor.IsEmpty) cursor = result;
-            else cursor.Count += result.Count;
         }
 
-        /// <summary>Returns any items left in the grid (and the cursor) to the player inventory — call when the
-        /// screen closes so nothing is lost. Items that don't fit are dropped (lost).</summary>
-        public void ReturnAllToInventory(ref ItemStack cursor)
+        /// <summary>Return any items left in the grid to the player inventory — call when the screen closes so
+        /// nothing is lost. Items that don't fit are dropped (lost).</summary>
+        public void ReturnGridToInventory()
         {
             for (var i = 0; i < Grid.Length; i++)
             {
                 if (!Grid[i].IsEmpty) AddToInventory(Grid[i]);
                 Grid[i] = ItemStack.Empty;
             }
-
-            if (!cursor.IsEmpty) AddToInventory(cursor);
-            cursor = ItemStack.Empty;
         }
 
-        private void AddToInventory(ItemStack stack)
+        /// <summary>Merge a stack into the player inventory (filling partial stacks first, then empty slots),
+        /// mirroring each touched slot to the server.</summary>
+        public void AddToInventory(ItemStack stack)
         {
             var slots = _world.Inventory.Slots;
             var max = stack.Item?.MaxStackSize ?? ItemStack.MaxStackSize;
