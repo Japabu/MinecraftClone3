@@ -38,6 +38,9 @@ namespace MinecraftClone3API.Util
             return ItemStack.Empty;
         }
 
+        internal static void RegisterRecipe(string prefix, CraftingRecipe recipe) =>
+            RecipeRegistry.Register(prefix, recipe);
+
         public static Biome GetBiome(string key) => BiomeRegistry[key];
         public static Feature GetFeature(string key) => FeatureRegistry[key];
         public static Dimension GetDimension(string key) => DimensionRegistry[key];

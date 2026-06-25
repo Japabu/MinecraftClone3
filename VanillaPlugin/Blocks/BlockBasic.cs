@@ -12,6 +12,7 @@ namespace VanillaPlugin.Blocks
         {
             _fullBlock = fullBlock;
 
+            MinecraftId = Identifier.FromResourcePath(modelPath);
             Model = ResourceReader.ReadBlockModel(modelPath);
         }
 

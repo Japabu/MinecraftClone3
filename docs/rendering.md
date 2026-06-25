@@ -52,9 +52,9 @@ are the real pack assets (`minecraft/textures/environment/sun.png`, `moon_phases
 by `WorldRenderer.LoadSkyTextures()` onto composition units 5/6; with **no pack** the
 `uHasSunTexture`/`uHasMoonTexture` flags are 0 and the shader falls back to a procedural disc. The moon sits
 opposite the sun (`-uSunDirection`), each hidden below its own horizon. The billboards bind a dedicated
-**celestial sampler** (`Samplers.BindCelestialSampler`, linear / no mipmaps / clamp-to-edge) — the small
+**celestial sampler** (`Samplers.BindCelestialSampler`, nearest / no mipmaps / clamp-to-edge) — the small
 on-screen disc would otherwise sample the auto-generated mipmaps through GL's default sampler 0 and read as a
-dim blurred blob with edge bleed. **Water reflects this same `SkyColor`** (see the water section). **Distance fog** melts lit geometry into `uHorizonColor` between
+dim blurred blob with edge bleed; nearest filtering keeps the pixel-art sun/moon crisp. **Water reflects this same `SkyColor`** (see the water section). **Distance fog** melts lit geometry into `uHorizonColor` between
 `uFogStart`/`uFogEnd` (0.72–0.97 × `RenderDistance`), hiding the chunk-load boundary against the sky (and
 fading to night darkness as the horizon colour dims). The sky/sun/star/fog colours are all `WorldRenderer` C#
 functions (`SkyZenithColor`/`SkyHorizonColor`/`SkyVoidColor`/`SunsetColor`/`StarBrightness`, sharing

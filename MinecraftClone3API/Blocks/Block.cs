@@ -48,6 +48,12 @@ namespace MinecraftClone3API.Blocks
 
         public ushort Id { get; internal set; }
 
+        /// <summary>The block's Minecraft content id (e.g. <c>"minecraft:stone"</c>), used to resolve its name
+        /// from the resource pack's translations and to match the pack's crafting recipes/tags. Set by
+        /// <c>BlockBasic</c> from the model path; custom blocks whose model path doesn't match (water, …) set
+        /// it explicitly. Null for blocks with no Minecraft equivalent.</summary>
+        public string MinecraftId;
+
         public virtual bool IsVisible(WorldBase world, Vector3i blockPos) => true;
         public virtual bool IsFullBlock(WorldBase world, Vector3i blockPos) => true;
         public virtual TransparencyType IsTransparent(WorldBase world, Vector3i blockPos) => TransparencyType.None;
@@ -102,7 +108,9 @@ namespace MinecraftClone3API.Blocks
             => lightLevel - 1;
 
         public virtual string GetUnlocalizedName(WorldBase world, Vector3i blockPos) =>
-            I18N.UnlocalizedName(RegistryKey, "blocks");
+            MinecraftId != null
+                ? Identifier.TranslationKey("block", MinecraftId)
+                : I18N.UnlocalizedName(RegistryKey, "blocks");
 
         public virtual string GetName(WorldBase world, Vector3i blockPos) => I18N.Get(GetUnlocalizedName(world, blockPos));
 

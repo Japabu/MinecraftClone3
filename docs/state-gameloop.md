@@ -46,9 +46,9 @@ thread). The player is a **0.6 × 1.8 AABB**; `Entity.Position` is the **feet** 
 `Position + EyeOffset` (1.62) via `Entity.RenderPosition`/`EyeOffset` (defaults keep non-player entities a
 point). `PlayerController` is split into `UpdateFrame` (per frame: look, fly toggle, hotbar selection, debug keys,
 break/place — see [inventory.md](inventory.md)) and `Tick` (one fixed **20 tps** step), driven by
-`StateWorld`'s accumulator; **E** opens the creative inventory overlay (`StateWorld.Update`), which includes a
-2×2 crafting grid. Right-click first tries `Block.OnActivated` on the targeted block (a **crafting table**
-opens the 3×3 `GuiCraftingTable` overlay) and only places the held block if no block handled it.
+`StateWorld`'s accumulator; **E** opens the creative inventory overlay (`StateWorld.Update`; no crafting grid,
+matching vanilla creative). Right-click first tries `Block.OnActivated` on the targeted block (a **crafting
+table** opens the 3×3 `GuiCraftingTable` overlay) and only places the held block if no block handled it.
 `ApplyInterpolation(alpha)` lerps `PrevPosition→Position` so 20 tps motion is smooth at the frame rate. Two
 modes, toggled by **double-tapping Space**:
 - **Walk (default):** exact-Minecraft constants integrated once per tick — gravity `v_y=(v_y−0.08)·0.98`,

@@ -19,6 +19,7 @@ namespace VanillaPlugin.Blocks
 
         public BlockWater() : base("Water")
         {
+            MinecraftId = "minecraft:water";
             Model = ResourceReader.ReadBlockModel("Vanilla/Models/Water.json");
         }
 

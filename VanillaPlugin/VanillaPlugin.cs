@@ -58,8 +58,6 @@ namespace VanillaPlugin
             context.Register(new ItemSimple("Diamond", "minecraft/textures/item/diamond.png"));
             context.Register(new ItemSimple("Apple", "minecraft/textures/item/apple.png"));
 
-            VanillaRecipes.Register(context);
-
             context.Register<BlockDataMetadata>();
 
             VanillaWorldGen.Register(context);

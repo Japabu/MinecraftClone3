@@ -34,11 +34,20 @@ resolve `Plugins/` against `AppContext.BaseDirectory`.
 file under a source's `Assets/` prefix (case-insensitive) keyed by the path *after* the prefix, storing the
 `(FileSystem, original full path)` so reads go back through the source's *own* casing — a real Minecraft jar
 holds lowercase `assets/...` and `ZipArchive.GetEntry` is case-sensitive on every OS, so `LoadAsset` reads by
-the stored path, not by reconstructing `"Assets/" + key`. Nothing is parsed at index time except `Lang/*.lang`
-(eagerly merged); models/textures are parsed **on demand** by the consumers
-(`ResourceReader.ReadBlockModel`/`ReadBlockTexture`, cached), so only the handful of referenced assets ever
-get decoded. **Load order = cascade priority:** System → plugins → resource packs (within packs by name); a
-later-loaded source containing a key wins.
+the stored path, not by reconstructing `"Assets/" + key`. Files under a `data/` prefix are indexed the same way
+into a parallel `DataIndices` (read via `LoadData`/`ExistsData`/`DataKeys`), so a pack's data tree — crafting
+recipes and item tags — is available too. Nothing is parsed at index time except `Lang/*.lang` (eagerly
+merged); models/textures/recipes are parsed **on demand** by the consumers, so only the handful of referenced
+assets ever get decoded. **Load order = cascade priority:** System → plugins → resource packs (within packs by
+name); a later-loaded source containing a key wins.
+
+**Translations come from the pack too.** Besides plugin `Lang/*.lang` files, `I18N.Load` scans the indexed
+assets for any `…/lang/<code>.json` (the Minecraft flat `key`→`value` format) and merges them. Language codes
+are normalized (lower-case, `-`→`_`) so a plugin's `en-US` and a pack's `en_us.json` share one bucket. Blocks
+and items resolve their names through Minecraft translation keys (`block.minecraft.stone`,
+`item.minecraft.stick`) built from their `MinecraftId`, so a client jar supplies every name with no
+hand-written lang file. **Recipes** are likewise pack-driven: `RecipeLoader` reads `data/<ns>/recipe/*.json`
+and `data/<ns>/tags/item/*.json` after plugins load (see [inventory.md](inventory.md)).
 
 **Resource packs** live in `GamePaths.ResourcePacksDir` (`~/.local/share/MinecraftClone3/ResourcePacks/`,
 created on access with a `README.txt`). `PluginManager.AddResourcePacks()` scans it **after** the plugins —

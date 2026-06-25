@@ -58,6 +58,10 @@ namespace MinecraftClone3API.Plugins
                 total += part;
                 plugin.Value.Plugin.PostLoad(plugin.Value);
             }
+
+            // Recipes come from the resource pack's data/ tree, so they load after every plugin has registered
+            // its blocks/items (which provide the Minecraft-id → our-item mapping the loader resolves against).
+            MinecraftClone3API.Items.RecipeLoader.LoadFromResources();
         }
 
         private const string ResourcePacksReadme =

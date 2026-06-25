@@ -8,6 +8,7 @@ namespace VanillaPlugin.Blocks
     {
         public BlockTorch() : base("Torch")
         {
+            MinecraftId = "minecraft:torch";
             Model = ResourceReader.ReadBlockModel("minecraft:block/torch");
         }
 
