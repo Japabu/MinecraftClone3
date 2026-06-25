@@ -51,8 +51,10 @@ billboards (`CelestialBillboard` projects the view ray onto a tangent plane → 
 are the real pack assets (`minecraft/textures/environment/sun.png`, `moon_phases.png` full-moon cell), loaded
 by `WorldRenderer.LoadSkyTextures()` onto composition units 5/6; with **no pack** the
 `uHasSunTexture`/`uHasMoonTexture` flags are 0 and the shader falls back to a procedural disc. The moon sits
-opposite the sun (`-uSunDirection`), each hidden below its own horizon. **Water reflects this same
-`SkyColor`** (see the water section). **Distance fog** melts lit geometry into `uHorizonColor` between
+opposite the sun (`-uSunDirection`), each hidden below its own horizon. The billboards bind a dedicated
+**celestial sampler** (`Samplers.BindCelestialSampler`, linear / no mipmaps / clamp-to-edge) — the small
+on-screen disc would otherwise sample the auto-generated mipmaps through GL's default sampler 0 and read as a
+dim blurred blob with edge bleed. **Water reflects this same `SkyColor`** (see the water section). **Distance fog** melts lit geometry into `uHorizonColor` between
 `uFogStart`/`uFogEnd` (0.72–0.97 × `RenderDistance`), hiding the chunk-load boundary against the sky (and
 fading to night darkness as the horizon colour dims). The sky/sun/star/fog colours are all `WorldRenderer` C#
 functions (`SkyZenithColor`/`SkyHorizonColor`/`SkyVoidColor`/`SunsetColor`/`StarBrightness`, sharing
@@ -142,10 +144,13 @@ Tier-A lit translucent water (`baseColor`), adds: animated **`WaveNormal`** (ana
 summed directional sine waves over the surface's world XZ, scrolled by `uTime` — only the **top** face,
 `faceN.y > 0.5`, is perturbed), a **Fresnel** mix toward **`SkyColor(reflect(-V, N))`** (the *same* sky
 function the skybox paints, so the water mirrors the real gradient, sun, moon, stars and tracks time of day),
-and a **Blinn-Phong sun specular** glint. New composition uniforms: `uCameraPos`, `uSunDirection`, `uTime`.
-Reflection and specular are scaled by the baked sky factor (`uLight.a`) and `uSunFade` (the glint also by
-`shadow`), so cave/overhang water and night water fall back to the plain look for free. Look knobs are shader
-`const`s (wave amp/freq/speed, `WaterF0`, `WaterSpecExp/Gain`).
+and a **Blinn-Phong sun specular** glint plus a matching **moon specular** glint. New composition uniforms:
+`uCameraPos`, `uSunDirection`, `uTime`, `uMoonFade`, `uMoonColor`. The sun glint is scaled by `uSunFade` (and
+`shadow`), so it fades out at dusk; the moon glint (half-vector toward `-uSunDirection`, cool `uMoonColor`)
+fades *in* by `uMoonFade` (`SunFade(-sunY)`) so the moon reflects on night water once the sun's glint is gone.
+Both, and the Fresnel reflection, are scaled by the baked sky factor (`uLight.a`), so cave/overhang water falls
+back to the plain look for free. Look knobs are shader `const`s (wave amp/freq/speed, `WaterF0`,
+`WaterSpecExp/Gain`).
 
 The one subtlety: composition must *identify* water pixels, but the transparent pass blends **all three** MRT
 attachments, so a flag in `normal.w` would blend with the background and become unreadable. Fix: during the

@@ -697,6 +697,11 @@ namespace MinecraftClone3API.Graphics
             GL.Uniform3(comp.GetUniformLocation("uCameraPos"), camera.Position.X, camera.Position.Y, camera.Position.Z);
             GL.Uniform3(comp.GetUniformLocation("uSunDirection"), toSun.X, toSun.Y, toSun.Z);
             GL.Uniform1(comp.GetUniformLocation("uTime"), (float) (_dayTimeSeconds % 3600.0));
+            // Night-time moon glint on water: the moon sits opposite the sun, so it fades in (uMoonFade) as the
+            // sun drops below the horizon, mirroring uSunFade for the day. The cool tint is the moonlight colour
+            // the water specular reflects (the sun's own specular is gated to daytime by uSunFade).
+            GL.Uniform1(comp.GetUniformLocation("uMoonFade"), SunFade(-toSun.Y));
+            GL.Uniform3(comp.GetUniformLocation("uMoonColor"), 0.55f, 0.62f, 0.85f);
 
             // Background sky: the gradient/sunset/sun/moon/stars are rendered procedurally per background pixel
             // in the composition shader (no extra geometry, no remesh — same fullscreen pass) and water reflects
@@ -727,10 +732,10 @@ namespace MinecraftClone3API.Graphics
             GL.Uniform1(comp.GetUniformLocation("uMoonTexture"), 6);
             GL.ActiveTexture(TextureUnit.Texture5);
             GL.BindTexture(TextureTarget.Texture2D, (SunTexture ?? ClientResources.WhitePixel).Id);
-            GL.BindSampler(5, 0);
+            Samplers.BindCelestialSampler(5);
             GL.ActiveTexture(TextureUnit.Texture6);
             GL.BindTexture(TextureTarget.Texture2D, (MoonTexture ?? ClientResources.WhitePixel).Id);
-            GL.BindSampler(6, 0);
+            Samplers.BindCelestialSampler(6);
 
             ClientResources.ScreenRectVao.Draw();
             GraphicsDebug.PopGroup();

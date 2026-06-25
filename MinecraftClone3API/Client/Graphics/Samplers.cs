@@ -7,6 +7,7 @@ namespace MinecraftClone3API.Graphics
         private static int _blockTexture;
         private static int _framebufferTexture;
         private static int _gui;
+        private static int _celestial;
 
         public static void Load()
         {
@@ -25,6 +26,15 @@ namespace MinecraftClone3API.Graphics
             _gui = GL.GenSampler();
             GL.SamplerParameter(_gui, SamplerParameterName.TextureMinFilter, (float)TextureMinFilter.Nearest);
             GL.SamplerParameter(_gui, SamplerParameterName.TextureMagFilter, (float)TextureMinFilter.Nearest);
+
+            // Sun/moon billboards are small on screen, so sampling the auto-generated mipmaps (the GL default
+            // sampler 0's NEAREST_MIPMAP_LINEAR) averaged the whole disc into a dim blob and REPEAT wrap let the
+            // edge bleed. Smooth linear filtering with no mipmaps and a clamped edge keeps them crisp.
+            _celestial = GL.GenSampler();
+            GL.SamplerParameter(_celestial, SamplerParameterName.TextureMinFilter, (float)TextureMinFilter.Linear);
+            GL.SamplerParameter(_celestial, SamplerParameterName.TextureMagFilter, (float)TextureMinFilter.Linear);
+            GL.SamplerParameter(_celestial, SamplerParameterName.TextureWrapS, (float)TextureWrapMode.ClampToEdge);
+            GL.SamplerParameter(_celestial, SamplerParameterName.TextureWrapT, (float)TextureWrapMode.ClampToEdge);
         }
 
         public static void BindBlockTextureSampler()
@@ -36,5 +46,7 @@ namespace MinecraftClone3API.Graphics
         public static void BindFramebufferTextureSampler(int unit) => GL.BindSampler(unit, _framebufferTexture);
 
         public static void BindGuiSampler(int unit) => GL.BindSampler(unit, _gui);
+
+        public static void BindCelestialSampler(int unit) => GL.BindSampler(unit, _celestial);
     }
 }

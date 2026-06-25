@@ -75,7 +75,7 @@ namespace MinecraftClone3API.Entities
 
             if (ms.IsButtonDown(MouseButton.Left) && !ms.WasButtonDown(MouseButton.Left))
                 BreakBlock(world);
-            if (ms.IsButtonDown(MouseButton.Right) && !ms.WasButtonDown(MouseButton.Right))
+            if (ms.IsButtonDown(MouseButton.Right) && !ms.WasButtonDown(MouseButton.Right) && !TryActivateBlock(window, world))
                 PlaceBlock(world, ks);
 
             Camera.Update();
@@ -142,6 +142,16 @@ namespace MinecraftClone3API.Entities
             world.SetBlock(_blockRaytrace.BlockPos, BlockRegistry.BlockAir);
         }
 
+        /// <summary>Right-click interaction: if the player is looking at an interactable block (e.g. a crafting
+        /// table) let it handle the click (open its GUI) and report that placement should be suppressed.</summary>
+        private static bool TryActivateBlock(GameWindow window, WorldBase world)
+        {
+            if (_blockRaytrace == null) return false;
+            var pos = _blockRaytrace.BlockPos;
+            var block = world.GetBlock(pos.X, pos.Y, pos.Z);
+            return block != null && block.OnActivated(window, world, pos, PlayerEntity);
+        }
+
         private static void PlaceBlock(WorldBase world, KeyboardState ks)
         {
             if (_blockRaytrace == null) return;
@@ -150,7 +160,10 @@ namespace MinecraftClone3API.Entities
             var held = client.Inventory.SelectedItem;
             if (held.IsEmpty) return;
 
-            var block = GameRegistry.GetBlock(held.BlockId);
+            // Non-placeable items (sticks, ingots, tools) have no block — right-click does nothing.
+            var block = held.Item?.GetBlock();
+            if (block == null) return;
+
             world.PlaceBlock(PlayerEntity, _blockRaytrace.BlockPos + _blockRaytrace.Face.GetNormali(), block,
                 block.GetPlacementMetadata(ks, PlayerEntity, _blockRaytrace));
         }

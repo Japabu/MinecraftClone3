@@ -47,6 +47,18 @@ namespace MinecraftClone3API.Util
         public static string Get(string key) => GetLang(_currentLang, key);
         public static string GetOrdinal(string key) => GetLang(OrdinalLang, key);
 
+        /// <summary>Builds the unlocalized lang key for a registry entry: a <c>"prefix:Name"</c> registry key
+        /// becomes <c>"prefix.category.Name"</c> (prefix lower-cased), e.g. <c>"Vanilla:Stone"</c> with
+        /// category <c>"blocks"</c> → <c>"vanilla.blocks.Stone"</c>, matching the plugin lang files.</summary>
+        public static string UnlocalizedName(string registryKey, string category)
+        {
+            if (string.IsNullOrEmpty(registryKey)) return category;
+            var colon = registryKey.IndexOf(':');
+            return colon < 0
+                ? registryKey
+                : registryKey.Substring(0, colon).ToLowerInvariant() + "." + category + "." + registryKey.Substring(colon + 1);
+        }
+
         private static string MakeKey(string lang, string key) => $"{lang}:{key}";
     }
 }

@@ -2,6 +2,7 @@
 using System.IO;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Entities;
+using MinecraftClone3API.Items;
 using MinecraftClone3API.WorldGen;
 
 namespace MinecraftClone3API.Util
@@ -11,6 +12,8 @@ namespace MinecraftClone3API.Util
         private const string RegistryFilename = "registry.bin";
 
         internal static readonly BlockRegistry BlockRegistry = new BlockRegistry();
+        internal static readonly ItemRegistry ItemRegistry = new ItemRegistry();
+        internal static readonly Registry<CraftingRecipe> RecipeRegistry = new Registry<CraftingRecipe>();
         internal static readonly Registry<BlockDataRegistryEntry> BlockDataRegistry = new Registry<BlockDataRegistryEntry>();
         internal static readonly Registry<Biome> BiomeRegistry = new Registry<Biome>();
         internal static readonly Registry<Feature> FeatureRegistry = new Registry<Feature>();
@@ -21,6 +24,21 @@ namespace MinecraftClone3API.Util
 
         public static Block GetBlock(ushort id) => BlockRegistry[id];
         public static Block GetBlock(string key) => BlockRegistry[key];
+
+        public static Item GetItem(ushort id) => ItemRegistry.TryGet(id, out var item) ? item : null;
+        public static Item GetItem(string key) => ItemRegistry[key];
+        public static bool TryGetItem(string key, out Item item) => ItemRegistry.TryGet(key, out item);
+        public static IEnumerable<Item> Items => ItemRegistry.Values;
+
+        /// <summary>The result of crafting the given N×N grid (row-major), or <see cref="ItemStack.Empty"/>
+        /// if nothing matches. The first matching registered recipe wins.</summary>
+        public static ItemStack MatchRecipe(ItemStack[] grid, int width, int height)
+        {
+            foreach (var recipe in RecipeRegistry.Values)
+                if (recipe.Matches(grid, width, height))
+                    return recipe.Result;
+            return ItemStack.Empty;
+        }
 
         public static Biome GetBiome(string key) => BiomeRegistry[key];
         public static Feature GetFeature(string key) => FeatureRegistry[key];
@@ -47,6 +65,7 @@ namespace MinecraftClone3API.Util
             using (var writer = new BinaryWriter(file.Create()))
             {
                 BlockRegistry.Write(writer);
+                ItemRegistry.Write(writer);
             }
         }
 
@@ -58,6 +77,7 @@ namespace MinecraftClone3API.Util
             using (var reader = new BinaryReader(file.OpenRead()))
             {
                 BlockRegistry.Read(reader);
+                ItemRegistry.Read(reader);
             }
         }
     }

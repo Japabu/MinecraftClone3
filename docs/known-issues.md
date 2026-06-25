@@ -155,6 +155,19 @@ relevant permanent doc. Not a changelog.
   Singleplayer is fine; distinct MP inventories need actual player names plumbed through login. Inventory edits
   are also **unvalidated** (creative sandbox) — the server stores whatever `InventoryAction`/`HeldSlot` sends
   beyond a slot-range clamp, same trust model as placement.
-- **Inventory is creative-only and items are blocks.** `ItemStack.BlockId` *is* a block ref — there are no
-  non-block items, no crafting, no survival pickup/drop, and the main 27-slot region exists in the model but
-  has no GUI region yet (only the hotbar row is interactive in the creative screen).
+- **Inventory is creative-only; crafting is client-trusted.** Items are first-class now (`Item`/`ItemBlock`
+  registry, standalone items, shaped/shapeless recipes, 2×2 in the creative menu + 3×3 crafting table — see
+  [inventory.md](inventory.md)). Accepted scope: crafting is computed **client-side** and the result mutations
+  go up as ordinary (unvalidated) `InventoryAction`s — fine for a creative sandbox, exploitable in real MP.
+  No survival pickup/drop, no shift-click bulk craft (one batch per result click), no recipe book. Standalone
+  items are inert (the apple isn't edible, no tools/durability). Shaped recipes match an exact item per cell
+  (mirrorable) — no ingredient tags/alternatives.
+- **Item ids aren't remapped from disk.** Like block ids, the `registry.bin` save/load path exists but is
+  unwired, so item ids are assigned by registration order — stable only for a fixed plugin set. A changed
+  plugin set shifts ids and a saved inventory would show wrong items (delete the world, per the no-back-compat
+  rule).
+- **Right-clicking a crafting table always opens it.** `Block.OnActivated` returning true suppresses placement,
+  so you can't place a block against a crafting table's face, and there's no sneak-to-place override.
+- **Crafting-grid items are returned to the inventory on close; leftovers are lost.** If the inventory is full
+  when a crafting screen closes, items still in the grid/cursor that don't fit are dropped (no world item
+  entities exist). Accepted for the creative sandbox.

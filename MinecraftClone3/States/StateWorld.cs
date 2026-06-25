@@ -50,6 +50,10 @@ namespace MinecraftClone3.States
         private int _lastLodHorizonChunks = -1;
         private readonly Stopwatch _loadingTimer = Stopwatch.StartNew();
         private Texture _loadingBackground;
+        private Texture _loadingProgressBar;
+        private Texture _loadingProgressBarFull;
+        // Smoothed loading progress (0..1) so the bar eases toward its target instead of snapping.
+        private float _loadProgress;
 
         private readonly Stopwatch _phaseTimer = new Stopwatch();
 
@@ -365,14 +369,44 @@ namespace MinecraftClone3.States
         private void RenderLoading()
         {
             _loadingBackground ??= ResourceReader.ReadTexture("System/Textures/Gui/ResourceLoadingBackground.png");
+            _loadingProgressBar ??= ResourceReader.ReadTexture("System/Textures/Gui/Progressbar.png");
+            _loadingProgressBarFull ??= ResourceReader.ReadTexture("System/Textures/Gui/ProgressbarFull.png");
+
             GuiRenderer.DrawTexture(_loadingBackground,
                 new Rectangle(0, 0, (int)ScaledResolution.GuiResolution.X, (int)ScaledResolution.GuiResolution.Y), null);
 
-            const string msg = "Generating world...";
+            // Ease the bar toward the target each frame so streaming bursts don't make it jump.
+            _loadProgress += (LoadProgressTarget() - _loadProgress) * 0.1f;
+            var pct = (int)(_loadProgress * 100f);
+
+            var msg = $"Generating world... {pct}%";
             const int scale = 3;
             var x = (int)ScaledResolution.GuiResolution.X / 2 - Font.MeasureWidth(msg, scale) / 2;
-            var y = (int)ScaledResolution.GuiResolution.Y / 2 - Font.LineHeight(scale) / 2;
+            var y = (int)ScaledResolution.GuiResolution.Y / 2 - Font.LineHeight(scale) - 24;
             Font.DrawString(msg, x, y, scale, OverlayText);
+
+            const int barX = 130;
+            const int barTop = 300;
+            const int barW = 700;
+            const int barH = 30;
+            GuiRenderer.DrawTexture(_loadingProgressBar, Rectangle.FromSize(barX, barTop, barW, barH), null);
+            GuiRenderer.DrawTexture(_loadingProgressBarFull,
+                Rectangle.FromSize(barX, barTop, (int)(barW * _loadProgress), barH), null);
+        }
+
+        /// <summary>Target loading progress (0..1). Staged by the join handshake — connecting, then the spawn
+        /// region streaming in (smooth motion via the streamed-chunk count), then ready — and capped below 1
+        /// until the player can actually drop in, so the bar never reads full while there is still a wait.</summary>
+        private float LoadProgressTarget()
+        {
+            if (!_world.SpawnReceived) return 0.05f;
+            if (_world.Ready && SpawnChunksApplied()) return 1f;
+
+            // SpawnChunkStreamTarget is an estimate of the chunks streamed by the time the spawn area is ready;
+            // it only paces the bar, the real gate is SpawnChunksApplied above.
+            const int spawnChunkStreamTarget = 96;
+            var frac = MathHelper.Clamp(_world.LoadedChunks.Count / (float)spawnChunkStreamTarget, 0f, 1f);
+            return MathHelper.Clamp(0.1f + 0.85f * frac, 0.1f, 0.95f);
         }
 
         // Fixed keybinds for the F1 controls overlay (key column, description column).

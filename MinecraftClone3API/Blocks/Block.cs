@@ -5,6 +5,7 @@ using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
+using OpenTK.Windowing.Desktop;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 
 namespace MinecraftClone3API.Blocks
@@ -92,10 +93,16 @@ namespace MinecraftClone3API.Blocks
         /// the server — which may be headless — never reads input.</summary>
         public virtual int GetPlacementMetadata(KeyboardState ks, EntityPlayer player, BlockRaytraceResult ray) => 0;
 
+        /// <summary>Client-side: the player right-clicked this block while looking at it. Return true if the
+        /// block handled the interaction (e.g. opened a GUI), which suppresses placing the held item. Runs
+        /// only on the client (the headless server never calls it), so it may touch window/GUI state.</summary>
+        public virtual bool OnActivated(GameWindow window, WorldBase world, Vector3i blockPos, EntityPlayer player) => false;
+
         public virtual int OnLightPassThrough(WorldBase world, Vector3i blockPos, int lightLevel, int color)
             => lightLevel - 1;
 
-        public virtual string GetUnlocalizedName(WorldBase world, Vector3i blockPos) => Name;
+        public virtual string GetUnlocalizedName(WorldBase world, Vector3i blockPos) =>
+            I18N.UnlocalizedName(RegistryKey, "blocks");
 
         public virtual string GetName(WorldBase world, Vector3i blockPos) => I18N.Get(GetUnlocalizedName(world, blockPos));
 

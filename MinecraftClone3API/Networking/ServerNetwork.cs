@@ -342,16 +342,16 @@ namespace MinecraftClone3API.Networking
             Logger.Info($"Player {session.EntityId} logged in");
         }
 
-        /// <summary>Fresh players get the first few registered blocks on the hotbar so the game is playable
+        /// <summary>Fresh players get the first few placeable block items on the hotbar so the game is playable
         /// before opening the creative menu.</summary>
         private static void SeedCreativeInventory(Inventory inventory)
         {
             var slot = 0;
-            foreach (var block in GameRegistry.Blocks)
+            foreach (var item in GameRegistry.Items)
             {
-                if (block.Id == 0) continue;
                 if (slot >= Inventory.HotbarSize) break;
-                inventory.Slots[slot++] = new ItemStack(block.Id, ItemStack.MaxStackSize);
+                if (item.GetBlock() == null) continue;
+                inventory.Slots[slot++] = new ItemStack(item.Id, ItemStack.MaxStackSize);
             }
         }
 
