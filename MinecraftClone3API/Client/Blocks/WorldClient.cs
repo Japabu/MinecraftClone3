@@ -571,17 +571,12 @@ namespace MinecraftClone3API.Client.Blocks
                     _applySignal.Set();
                     break;
                 case EntitySpawnPacket spawn when spawn.EntityId != LocalEntityId:
-                    Entities[spawn.EntityId] = new Entity
-                    {
-                        Position = spawn.Position,
-                        Pitch = spawn.Pitch,
-                        Yaw = spawn.Yaw
-                    };
+                    Entities[spawn.EntityId] = BuildEntity(spawn);
                     break;
                 case EntityMovePacket move when move.EntityId != LocalEntityId:
-                    if (!Entities.TryGetValue(move.EntityId, out var entity))
-                        Entities[move.EntityId] = entity = new Entity {Position = move.Position};
-                    entity.SetInterpTarget(move.Position, move.Pitch, move.Yaw);
+                    // A move for an entity we haven't been told about yet is dropped; its spawn arrives first.
+                    if (Entities.TryGetValue(move.EntityId, out var entity))
+                        entity.SetInterpTarget(move.Position, move.Pitch, move.Yaw);
                     break;
                 case EntityDespawnPacket despawn:
                     Entities.Remove(despawn.EntityId);
@@ -598,6 +593,27 @@ namespace MinecraftClone3API.Client.Blocks
                         Inventory.Slots[i] = inv.Inventory.Slots[i];
                     break;
             }
+        }
+
+        /// <summary>Builds the client-side entity for a spawn packet: a bare <see cref="Entity"/> for a remote
+        /// player (the reserved <see cref="EntityType.PlayerTypeId"/>), an <see cref="EntityItem"/> carrying the
+        /// stack for a dropped item, or a typed <see cref="Entity"/> for a creature. The client never ticks these
+        /// (the server is authoritative); it only interpolates + renders them.</summary>
+        private static Entity BuildEntity(EntitySpawnPacket spawn)
+        {
+            Entity entity;
+            if (spawn.TypeId == EntityType.PlayerTypeId || !GameRegistry.TryGetEntityType(spawn.TypeId, out var type))
+                entity = new Entity();
+            else if (type.Kind == EntityKind.Item)
+                entity = new EntityItem {Type = type, Stack = spawn.Stack};
+            else
+                entity = new Entity {Type = type};
+
+            entity.EntityId = spawn.EntityId;
+            entity.Position = spawn.Position;
+            entity.Pitch = spawn.Pitch;
+            entity.Yaw = spawn.Yaw;
+            return entity;
         }
 
         private void ApplyThread()

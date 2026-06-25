@@ -20,6 +20,30 @@ namespace MinecraftClone3API.Items
 
         public ItemStack SelectedItem => Slots[SelectedHotbar];
 
+        /// <summary>Inserts a stack, merging into matching partial stacks first, then filling empty slots.
+        /// Returns true if the whole stack fit; otherwise <paramref name="stack"/> holds the remainder.</summary>
+        public bool Add(ref ItemStack stack)
+        {
+            for (var i = 0; i < Size && !stack.IsEmpty; i++)
+            {
+                if (Slots[i].IsEmpty || !Slots[i].SameItem(stack)) continue;
+                var room = ItemStack.MaxStackSize - Slots[i].Count;
+                if (room <= 0) continue;
+                var moved = room < stack.Count ? room : stack.Count;
+                Slots[i] = Slots[i].WithCount(Slots[i].Count + moved);
+                stack = stack.WithCount(stack.Count - moved);
+            }
+
+            for (var i = 0; i < Size && !stack.IsEmpty; i++)
+            {
+                if (!Slots[i].IsEmpty) continue;
+                Slots[i] = stack;
+                stack = ItemStack.Empty;
+            }
+
+            return stack.IsEmpty;
+        }
+
         public void Write(BinaryWriter writer)
         {
             writer.Write(SelectedHotbar);

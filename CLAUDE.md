@@ -88,8 +88,10 @@ the linked doc; this is the short "don't violate this" list.
   the GPU mesh is a separate client-only `ChunkRenderData`. Don't merge them.
 - **One client path, two transports** — loopback (SP) / TCP (MP). Keep them behaviourally identical; only the
   in-process transport shortcuts serialization.
-- **Authority:** the server owns blocks + light; **position is client-authoritative** (there is no
-  server-side physics — the client runs walk gravity/collision and writes the result).
+- **Authority:** the server owns blocks + light; the **player's** position is client-authoritative (no
+  server-side *player* physics — the client runs walk gravity/collision and writes the result). Every **other**
+  entity (mobs/animals/dropped items) is server-authoritative — the server runs its AI/physics and streams it
+  (see [docs/entities.md](docs/entities.md)).
 - **Chunk lifetime is client-owned.** The server streams a chunk once and never tells a client to unload; the
   client caches and releases (`ChunkRelease`).
 
@@ -135,6 +137,7 @@ the linked doc; this is the short "don't violate this" list.
 | Threads, the tick loop, the 5 invariants in full | [docs/threading.md](docs/threading.md) |
 | Deferred renderer, shadows, sky/water shaders, the G-buffer, the Phase-2 distant-horizon LOD | [docs/rendering.md](docs/rendering.md) |
 | States/overlays, the game loop, player physics, graphics options | [docs/state-gameloop.md](docs/state-gameloop.md) |
+| Mobs/animals/dropped items/remote players: types, server AI, box models, entity rendering | [docs/entities.md](docs/entities.md) |
 | Inventory, item stacks, hotbar HUD + creative screen, 3D block icons | [docs/inventory.md](docs/inventory.md) |
 | Resource cascade, plugin loading, resource packs, models/textures | [docs/resources.md](docs/resources.md) |
 | F1/F3/F4/F7/F10 debug keys, the profiler CSVs, dotnet-trace, RenderDoc | [docs/profiling.md](docs/profiling.md) |

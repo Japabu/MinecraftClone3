@@ -118,6 +118,12 @@ namespace MinecraftClone3.States
             _progress = 100;
             _text = $"{I18N.Get("system.loading.resources.uploadTextures")} ({_progress}%)";
             Logger.Debug($"{I18N.GetOrdinal("system.loading.resources.uploadTextures")} ({_progress}%)");
+
+            // Build the entity render models now that the plugins have registered their types and the block
+            // constructors have run, but before the upload — LoadModels registers the entity sheet textures into
+            // the same arrays, so they must be indexed before BlockTextureManager.Upload bakes them to the GPU.
+            EntityRenderer.LoadModels();
+
             BlockTextureManager.Upload();
 
             // The font comes from the Minecraft resource pack (minecraft/font/default.json), which is only

@@ -1,64 +1,278 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Client;
 using MinecraftClone3API.Client.Blocks;
 using MinecraftClone3API.Entities;
+using MinecraftClone3API.IO;
+using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
 using OpenTK.Graphics.OpenGL4;
 
 namespace MinecraftClone3API.Graphics
 {
     /// <summary>
-    /// Draws remote entities as simple solid placeholder cubes using the block-outline shader, whose
-    /// fragment stage flags the pixels as unlit so the flat <c>uColor</c> survives composition.
+    /// Draws every remote entity into the deferred G-buffer with the <see cref="ClientResources.
+    /// EntityGeometryShader"/>: registered creatures/players as animated box models textured from the official
+    /// Minecraft entity sheets, and dropped items as the spinning 3D icon of their block. Each model is built
+    /// once (GPU buffers per part) in <see cref="LoadModels"/> — which must run after plugins register their
+    /// types and before <see cref="BlockTextureManager.Upload"/>, so the entity textures make it into the
+    /// arrays. Animation (limb swing, item spin) is matrix-only at draw time; the shared model meshes are static.
     /// </summary>
     public static class EntityRenderer
     {
-        private static readonly Vector3 CubeSize = new Vector3(0.6f, 1.8f, 0.6f);
-        private static readonly Color4 CubeColor = new Color4(0.85f, 0.25f, 0.25f, 1f);
+        private const string PlayerSkinPath = "minecraft:entity/player/wide/steve";
+        private const string PlayerSkinPathLegacy = "minecraft:entity/steve";
 
-        private static readonly Vector3[] Vertices =
+        private class RenderModel
         {
-            new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(+0.5f, -0.5f, -0.5f),
-            new Vector3(+0.5f, +0.5f, -0.5f), new Vector3(-0.5f, +0.5f, -0.5f),
-            new Vector3(-0.5f, -0.5f, +0.5f), new Vector3(+0.5f, -0.5f, +0.5f),
-            new Vector3(+0.5f, +0.5f, +0.5f), new Vector3(-0.5f, +0.5f, +0.5f)
-        };
+            public BlockTexture Texture;
+            public readonly List<(ModelPart Part, VertexArrayObject Vao)> Parts =
+                new List<(ModelPart, VertexArrayObject)>();
+        }
 
-        private static readonly uint[] Indices =
-        {
-            0, 2, 1, 0, 3, 2, // back
-            4, 5, 6, 4, 6, 7, // front
-            0, 1, 5, 0, 5, 4, // bottom
-            3, 7, 6, 3, 6, 2, // top
-            0, 4, 7, 0, 7, 3, // left
-            1, 2, 6, 1, 6, 5  // right
-        };
+        private static readonly Dictionary<ushort, RenderModel> CreatureModels = new Dictionary<ushort, RenderModel>();
+        private static RenderModel _playerModel;
 
-        private static VertexArrayObject _vao;
+        // Dropped-item meshes (the block's icon geometry), built lazily — block textures are already uploaded.
+        private static readonly Dictionary<ushort, VertexArrayObject> ItemMeshes = new Dictionary<ushort, VertexArrayObject>();
 
+        private static readonly Stopwatch AnimClock = Stopwatch.StartNew();
+
+        /// <summary>Legacy entry point kept for the loading flow; the real work is in <see cref="LoadModels"/>,
+        /// called later once entity types are registered.</summary>
         public static void Load()
         {
-            _vao = new VertexArrayObject();
-            foreach (var vertex in Vertices)
-                _vao.Add(vertex, Vector4.Zero, Vector4.Zero, Vector3.Zero, Vector4.Zero);
-            _vao.AddFace(Indices, Vector3.Zero);
-            _vao.Upload();
+        }
+
+        /// <summary>Builds the GPU model for every registered creature type plus the built-in player, registering
+        /// their textures into <see cref="BlockTextureManager"/>. Must run after plugin load and before the
+        /// texture-array upload. Main-thread (GL) only.</summary>
+        public static void LoadModels()
+        {
+            _playerModel = BuildModel(EntityModels.Biped(), LoadPlayerSkin());
+
+            foreach (var type in GameRegistry.EntityTypes)
+            {
+                if (type.Kind != EntityKind.Creature || type.ModelFactory == null) continue;
+                var texture = ResourceReader.ReadBlockTexture(type.TexturePath);
+                CreatureModels[type.Id] = BuildModel(type.ModelFactory(), texture);
+            }
+        }
+
+        private static BlockTexture LoadPlayerSkin()
+        {
+            var skin = ResourceReader.ReadBlockTexture(PlayerSkinPath);
+            if (skin == ClientResources.MissingTexture) skin = ResourceReader.ReadBlockTexture(PlayerSkinPathLegacy);
+            return skin;
+        }
+
+        private static RenderModel BuildModel(EntityModel model, BlockTexture texture)
+        {
+            var render = new RenderModel {Texture = texture};
+            var layerSize = BlockTextureManager.Sizes[texture.ArrayId];
+
+            foreach (var part in model.Parts)
+            {
+                var vao = new VertexArrayObject();
+                foreach (var box in part.Boxes)
+                    AddBox(vao, box, texture, layerSize);
+                vao.Upload();
+                render.Parts.Add((part, vao));
+            }
+
+            return render;
         }
 
         public static void Render(WorldClient world, Camera camera, Matrix4 projection)
         {
-            var shader = ClientResources.BlockOutlineShader;
+            if (world.Entities.Count == 0) return;
+
+            var shader = ClientResources.EntityGeometryShader;
             shader.Bind();
-            var uTransform = shader.GetUniformLocation("uTransform");
-            GL.Uniform4(shader.GetUniformLocation("uColor"), CubeColor);
+            var uModel = shader.GetUniformLocation("uModel");
+            var uLight = shader.GetUniformLocation("uLight");
+            GL.UniformMatrix4(shader.GetUniformLocation("uView"), false, ref camera.View);
+            GL.UniformMatrix4(shader.GetUniformLocation("uProjection"), false, ref projection);
+            GL.Uniform1(shader.GetUniformLocation("uTextures16"), 0);
+            GL.Uniform1(shader.GetUniformLocation("uTextures64"), 1);
+            GL.Uniform1(shader.GetUniformLocation("uTextures256"), 2);
+            GL.Uniform1(shader.GetUniformLocation("uTextures1024"), 3);
+
+            BlockTextureManager.Bind();
+            Samplers.BindBlockTextureSampler();
+
+            // Box models emit all six faces of every box; drawing them with culling on would drop the
+            // back-facing ones, so disable culling here (depth still resolves what's visible) and restore after.
+            RenderState.Set(new GlState {CullFace = false, DepthTest = true, DepthFunc = DepthFunction.Lequal});
 
             foreach (var entity in world.Entities.Values)
             {
-                var transform = Matrix4.CreateScale(CubeSize) *
-                                Matrix4.CreateTranslation(entity.RenderPosition + new Vector3(0, EntityPlayer.Height / 2, 0)) *
-                                camera.View * projection;
-                GL.UniformMatrix4(uTransform, false, ref transform);
-                _vao.Draw();
+                if (entity.Type == null)
+                    DrawModel(_playerModel, entity, world, uModel, uLight);
+                else if (entity.Type.Kind == EntityKind.Item)
+                    DrawItem((EntityItem) entity, world, uModel, uLight);
+                else if (CreatureModels.TryGetValue(entity.Type.Id, out var model))
+                    DrawModel(model, entity, world, uModel, uLight);
+            }
+
+            RenderState.Set(new GlState {CullFace = true, DepthTest = true, DepthFunc = DepthFunction.Lequal});
+        }
+
+        private static void DrawModel(RenderModel model, Entity entity, WorldClient world, int uModel, int uLight)
+        {
+            if (model == null) return;
+
+            var pos = entity.RenderPosition;
+            var height = entity.Type?.Height ?? 1.8f;
+            SetLight(world, pos + new Vector3(0, height * 0.5f, 0), uLight);
+
+            // Whole-model placement: yaw to face the heading, then translate to the entity's feet.
+            var root = Matrix4.CreateRotationY(entity.Yaw) * Matrix4.CreateTranslation(pos);
+
+            foreach (var (part, vao) in model.Parts)
+            {
+                var rotation = part.Rotation + PartRotation(part.Name, entity);
+                var matrix = Matrix4.CreateRotationX(rotation.X) * Matrix4.CreateRotationY(rotation.Y) *
+                             Matrix4.CreateRotationZ(rotation.Z) *
+                             Matrix4.CreateTranslation(part.Pivot) * root;
+                GL.UniformMatrix4(uModel, false, ref matrix);
+                vao.Draw();
             }
         }
+
+        private static void DrawItem(EntityItem item, WorldClient world, int uModel, int uLight)
+        {
+            if (item.Stack.IsEmpty) return;
+            var mesh = GetItemMesh(item.Stack.BlockId);
+            if (mesh == null) return;
+
+            var pos = item.RenderPosition;
+            SetLight(world, pos + new Vector3(0, 0.25f, 0), uLight);
+
+            var t = (float) AnimClock.Elapsed.TotalSeconds;
+            var bob = 0.1f + 0.05f * MathF.Sin(t * 3f);
+            var matrix = Matrix4.CreateScale(0.4f) * Matrix4.CreateRotationY(t * 2f) *
+                         Matrix4.CreateTranslation(pos + new Vector3(0, 0.25f + bob, 0));
+            GL.UniformMatrix4(uModel, false, ref matrix);
+            mesh.Draw();
+        }
+
+        private static VertexArrayObject GetItemMesh(ushort blockId)
+        {
+            if (ItemMeshes.TryGetValue(blockId, out var mesh)) return mesh;
+
+            var block = GameRegistry.GetBlock(blockId);
+            if (block == BlockRegistry.BlockAir || block.Model == null) return ItemMeshes[blockId] = null;
+
+            mesh = new VertexArrayObject();
+            // Mesh the block's model centred at the origin in the void icon world (all faces, full light), the
+            // same geometry the inventory icon uses; the entity shader replaces the baked light with uLight.
+            ChunkMesher.AddBlockToVao(IconWorld.Instance, Vector3i.Zero, 0, 0, 0, block, mesh, mesh);
+            mesh.Upload();
+            ItemMeshes[blockId] = mesh;
+            return mesh;
+        }
+
+        /// <summary>Per-part animation rotation (radians) from the entity's walk cycle, dispatched by the part's
+        /// role name: limbs (<c>leg*</c>/<c>arm*</c>) swing fore/aft, the head pitches with the look angle, and
+        /// wings flap. Quadruped legs move on diagonals (0+3 together, 1+2 opposite); biped legs alternate.</summary>
+        private static Vector3 PartRotation(string name, Entity entity)
+        {
+            if (name == "head")
+                return new Vector3(entity.Pitch, 0, 0);
+
+            if (name.StartsWith("leg") || name.StartsWith("arm"))
+            {
+                var idx = name.Length > 3 ? name[3] - '0' : 0;
+                var sign = name[0] == 'a'
+                    ? (idx == 0 ? -1f : 1f)               // arms swing opposite the legs
+                    : (idx == 0 || idx == 3 ? 1f : -1f);  // diagonal leg pairs
+                var swing = MathF.Cos(entity.LimbSwing) * entity.LimbSwingAmount * sign;
+                return new Vector3(swing, 0, 0);
+            }
+
+            if (name.StartsWith("wing"))
+            {
+                var idx = name.Length > 4 ? name[4] - '0' : 0;
+                var sign = idx == 0 ? 1f : -1f;
+                var flap = 0.2f + 0.5f * (0.5f + 0.5f * MathF.Sin((float) AnimClock.Elapsed.TotalSeconds * 12f));
+                return new Vector3(0, 0, flap * sign);
+            }
+
+            return Vector3.Zero;
+        }
+
+        private static void SetLight(WorldClient world, Vector3 worldPos, int uLight)
+        {
+            var bp = new Vector3i(BlockCoord(worldPos.X), BlockCoord(worldPos.Y), BlockCoord(worldPos.Z));
+            var rgb = world.GetBlockLightLevel(bp).Vector3;
+            var sky = world.GetSkyLight(bp);
+            GL.Uniform4(uLight, new Vector4(Brightness(rgb.X), Brightness(rgb.Y), Brightness(rgb.Z), Brightness(sky)));
+        }
+
+        // Matches ChunkMesher's per-level falloff (Base^(15-level)) so entities sit at the same brightness as the
+        // blocks around them.
+        private static float Brightness(float level) => MathF.Pow(0.8f, MathF.Max(15f - level, 0f));
+
+        private static int BlockCoord(float v) => (int) MathF.Floor(v + 0.5f);
+
+        // Builds the six textured quads of one box into the VAO. Box coords are in blocks (relative to the part
+        // pivot); UVs come from the classic Minecraft box-unwrap, normalized by the texture array's layer size.
+        private static void AddBox(VertexArrayObject vao, ModelBox box, BlockTexture tex, int layerSize)
+        {
+            var f = box.From;
+            var t = box.To;
+            // Box pixel dimensions (1 block = 16 texels) drive the unwrap rectangle widths.
+            var sx = (int) MathF.Round((t.X - f.X) * 16f);
+            var sy = (int) MathF.Round((t.Y - f.Y) * 16f);
+            var sz = (int) MathF.Round((t.Z - f.Z) * 16f);
+            int u = box.TexU, v = box.TexV;
+
+            // Left (-X) and Right (+X)
+            Quad(vao, tex, layerSize, new Vector3(-1, 0, 0),
+                new Vector3(f.X, t.Y, t.Z), new Vector3(f.X, t.Y, f.Z),
+                new Vector3(f.X, f.Y, t.Z), new Vector3(f.X, f.Y, f.Z),
+                u, v + sz, u + sz, v + sz + sy);
+            Quad(vao, tex, layerSize, new Vector3(1, 0, 0),
+                new Vector3(t.X, t.Y, f.Z), new Vector3(t.X, t.Y, t.Z),
+                new Vector3(t.X, f.Y, f.Z), new Vector3(t.X, f.Y, t.Z),
+                u + sz + sx, v + sz, u + 2 * sz + sx, v + sz + sy);
+            // Front (+Z) and Back (-Z)
+            Quad(vao, tex, layerSize, new Vector3(0, 0, 1),
+                new Vector3(t.X, t.Y, t.Z), new Vector3(f.X, t.Y, t.Z),
+                new Vector3(t.X, f.Y, t.Z), new Vector3(f.X, f.Y, t.Z),
+                u + sz, v + sz, u + sz + sx, v + sz + sy);
+            Quad(vao, tex, layerSize, new Vector3(0, 0, -1),
+                new Vector3(f.X, t.Y, f.Z), new Vector3(t.X, t.Y, f.Z),
+                new Vector3(f.X, f.Y, f.Z), new Vector3(t.X, f.Y, f.Z),
+                u + 2 * sz + sx, v + sz, u + 2 * sz + 2 * sx, v + sz + sy);
+            // Top (+Y) and Bottom (-Y)
+            Quad(vao, tex, layerSize, new Vector3(0, 1, 0),
+                new Vector3(t.X, t.Y, f.Z), new Vector3(f.X, t.Y, f.Z),
+                new Vector3(t.X, t.Y, t.Z), new Vector3(f.X, t.Y, t.Z),
+                u + sz, v, u + sz + sx, v + sz);
+            Quad(vao, tex, layerSize, new Vector3(0, -1, 0),
+                new Vector3(t.X, f.Y, t.Z), new Vector3(f.X, f.Y, t.Z),
+                new Vector3(t.X, f.Y, f.Z), new Vector3(f.X, f.Y, f.Z),
+                u + sz + sx, v, u + 2 * sz + sx, v + sz);
+        }
+
+        private static void Quad(VertexArrayObject vao, BlockTexture tex, int layerSize, Vector3 normal,
+            Vector3 tl, Vector3 tr, Vector3 bl, Vector3 br, int u0, int v0, int u1, int v1)
+        {
+            var baseVertex = vao.VertexCount;
+            var n = new Vector4(normal, 0);
+            var white = new Vector3(1);
+            vao.Add(tl, TexCoord(tex, layerSize, u0, v0), n, white, Vector4.Zero);
+            vao.Add(tr, TexCoord(tex, layerSize, u1, v0), n, white, Vector4.Zero);
+            vao.Add(bl, TexCoord(tex, layerSize, u0, v1), n, white, Vector4.Zero);
+            vao.Add(br, TexCoord(tex, layerSize, u1, v1), n, white, Vector4.Zero);
+            vao.AddFace(baseVertex, false, Vector3.Zero);
+        }
+
+        private static Vector4 TexCoord(BlockTexture tex, int layerSize, int u, int v)
+            => new Vector4((float) u / layerSize, (float) v / layerSize, tex.TextureId, tex.ArrayId);
     }
 }

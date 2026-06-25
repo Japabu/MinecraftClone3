@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
 using MinecraftClone3API.Blocks;
+using MinecraftClone3API.Entities;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
@@ -238,10 +239,14 @@ namespace MinecraftClone3API.Networking
         }
     }
 
-    /// <summary>Server tells the client a remote entity appeared.</summary>
+    /// <summary>Server tells the client a remote entity appeared. <see cref="TypeId"/> selects the species
+    /// (<see cref="EntityType.PlayerTypeId"/> = a remote player); <see cref="Stack"/> carries the item for a
+    /// dropped-item entity and is empty otherwise.</summary>
     public class EntitySpawnPacket : Packet
     {
         public int EntityId;
+        public ushort TypeId = EntityType.PlayerTypeId;
+        public ItemStack Stack = ItemStack.Empty;
         public Vector3 Position;
         public float Pitch;
         public float Yaw;
@@ -251,6 +256,8 @@ namespace MinecraftClone3API.Networking
         public override void Write(BinaryWriter writer)
         {
             writer.Write(EntityId);
+            writer.Write(TypeId);
+            Stack.Write(writer);
             WriteVector3(writer, Position);
             writer.Write(Pitch);
             writer.Write(Yaw);
@@ -259,6 +266,8 @@ namespace MinecraftClone3API.Networking
         public override void Read(BinaryReader reader)
         {
             EntityId = reader.ReadInt32();
+            TypeId = reader.ReadUInt16();
+            Stack = ItemStack.Read(reader);
             Position = ReadVector3(reader);
             Pitch = reader.ReadSingle();
             Yaw = reader.ReadSingle();

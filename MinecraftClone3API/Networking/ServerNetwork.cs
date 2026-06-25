@@ -62,8 +62,6 @@ namespace MinecraftClone3API.Networking
         private Thread _acceptThread;
         private volatile bool _running = true;
 
-        private int _nextEntityId = 1;
-
         // Reused across StreamChunks ticks (server tick thread only) so per-player interest scanning
         // allocates nothing steady-state.
         private readonly List<Vector3i> _newChunksScratch = new List<Vector3i>();
@@ -166,6 +164,7 @@ namespace MinecraftClone3API.Networking
 
             SendReadySignals();
             SendTimeSync();
+            SyncEntities();
 
             _pumpTimer.Restart();
             FlushBlockChanges();
@@ -182,6 +181,66 @@ namespace MinecraftClone3API.Networking
             _lastTimeSync = _world.TickCount;
             Broadcast(new WorldTimePacket {WorldSeconds = _world.WorldTimeSeconds}, null);
         }
+
+        // Pickup reach (squared): a player within this distance of a pickup-ready dropped item collects it.
+        private const float PickupRangeSq = 1.5f * 1.5f;
+
+        /// <summary>Announces world-entity spawns/despawns the simulation produced, lets players collect nearby
+        /// dropped items, and relays every live world entity's position to all clients each tick.</summary>
+        private void SyncEntities()
+        {
+            while (_world.PendingSpawns.Count > 0)
+                Broadcast(SpawnPacketFor(_world.PendingSpawns.Dequeue()), null);
+
+            while (_world.PendingDespawns.Count > 0)
+                Broadcast(new EntityDespawnPacket {EntityId = _world.PendingDespawns.Dequeue()}, null);
+
+            CollectItems();
+
+            foreach (var entity in _world.Entities)
+            {
+                if (entity.Dead) continue;
+                Broadcast(new EntityMovePacket
+                {
+                    EntityId = entity.EntityId,
+                    Position = entity.Position,
+                    Pitch = entity.Pitch,
+                    Yaw = entity.Yaw
+                }, null);
+            }
+        }
+
+        /// <summary>Transfers pickup-ready dropped items into the inventory of any player standing on them, then
+        /// flags the emptied item entity dead (the world despawns it next tick).</summary>
+        private void CollectItems()
+        {
+            foreach (var entity in _world.Entities)
+            {
+                if (!(entity is EntityItem item) || item.Dead || !item.CanPickup) continue;
+
+                foreach (var session in _sessions)
+                {
+                    if (!session.LoggedIn) continue;
+                    if ((session.Player.Position - item.Position).LengthSquared > PickupRangeSq) continue;
+
+                    var stack = item.Stack;
+                    session.Inventory.Add(ref stack);
+                    item.Stack = stack;
+                    session.Connection.Send(new InventoryStatePacket {Inventory = session.Inventory});
+                    if (stack.IsEmpty) { item.Dead = true; break; }
+                }
+            }
+        }
+
+        private static EntitySpawnPacket SpawnPacketFor(Entity entity) => new EntitySpawnPacket
+        {
+            EntityId = entity.EntityId,
+            TypeId = entity.Type?.Id ?? EntityType.PlayerTypeId,
+            Stack = entity is EntityItem item ? item.Stack : ItemStack.Empty,
+            Position = entity.Position,
+            Pitch = entity.Pitch,
+            Yaw = entity.Yaw
+        };
 
         // Once the spawn column (the spawn chunk and the one below it, which the player stands on) has
         // been streamed to a session, tell that client it may finish joining. Authoritative and
@@ -241,9 +300,9 @@ namespace MinecraftClone3API.Networking
         {
             if (session.LoggedIn) return;
 
-            session.EntityId = _nextEntityId++;
+            session.EntityId = _world.NextEntityId();
             session.PlayerName = name ?? "";
-            session.Player = new EntityPlayer {Position = SpawnPosition};
+            session.Player = new EntityPlayer {Position = SpawnPosition, EntityId = session.EntityId};
             session.LoggedIn = true;
             _world.AddPlayer(session.Player);
 
@@ -267,6 +326,10 @@ namespace MinecraftClone3API.Networking
                     Yaw = other.Player.Yaw
                 });
             }
+
+            // Tell the new client about every world entity (mobs/animals/dropped items) already alive.
+            foreach (var entity in _world.Entities)
+                session.Connection.Send(SpawnPacketFor(entity));
 
             Broadcast(new EntitySpawnPacket
             {
@@ -296,7 +359,13 @@ namespace MinecraftClone3API.Networking
         {
             var block = GameRegistry.GetBlock(place.BlockId);
             if (block.Id == 0)
+            {
+                // Breaking: drop the removed block as a collectible item (air/already-empty drops nothing).
+                var broken = _world.GetBlock(place.Position);
+                if (broken.Id != 0)
+                    _world.DropItem(new ItemStack(broken.Id, 1), place.Position.ToVector3() + new Vector3(0.5f, 0.25f, 0.5f));
                 _world.SetBlock(place.Position, BlockRegistry.BlockAir);
+            }
             else
                 _world.PlaceBlock(session.Player, place.Position, block, place.Metadata);
         }

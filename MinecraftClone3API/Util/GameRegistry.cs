@@ -1,6 +1,7 @@
 ﻿using System.Collections.Generic;
 using System.IO;
 using MinecraftClone3API.Blocks;
+using MinecraftClone3API.Entities;
 using MinecraftClone3API.WorldGen;
 
 namespace MinecraftClone3API.Util
@@ -14,6 +15,7 @@ namespace MinecraftClone3API.Util
         internal static readonly Registry<Biome> BiomeRegistry = new Registry<Biome>();
         internal static readonly Registry<Feature> FeatureRegistry = new Registry<Feature>();
         internal static readonly Registry<Dimension> DimensionRegistry = new Registry<Dimension>();
+        internal static readonly EntityRegistry EntityRegistry = new EntityRegistry();
 
         public static List<string> GetMissingBlocks() => BlockRegistry.GetMissingBlocks();
 
@@ -26,6 +28,11 @@ namespace MinecraftClone3API.Util
         public static bool TryGetDimension(string key, out Dimension dimension) => DimensionRegistry.TryGet(key, out dimension);
         public static IEnumerable<Biome> Biomes => BiomeRegistry.Values;
         public static IEnumerable<Block> Blocks => BlockRegistry.Values;
+
+        public static EntityType GetEntityType(ushort id) => EntityRegistry[id];
+        public static EntityType GetEntityType(string key) => EntityRegistry[key];
+        public static bool TryGetEntityType(ushort id, out EntityType type) => EntityRegistry.TryGet(id, out type);
+        public static IEnumerable<EntityType> EntityTypes => EntityRegistry.Values;
 
         internal static string GetBlockDataRegistryKey(BlockData data)
         {

@@ -23,6 +23,7 @@ namespace MinecraftClone3API.Client
         public static TextureFramebuffer ShadowResolveFramebuffer;
 
         public static Shader WorldGeometryShader;
+        public static Shader EntityGeometryShader;
         public static Shader CompositionShader;
         public static Shader PointLightShader;
         public static Shader BlockOutlineShader;
@@ -49,6 +50,7 @@ namespace MinecraftClone3API.Client
             Window.Resize += args => ResizeFrameBuffers();
 
             WorldGeometryShader = ResourceReader.ReadShader(PluginDir + "Shaders/WorldGeometry");
+            EntityGeometryShader = ResourceReader.ReadShader(PluginDir + "Shaders/EntityGeometry");
             CompositionShader = ResourceReader.ReadShader(PluginDir + "Shaders/Composition");
             PointLightShader = ResourceReader.ReadShader(PluginDir + "Shaders/PointLight");
             BlockOutlineShader = ResourceReader.ReadShader(PluginDir + "Shaders/BlockOutline");

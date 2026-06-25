@@ -1,3 +1,5 @@
+using MinecraftClone3API.Entities;
+using MinecraftClone3API.Graphics;
 using MinecraftClone3API.Plugins;
 using VanillaPlugin.BlockDatas;
 using VanillaPlugin.Blocks;
@@ -44,6 +46,26 @@ namespace VanillaPlugin
 
             VanillaWorldGen.Register(context);
             context.Register(new OverworldDimension());
+
+            RegisterEntities(context);
+        }
+
+        // Animals, a hostile mob, and the dropped-item type. Width/height drive server collision; the texture
+        // paths + box models drive client rendering (the official Minecraft entity sheets from the resource pack).
+        private static void RegisterEntities(PluginContext context)
+        {
+            context.Register(new EntityType("Pig", EntityKind.Creature, 0.9f, 0.9f, 10f, 0.1f, false,
+                "minecraft:entity/pig/pig", EntityModels.Pig));
+            context.Register(new EntityType("Cow", EntityKind.Creature, 0.9f, 1.4f, 10f, 0.1f, false,
+                "minecraft:entity/cow/cow", EntityModels.Cow));
+            context.Register(new EntityType("Sheep", EntityKind.Creature, 0.9f, 1.3f, 8f, 0.1f, false,
+                "minecraft:entity/sheep/sheep", EntityModels.Sheep));
+            context.Register(new EntityType("Chicken", EntityKind.Creature, 0.4f, 0.7f, 4f, 0.08f, false,
+                "minecraft:entity/chicken/chicken", EntityModels.Chicken));
+            context.Register(new EntityType("Zombie", EntityKind.Creature, 0.6f, 1.95f, 20f, 0.13f, true,
+                "minecraft:entity/zombie/zombie", EntityModels.Biped));
+
+            context.Register(new EntityType("Item", EntityKind.Item, 0.25f, 0.25f, 1f, 0f, false, null, null));
         }
 
         public void PostLoad(PluginContext context)

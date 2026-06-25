@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using MinecraftClone3API.Entities;
+using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using MinecraftClone3API.WorldGen;
 using OpenTK.Mathematics;
@@ -148,6 +149,22 @@ namespace MinecraftClone3API.Blocks
 
         public readonly HashSet<EntityPlayer> PlayerEntities = new HashSet<EntityPlayer>();
         public readonly HashSet<Entity> Entities = new HashSet<Entity>();
+
+        // Entity-id allocator shared by players (ServerNetwork.Login) and world entities (SpawnEntity), so
+        // every networked entity has a unique id. Entities are transient, so ids are session-local.
+        private int _nextEntityId = 1;
+
+        // Spawns/despawns the network layer hasn't broadcast yet, drained each Pump by ServerNetwork. Mob/item
+        // entities are server-authoritative: the world owns their lifetime, the network only relays it.
+        public readonly Queue<Entity> PendingSpawns = new Queue<Entity>();
+        public readonly Queue<int> PendingDespawns = new Queue<int>();
+
+        // Ambient creature spawning: every so often try to drop a small group near a random player.
+        private readonly Random _spawnRng = new Random();
+        private int _spawnCooldown = SpawnIntervalTicks;
+        private const int SpawnIntervalTicks = 20 * 8;   // ~8 s between spawn attempts
+        private const int CreatureCap = 40;              // soft cap on live creatures
+        private const float EntityVoidY = -128f;         // despawn entities that fall below this
 
         private bool _unloaded;
 
@@ -353,6 +370,42 @@ namespace MinecraftClone3API.Blocks
             lock (PlayerEntities) PlayerEntities.Remove(player);
         }
 
+        /// <summary>Allocates the next unique networked-entity id (players + world entities share the space).</summary>
+        public int NextEntityId() => _nextEntityId++;
+
+        /// <summary>Spawns a world entity (mob/animal/dropped item) at <paramref name="position"/>, assigning its
+        /// id and queueing it for the network layer to announce. Tick-thread only.</summary>
+        public Entity SpawnEntity(Entity entity, Vector3 position)
+        {
+            entity.EntityId = NextEntityId();
+            entity.ServerWorld = this;
+            entity.Position = position;
+            Entities.Add(entity);
+            PendingSpawns.Enqueue(entity);
+            return entity;
+        }
+
+        /// <summary>Convenience: spawns one entity of the given registered type.</summary>
+        public Entity SpawnEntity(EntityType type, Vector3 position) => SpawnEntity(type.CreateEntity(), position);
+
+        /// <summary>Spawns a dropped-item entity carrying <paramref name="stack"/>, given a registered item
+        /// entity type (the first <see cref="EntityKind.Item"/> type). No-op if none is registered.</summary>
+        public void DropItem(ItemStack stack, Vector3 position)
+        {
+            if (stack.IsEmpty) return;
+            EntityType itemType = null;
+            foreach (var type in GameRegistry.EntityTypes)
+                if (type.Kind == EntityKind.Item) { itemType = type; break; }
+            if (itemType == null) return;
+
+            var item = (EntityItem) SpawnEntity(itemType, position);
+            item.Stack = stack;
+            // A little upward + sideways pop so drops scatter instead of stacking on one pixel.
+            item.Velocity = new Vector3(
+                (float) (_spawnRng.NextDouble() - 0.5) * 0.2f, 0.2f,
+                (float) (_spawnRng.NextDouble() - 0.5) * 0.2f);
+        }
+
         public override void Update()
         {
             if (_unloaded) return;
@@ -367,7 +420,13 @@ namespace MinecraftClone3API.Blocks
             foreach (var entity in Entities)
             {
                 entity.Update();
+                // Despawn anything that fell out of the world (e.g. wandered into an unloaded column and
+                // gravity ran unchecked) so it can't tick forever far below the map.
+                if (entity.Position.Y < EntityVoidY) entity.Dead = true;
             }
+
+            DrainDeadEntities();
+            TrySpawnCreatures();
 
             lock (_chunksReadyToRemove)
             {
@@ -401,6 +460,75 @@ namespace MinecraftClone3API.Blocks
             }
             Profiler.AddDrainAddTime((Stopwatch.GetTimestamp() - drainStart) * 1000.0 / Stopwatch.Frequency);
             Profiler.AddDrainAddCount(drained);
+        }
+
+        /// <summary>Removes entities flagged <see cref="Entity.Dead"/> (despawn timeout, item pickup, death)
+        /// and queues their ids for the network despawn broadcast.</summary>
+        private void DrainDeadEntities()
+        {
+            if (Entities.Count == 0) return;
+
+            Entities.RemoveWhere(entity =>
+            {
+                if (!entity.Dead) return false;
+                PendingDespawns.Enqueue(entity.EntityId);
+                return true;
+            });
+        }
+
+        /// <summary>Ambient creature spawning: periodically tries to place a small group of a random creature
+        /// type on the ground near a random player, up to a soft cap. No-op when no creature type is registered
+        /// or no player is online.</summary>
+        private void TrySpawnCreatures()
+        {
+            if (--_spawnCooldown > 0) return;
+            _spawnCooldown = SpawnIntervalTicks;
+
+            if (Entities.Count >= CreatureCap) return;
+
+            EntityPlayer anchor;
+            lock (PlayerEntities)
+            {
+                if (PlayerEntities.Count == 0) return;
+                var skip = _spawnRng.Next(PlayerEntities.Count);
+                anchor = null;
+                foreach (var p in PlayerEntities) { if (skip-- == 0) { anchor = p; break; } }
+            }
+            if (anchor == null) return;
+
+            var creatureTypes = new List<EntityType>();
+            foreach (var type in GameRegistry.EntityTypes)
+                if (type.Kind == EntityKind.Creature) creatureTypes.Add(type);
+            if (creatureTypes.Count == 0) return;
+
+            var chosen = creatureTypes[_spawnRng.Next(creatureTypes.Count)];
+            var group = 1 + _spawnRng.Next(3);
+            for (var i = 0; i < group; i++)
+            {
+                var ox = _spawnRng.Next(-24, 25);
+                var oz = _spawnRng.Next(-24, 25);
+                var baseX = (int) MathF.Round(anchor.Position.X) + ox;
+                var baseZ = (int) MathF.Round(anchor.Position.Z) + oz;
+                if (!TryFindGround(baseX, (int) MathF.Round(anchor.Position.Y), baseZ, out var groundY)) continue;
+                SpawnEntity(chosen, new Vector3(baseX + 0.5f, groundY, baseZ + 0.5f));
+            }
+        }
+
+        /// <summary>Scans for a standable surface (solid block with two air blocks above) near <paramref
+        /// name="aroundY"/>, returning the feet Y. False if the column isn't loaded or no surface is found.</summary>
+        private bool TryFindGround(int x, int aroundY, int z, out int feetY)
+        {
+            feetY = 0;
+            for (var y = aroundY + 16; y >= aroundY - 16; y--)
+            {
+                if (!IsOpaqueFullBlock(new Vector3i(x, y, z))) continue;
+                if (GetBlock(x, y + 1, z) != BlockRegistry.BlockAir) continue;
+                if (GetBlock(x, y + 2, z) != BlockRegistry.BlockAir) continue;
+                feetY = y + 1;
+                return true;
+            }
+
+            return false;
         }
 
         public void Unload()

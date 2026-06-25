@@ -12,8 +12,6 @@ namespace MinecraftClone3API.Entities
         public static readonly Matrix4 DefaultProjection =
             Matrix4.CreatePerspectiveFieldOfView(MathHelper.DegreesToRadians(60), 16f / 9f, 0.01f, 512);
 
-        public Vector3 Velocity;
-        public bool OnGround;
         public bool Flying;
 
         public Vector3 PrevPosition;
