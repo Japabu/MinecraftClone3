@@ -18,7 +18,10 @@ namespace MinecraftClone3API.Networking
         EntitySpawn,
         EntityDespawn,
         WorldTime,
-        LodColumnData
+        LodColumnData,
+        InventoryState,
+        InventoryAction,
+        HeldSlot
     }
 
     /// <summary>
@@ -41,7 +44,10 @@ namespace MinecraftClone3API.Networking
             {PacketId.EntitySpawn, () => new EntitySpawnPacket()},
             {PacketId.EntityDespawn, () => new EntityDespawnPacket()},
             {PacketId.WorldTime, () => new WorldTimePacket()},
-            {PacketId.LodColumnData, () => new LodColumnDataPacket()}
+            {PacketId.LodColumnData, () => new LodColumnDataPacket()},
+            {PacketId.InventoryState, () => new InventoryStatePacket()},
+            {PacketId.InventoryAction, () => new InventoryActionPacket()},
+            {PacketId.HeldSlot, () => new HeldSlotPacket()}
         };
 
         public abstract PacketId Id { get; }

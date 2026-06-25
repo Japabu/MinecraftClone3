@@ -7,6 +7,7 @@ using System.Threading;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Graphics;
+using MinecraftClone3API.Items;
 using MinecraftClone3API.Networking;
 using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
@@ -83,6 +84,11 @@ namespace MinecraftClone3API.Client.Blocks
         public readonly List<ChunkRenderData> RenderList = new List<ChunkRenderData>();
 
         public readonly Dictionary<int, Entity> Entities = new Dictionary<int, Entity>();
+
+        /// <summary>Client replica of the server-authoritative inventory. Synced on join via
+        /// <see cref="InventoryStatePacket"/>; the GUI and hotbar mutate it optimistically and report changes
+        /// to the server with <see cref="SendInventoryAction"/> / <see cref="SendHeldSlot"/>.</summary>
+        public readonly Inventory Inventory = new Inventory();
 
         public int LocalEntityId = -1;
 
@@ -515,6 +521,14 @@ namespace MinecraftClone3API.Client.Blocks
 
         public void Login() => _connection.Send(new LoginPacket());
 
+        /// <summary>Reports a single slot's new contents to the server (creative set-slot). The caller has
+        /// already updated the local replica; this keeps the authoritative copy in step for persistence.</summary>
+        public void SendInventoryAction(int slotIndex, ItemStack stack)
+            => _connection.Send(new InventoryActionPacket {SlotIndex = slotIndex, Stack = stack});
+
+        public void SendHeldSlot(int selectedHotbar)
+            => _connection.Send(new HeldSlotPacket {SelectedHotbar = selectedHotbar});
+
         public void Disconnect()
         {
             _stopped = true;
@@ -575,6 +589,13 @@ namespace MinecraftClone3API.Client.Blocks
                 case WorldTimePacket time:
                     _serverTimeSeconds = time.WorldSeconds;
                     _timeSyncClock.Restart();
+                    break;
+                case InventoryStatePacket inv:
+                    // Copy by value (ItemStack is a struct) so we never alias the server's live inventory,
+                    // which the packet carries by reference over the loopback transport.
+                    Inventory.SelectedHotbar = inv.Inventory.SelectedHotbar;
+                    for (var i = 0; i < Inventory.Size; i++)
+                        Inventory.Slots[i] = inv.Inventory.Slots[i];
                     break;
             }
         }

@@ -25,6 +25,7 @@ namespace MinecraftClone3API.Util
         public static Dimension GetDimension(string key) => DimensionRegistry[key];
         public static bool TryGetDimension(string key, out Dimension dimension) => DimensionRegistry.TryGet(key, out dimension);
         public static IEnumerable<Biome> Biomes => BiomeRegistry.Values;
+        public static IEnumerable<Block> Blocks => BlockRegistry.Values;
 
         internal static string GetBlockDataRegistryKey(BlockData data)
         {

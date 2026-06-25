@@ -24,8 +24,9 @@ namespace MinecraftClone3API.IO
 
         /// <summary>
         /// Per-user, writable application-data directory. Created on access.
-        /// Resolves to <c>%LocalAppData%\MinecraftClone3</c> on Windows and
-        /// <c>~/.local/share/MinecraftClone3</c> on Linux/macOS.
+        /// Resolves to <c>%LocalAppData%\MinecraftClone3</c> on Windows,
+        /// <c>~/.local/share/MinecraftClone3</c> on Linux, and
+        /// <c>~/Library/Application Support/MinecraftClone3</c> on macOS.
         /// </summary>
         public static string UserDataDir
         {

@@ -20,7 +20,7 @@ tolerates the server mutating the source chunk concurrently (a torn entry self-c
 
 ```
   Packets (Networking/Packets.cs)
-  C→S  Login                 announce
+  C→S  Login                 announce (carries the player name, used as the inventory save key)
   S→C  LoginAccept           assigns entity id + spawn (applied behind the loading screen)
   S→C  PlayerReady           spawn column streamed → client may apply spawn + enter the world
   S→C  ChunkData             Vector3i + Chunk (loopback: by ref; TCP: GZip of Chunk.Write)   (initial streaming only)
@@ -32,7 +32,18 @@ tolerates the server mutating the source chunk concurrently (a torn entry self-c
   S→C  WorldTime             world clock in seconds (TickCount·SecondsPerTick); on join + ~1/s, drives day/night
   S→C  LodColumnData         Phase-2 distant horizon: one region of surface-only LOD columns (loopback: by ref;
                              TCP: GZip), streamed nearest-first BEYOND the chunk view distance (see rendering.md)
+  S→C  InventoryState        full 36-slot inventory + selected hotbar slot; sent once on login (see inventory.md)
+  C→S  InventoryAction       slot index + ItemStack; client edited a slot in the creative screen
+  C→S  HeldSlot              selected hotbar index changed (number key / scroll wheel)
 ```
+
+**Inventory is server-authoritative** (see [inventory.md](inventory.md)). The server owns each
+`ClientSession.Inventory`, persists it per player, and pushes the whole thing once via `InventoryState` on
+join. The client mutates its local replica optimistically for responsiveness and mirrors every change up:
+`InventoryAction` (a slot edit from the creative screen) and `HeldSlot` (hotbar selection). Like placement
+metadata these are trusted, not validated — this is a creative sandbox. The `InventoryState` packet carries
+the live server `Inventory` by reference over loopback, so the client receive **copies it slot-by-slot**
+(`ItemStack` is a struct) rather than aliasing the server's array.
 
 **Placement metadata is computed client-side, never read on the server.** `Block.OnPlaced(world, pos,
 player, int metadata)` receives the metadata from the `PlaceBlockRequest`; the client derives it via

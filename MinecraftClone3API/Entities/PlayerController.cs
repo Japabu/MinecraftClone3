@@ -2,8 +2,10 @@ using System;
 using System.Diagnostics;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Client;
+using MinecraftClone3API.Client.Blocks;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
+using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Desktop;
@@ -21,7 +23,6 @@ namespace MinecraftClone3API.Entities
         private const float DoubleTapSeconds = 0.3f;
 
         private static BlockRaytraceResult _blockRaytrace;
-        private static string _currentBlock = "Vanilla:Stone";
         private static bool _skipMouseDelta;
         private static readonly Stopwatch _spaceTapTimer = Stopwatch.StartNew();
 
@@ -63,10 +64,7 @@ namespace MinecraftClone3API.Entities
                 _spaceTapTimer.Restart();
             }
 
-            foreach (var keybinding in ClientResources.Keybindings)
-            {
-                if (ks.IsKeyDown(keybinding.Key)) _currentBlock = keybinding.Value;
-            }
+            if (world is WorldClient client) UpdateHotbarSelection(client, ks, ms);
 
             if (ks.IsKeyPressed(Keys.F1)) RenderDebug.ShowControls = !RenderDebug.ShowControls;
             if (ks.IsKeyPressed(Keys.F3)) RenderDebug.ShowDiagnostics = !RenderDebug.ShowDiagnostics;
@@ -147,11 +145,32 @@ namespace MinecraftClone3API.Entities
         private static void PlaceBlock(WorldBase world, KeyboardState ks)
         {
             if (_blockRaytrace == null) return;
-            var block = GameRegistry.GetBlock(_currentBlock);
+            if (!(world is WorldClient client)) return;
+
+            var held = client.Inventory.SelectedItem;
+            if (held.IsEmpty) return;
+
+            var block = GameRegistry.GetBlock(held.BlockId);
             world.PlaceBlock(PlayerEntity, _blockRaytrace.BlockPos + _blockRaytrace.Face.GetNormali(), block,
                 block.GetPlacementMetadata(ks, PlayerEntity, _blockRaytrace));
+        }
 
-            Logger.Debug(PlayerEntity.Position + ":" + _blockRaytrace.BlockPos);
+        /// <summary>Hotbar slot selection: number keys 1-9 jump to a slot, the scroll wheel steps through
+        /// them (wrapping). A change is mirrored to the server so the held item stays authoritative.</summary>
+        private static void UpdateHotbarSelection(WorldClient client, KeyboardState ks, MouseState ms)
+        {
+            var selected = client.Inventory.SelectedHotbar;
+
+            for (var i = 0; i < Inventory.HotbarSize; i++)
+                if (ks.IsKeyPressed(Keys.D1 + i)) selected = i;
+
+            var scroll = ms.ScrollDelta.Y;
+            if (scroll > 0) selected = (selected + Inventory.HotbarSize - 1) % Inventory.HotbarSize;
+            else if (scroll < 0) selected = (selected + 1) % Inventory.HotbarSize;
+
+            if (selected == client.Inventory.SelectedHotbar) return;
+            client.Inventory.SelectedHotbar = selected;
+            client.SendHeldSlot(selected);
         }
 
         /// <summary>Discards the next mouse delta so re-grabbing the cursor (window refocus,

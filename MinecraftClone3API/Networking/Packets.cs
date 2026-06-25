@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
 using MinecraftClone3API.Blocks;
+using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
 
@@ -162,6 +163,52 @@ namespace MinecraftClone3API.Networking
             BlockId = reader.ReadUInt16();
             Metadata = reader.ReadInt32();
         }
+    }
+
+    /// <summary>Server → client full inventory sync (the server owns the authoritative copy). Sent on join
+    /// after login; the client then mutates its replica optimistically and reports changes back via
+    /// <see cref="InventoryActionPacket"/>.</summary>
+    public class InventoryStatePacket : Packet
+    {
+        public Inventory Inventory = new Inventory();
+
+        public override PacketId Id => PacketId.InventoryState;
+        public override void Write(BinaryWriter writer) => Inventory.Write(writer);
+        public override void Read(BinaryReader reader) => Inventory.Read(reader);
+    }
+
+    /// <summary>Client → server: set a single inventory slot to a stack. In creative the client computes the
+    /// result of a click/drag locally (cursor handling is client-side) and tells the server the final slot
+    /// contents; the server trusts it (creative is infinite, placement is already client-authoritative).</summary>
+    public class InventoryActionPacket : Packet
+    {
+        public int SlotIndex;
+        public ItemStack Stack;
+
+        public override PacketId Id => PacketId.InventoryAction;
+
+        public override void Write(BinaryWriter writer)
+        {
+            writer.Write(SlotIndex);
+            Stack.Write(writer);
+        }
+
+        public override void Read(BinaryReader reader)
+        {
+            SlotIndex = reader.ReadInt32();
+            Stack = ItemStack.Read(reader);
+        }
+    }
+
+    /// <summary>Client → server: the selected hotbar slot changed (number keys / scroll wheel), so the
+    /// server knows which item the player would place.</summary>
+    public class HeldSlotPacket : Packet
+    {
+        public int SelectedHotbar;
+
+        public override PacketId Id => PacketId.HeldSlot;
+        public override void Write(BinaryWriter writer) => writer.Write(SelectedHotbar);
+        public override void Read(BinaryReader reader) => SelectedHotbar = reader.ReadInt32();
     }
 
     /// <summary>Entity position/orientation update (client→server for the local player, relayed to others).</summary>

@@ -128,9 +128,8 @@ namespace MinecraftClone3API.Graphics
         private const float DayLengthSeconds = 240f;
         private static double _dayTimeSeconds;
 
-        // Sun/moon textures from the resource pack (minecraft/textures/environment/{sun,moon_phases}.png),
-        // sampled by the composition shader to draw the sky billboards. Null when no pack provides them —
-        // the shader then falls back to a procedural disc (see uHasSunTexture/uHasMoonTexture).
+        // Sun/moon textures from the resource pack (sun.png and the full-moon celestial texture), sampled by
+        // the composition shader to draw the sky billboards.
         public static Texture SunTexture;
         public static Texture MoonTexture;
 
@@ -149,25 +148,25 @@ namespace MinecraftClone3API.Graphics
         private static float DayFactor() => MathHelper.Clamp((SunHeight() + 0.2f) / 0.4f, 0f, 1f);
 
         /// <summary>Loads the sun and moon textures from the active resource pack. Must run after the resource
-        /// packs are indexed (see GuiResourceLoading); leaves the fields null (procedural fallback) if absent.</summary>
+        /// packs are indexed (see GuiResourceLoading).</summary>
         public static void LoadSkyTextures()
         {
-            SunTexture = LoadPackTexture("minecraft/textures/environment/sun.png");
-            MoonTexture = LoadPackTexture("minecraft/textures/environment/moon_phases.png");
+            SunTexture = LoadPackTexture("minecraft/textures/environment/celestial/sun.png");
+            MoonTexture = LoadPackTexture("minecraft/textures/environment/celestial/moon/full_moon.png");
         }
 
         private static Texture LoadPackTexture(string key)
         {
             if (!ResourceReader.Exists(key))
             {
-                Logger.Warn($"Sky texture \"{key}\" not found; using a procedural fallback.");
+                Logger.Error($"Sky texture \"{key}\" not found.");
                 return null;
             }
 
             try { return ResourceReader.ReadTexture(key); }
             catch (Exception e)
             {
-                Logger.Warn($"Failed to load sky texture \"{key}\"; using a procedural fallback.");
+                Logger.Error($"Failed to load sky texture \"{key}\".");
                 Logger.Exception(e);
                 return null;
             }
@@ -702,7 +701,7 @@ namespace MinecraftClone3API.Graphics
             // Background sky: the gradient/sunset/sun/moon/stars are rendered procedurally per background pixel
             // in the composition shader (no extra geometry, no remesh — same fullscreen pass) and water reflects
             // the same SkyColor. All it needs are the time-of-day colours computed here and the pack sun/moon
-            // textures on units 5/6 (procedural disc fallback when a pack is absent, via the uHas* flags).
+            // textures on units 5/6.
             var skyColor = SkyZenithColor();
             GL.Uniform3(comp.GetUniformLocation("uSkyColor"), skyColor.X, skyColor.Y, skyColor.Z);
             var horizon = SkyHorizonColor();
@@ -726,8 +725,6 @@ namespace MinecraftClone3API.Graphics
 
             GL.Uniform1(comp.GetUniformLocation("uSunTexture"), 5);
             GL.Uniform1(comp.GetUniformLocation("uMoonTexture"), 6);
-            GL.Uniform1(comp.GetUniformLocation("uHasSunTexture"), SunTexture != null ? 1f : 0f);
-            GL.Uniform1(comp.GetUniformLocation("uHasMoonTexture"), MoonTexture != null ? 1f : 0f);
             GL.ActiveTexture(TextureUnit.Texture5);
             GL.BindTexture(TextureTarget.Texture2D, (SunTexture ?? ClientResources.WhitePixel).Id);
             GL.BindSampler(5, 0);

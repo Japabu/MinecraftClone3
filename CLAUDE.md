@@ -135,6 +135,7 @@ the linked doc; this is the short "don't violate this" list.
 | Threads, the tick loop, the 5 invariants in full | [docs/threading.md](docs/threading.md) |
 | Deferred renderer, shadows, sky/water shaders, the G-buffer, the Phase-2 distant-horizon LOD | [docs/rendering.md](docs/rendering.md) |
 | States/overlays, the game loop, player physics, graphics options | [docs/state-gameloop.md](docs/state-gameloop.md) |
+| Inventory, item stacks, hotbar HUD + creative screen, 3D block icons | [docs/inventory.md](docs/inventory.md) |
 | Resource cascade, plugin loading, resource packs, models/textures | [docs/resources.md](docs/resources.md) |
 | F1/F3/F4/F7/F10 debug keys, the profiler CSVs, dotnet-trace, RenderDoc | [docs/profiling.md](docs/profiling.md) |
 | Hot-path code — why it's shaped that way (**don't regress these**) | [docs/performance.md](docs/performance.md) |

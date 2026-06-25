@@ -8,6 +8,8 @@ using System.Net.Sockets;
 using System.Threading;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Entities;
+using MinecraftClone3API.IO;
+using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
 
@@ -203,8 +205,16 @@ namespace MinecraftClone3API.Networking
         {
             switch (packet)
             {
-                case LoginPacket _:
-                    Login(session);
+                case LoginPacket login:
+                    Login(session, login.Name);
+                    break;
+                case InventoryActionPacket action when session.LoggedIn:
+                    if (action.SlotIndex >= 0 && action.SlotIndex < Inventory.Size)
+                        session.Inventory.Slots[action.SlotIndex] = action.Stack;
+                    break;
+                case HeldSlotPacket held when session.LoggedIn:
+                    session.Inventory.SelectedHotbar =
+                        Math.Clamp(held.SelectedHotbar, 0, Inventory.HotbarSize - 1);
                     break;
                 case EntityMovePacket move when session.LoggedIn:
                     session.Player.Position = move.Position;
@@ -227,17 +237,22 @@ namespace MinecraftClone3API.Networking
             }
         }
 
-        private void Login(ClientSession session)
+        private void Login(ClientSession session, string name)
         {
             if (session.LoggedIn) return;
 
             session.EntityId = _nextEntityId++;
+            session.PlayerName = name ?? "";
             session.Player = new EntityPlayer {Position = SpawnPosition};
             session.LoggedIn = true;
             _world.AddPlayer(session.Player);
 
+            if (!PlayerSerializer.Load(_world.WorldDir, session.PlayerName, session.Inventory))
+                SeedCreativeInventory(session.Inventory);
+
             session.Connection.Send(new LoginAcceptPacket {EntityId = session.EntityId, Spawn = SpawnPosition});
             session.Connection.Send(new WorldTimePacket {WorldSeconds = _world.WorldTimeSeconds});
+            session.Connection.Send(new InventoryStatePacket {Inventory = session.Inventory});
 
             //Tell the new client about everyone already present, and everyone else about the newcomer.
             foreach (var other in _sessions)
@@ -264,6 +279,19 @@ namespace MinecraftClone3API.Networking
             Logger.Info($"Player {session.EntityId} logged in");
         }
 
+        /// <summary>Fresh players get the first few registered blocks on the hotbar so the game is playable
+        /// before opening the creative menu.</summary>
+        private static void SeedCreativeInventory(Inventory inventory)
+        {
+            var slot = 0;
+            foreach (var block in GameRegistry.Blocks)
+            {
+                if (block.Id == 0) continue;
+                if (slot >= Inventory.HotbarSize) break;
+                inventory.Slots[slot++] = new ItemStack(block.Id, ItemStack.MaxStackSize);
+            }
+        }
+
         private void ApplyPlaceRequest(ClientSession session, PlaceBlockRequestPacket place)
         {
             var block = GameRegistry.GetBlock(place.BlockId);
@@ -282,6 +310,7 @@ namespace MinecraftClone3API.Networking
 
                 if (session.LoggedIn)
                 {
+                    PlayerSerializer.Save(_world.WorldDir, session.PlayerName, session.Inventory);
                     _world.RemovePlayer(session.Player);
                     Broadcast(new EntityDespawnPacket {EntityId = session.EntityId}, session);
                     Logger.Info($"Player {session.EntityId} disconnected");
@@ -484,6 +513,13 @@ namespace MinecraftClone3API.Networking
         public void Stop()
         {
             _running = false;
+
+            // Persist inventories for players still connected at shutdown (SP quit / dedicated stop) — they
+            // never sent a disconnect, so RemoveDisconnected wouldn't have saved them.
+            foreach (var session in _sessions)
+                if (session.LoggedIn)
+                    PlayerSerializer.Save(_world.WorldDir, session.PlayerName, session.Inventory);
+
             try
             {
                 _listener?.Stop();

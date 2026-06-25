@@ -42,8 +42,10 @@ implemented** (one char per key press); the owning state must call `Detach()` fr
 **Player movement & physics** (`Entities/PlayerController.cs` + `PlayerPhysics.cs`, client-only, main
 thread). The player is a **0.6 × 1.8 AABB**; `Entity.Position` is the **feet** and the camera renders at
 `Position + EyeOffset` (1.62) via `Entity.RenderPosition`/`EyeOffset` (defaults keep non-player entities a
-point). `PlayerController` is split into `UpdateFrame` (per frame: look, fly toggle, hotbar, debug keys,
-break/place, camera) and `Tick` (one fixed **20 tps** step), driven by `StateWorld`'s accumulator;
+point). `PlayerController` is split into `UpdateFrame` (per frame: look, fly toggle, hotbar selection, debug keys,
+break/place the held hotbar block, camera — see [inventory.md](inventory.md)) and `Tick` (one fixed **20
+tps** step), driven by `StateWorld`'s accumulator; **E** opens the creative inventory overlay
+(`StateWorld.Update`).
 `ApplyInterpolation(alpha)` lerps `PrevPosition→Position` so 20 tps motion is smooth at the frame rate. Two
 modes, toggled by **double-tapping Space**:
 - **Walk (default):** exact-Minecraft constants integrated once per tick — gravity `v_y=(v_y−0.08)·0.98`,

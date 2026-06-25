@@ -23,7 +23,9 @@
          lit fades into uHorizonColor with distance fog; normal.w==1 ⇒ diffuse unlit
 ```
 
-Shaders live in `MinecraftClone3/Content/System/Assets/System/Shaders/`. Lighting is block-emitted RGB light
+Shaders live in `MinecraftClone3/Content/System/Assets/System/Shaders/`. (Separate from the deferred path
+below, the `ItemIcon` shader forward-renders a single block into an off-screen inventory icon — fixed
+per-face shading, no G-buffer; see [inventory.md](inventory.md).) Lighting is block-emitted RGB light
 (torches) **plus sky light** modulated by a **dynamic day/night cycle**: the per-vertex light is a `vec4`
 (rgb = smooth-lit block brightness, a = smooth-lit sky-occlusion factor); the composition multiplies the sky
 factor by the **sun term** (`shadow * uSunColor * uSunFade`, `WorldRenderer.SunColor` — warm white at noon,

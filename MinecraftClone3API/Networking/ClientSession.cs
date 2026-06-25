@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using MinecraftClone3API.Entities;
+using MinecraftClone3API.Items;
 using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Networking
@@ -14,6 +15,13 @@ namespace MinecraftClone3API.Networking
         public int EntityId;
         public bool LoggedIn;
         public bool ReadySent;
+
+        public string PlayerName = "";
+
+        /// <summary>The authoritative server-side inventory for this client; synced to the client on join via
+        /// <see cref="InventoryStatePacket"/>, then mutated by <see cref="InventoryActionPacket"/>s and
+        /// persisted per player on disconnect/shutdown.</summary>
+        public readonly Inventory Inventory = new Inventory();
 
         // Gate for StreamChunks: the player chunk + loaded-chunk count at the last fully-drained interest
         // scan. When neither changed there is nothing new to stream, so the O(loaded) ConcurrentDictionary

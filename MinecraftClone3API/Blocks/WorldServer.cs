@@ -161,8 +161,11 @@ namespace MinecraftClone3API.Blocks
 
         public Vector3 SpawnPosition => _generator.Spawn().ToVector3();
 
+        public readonly string WorldDir;
+
         public WorldServer(long seed, string worldDir)
         {
+            WorldDir = worldDir;
             _serializer = new WorldSerializer(worldDir);
 
             _generator = GameRegistry.TryGetDimension(OverworldDimensionKey, out var dimension)

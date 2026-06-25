@@ -2,7 +2,7 @@
 
 // Deferred composition. Background pixels (the cleared far plane, no geometry) render a procedural
 // Minecraft-style sky here: a time-of-day gradient + sunrise/sunset glow + a textured sun and moon (from
-// the resource pack, procedural disc fallback) + stars at night. Lit pixels combine the baked block + sky
+// the resource pack) + stars at night. Lit pixels combine the baked block + sky
 // light with the depth-aware-upsampled half-res sun shadow (resolved in ShadowResolve.fs); water surfaces
 // reflect that same sky. Finally everything fades into the horizon colour with distance fog so terrain
 // melts into the sky at the render-distance edge.
@@ -71,10 +71,8 @@ uniform vec3 uHorizonColor;     // horizon haze colour (also the distance-fog co
 uniform vec3 uVoidColor;        // colour below the horizon
 uniform vec3 uSunsetColor;      // orange horizon glow toward the sun (~0 away from dawn/dusk)
 uniform float uStarBrightness;  // 0 by day .. ~1 at night
-uniform sampler2D uSunTexture;
-uniform sampler2D uMoonTexture;
-uniform float uHasSunTexture;   // 1 if the pack provided sun.png, else a procedural disc
-uniform float uHasMoonTexture;  // 1 if the pack provided moon_phases.png, else a procedural disc
+uniform sampler2D uSunTexture;  // sun.png from the resource pack
+uniform sampler2D uMoonTexture; // full_moon.png from the resource pack
 uniform float uSunSize;         // tan of the sun billboard's half-angle (tunable, see WorldRenderer)
 uniform float uMoonSize;
 // View-space distance separating the cleared far plane (sky) from the farthest drawn terrain.
@@ -91,10 +89,10 @@ const float DepthSharpness = 256.0;
 
 // --- Water look (Tier B) tunables ---
 // Detection band for the mesher's water flag in the G-buffer normal.w. The mesher writes normal.w = 0.5 for
-// water; EncodeNormal stores 0.5*0.5+0.5 = 0.75, which Rgba8 quantizes to a deterministic 191/255 ≈ 0.749
+// water; EncodeNormal stores 0.5*0.5+0.5 = 0.75, which Rgba8 quantizes to a deterministic 191/255 ~= 0.749
 // (the flag is a flat per-face attribute and attachment 1 is written with blending OFF, so there is no
-// interpolation/blend drift). The band is kept snug around that value: lit solid (input 0 → 0.502) and unlit
-// geometry (input 1 → 1.0) are far outside. Any future RenderMaterial given its own mesher w-mapping must
+// interpolation/blend drift). The band is kept snug around that value: lit solid (input 0 -> 0.502) and unlit
+// geometry (input 1 -> 1.0) are far outside. Any future RenderMaterial given its own mesher w-mapping must
 // encode OUTSIDE this band (i.e. avoid input w in [0.4, 0.6)) or pick its own band.
 const float WaterFlagLo = 0.7;
 const float WaterFlagHi = 0.8;
@@ -195,11 +193,7 @@ vec3 SkyColor(vec3 dir)
 		vec4 b = CelestialBillboard(dir, uSunDirection, uSunSize);
 		if (b.w > 0.0)
 		{
-			vec3 sunCol;
-			if (uHasSunTexture > 0.5)
-				sunCol = texture(uSunTexture, b.xy).rgb * uSunColor;
-			else
-				sunCol = smoothstep(1.0, 0.55, length(b.xy*2.0 - 1.0)) * uSunColor;
+			vec3 sunCol = texture(uSunTexture, b.xy).rgb * uSunColor;
 			sky += sunCol * sunVis;
 		}
 	}
@@ -212,11 +206,7 @@ vec3 SkyColor(vec3 dir)
 		vec4 b = CelestialBillboard(dir, toMoon, uMoonSize);
 		if (b.w > 0.0)
 		{
-			vec3 moonCol;
-			if (uHasMoonTexture > 0.5)
-				moonCol = texture(uMoonTexture, b.xy * vec2(0.25, 0.5)).rgb;  // full-moon cell (top-left of 4x2)
-			else
-				moonCol = smoothstep(1.0, 0.6, length(b.xy*2.0 - 1.0)) * vec3(0.9, 0.9, 1.0);
+			vec3 moonCol = texture(uMoonTexture, b.xy).rgb;
 			sky += moonCol * moonVis;
 		}
 	}

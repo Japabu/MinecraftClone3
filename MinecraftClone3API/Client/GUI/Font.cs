@@ -11,9 +11,9 @@ namespace MinecraftClone3API.Client.GUI
 {
     /// <summary>
     /// Renders text through Minecraft's modern font-provider format
-    /// (assets/minecraft/font/default.json). Supports <c>bitmap</c> and <c>space</c> providers;
-    /// <c>legacy_unicode</c> and <c>ttf</c> are ignored. Glyph widths are derived by alpha-scanning
-    /// each cell, normalised to an 8px em.
+    /// (assets/minecraft/font/default.json). Resolves <c>reference</c> providers (which the current
+    /// default font is built entirely from) and loads the <c>bitmap</c> and <c>space</c> providers
+    /// they pull in. Glyph widths are derived by alpha-scanning each cell, normalised to an 8px em.
     /// </summary>
     public static class Font
     {
@@ -37,6 +37,7 @@ namespace MinecraftClone3API.Client.GUI
         {
             public string Type { get; set; }
             public string File { get; set; }
+            public string Id { get; set; }
             public string[] Chars { get; set; }
             public Dictionary<string, float> Advances { get; set; }
         }
@@ -57,21 +58,41 @@ namespace MinecraftClone3API.Client.GUI
                 return;
             }
 
+            LoadDefinition(DefinitionPath, new HashSet<string>());
+
+            _loaded = Glyphs.Count > 0;
+        }
+
+        /// <summary>
+        /// Loads every provider in the font definition at <paramref name="path"/>. <c>reference</c>
+        /// providers are resolved to the definition they name and loaded recursively; <paramref name="visited"/>
+        /// guards against reference cycles.
+        /// </summary>
+        private static void LoadDefinition(string path, HashSet<string> visited)
+        {
+            if (!visited.Add(path)) return;
+
+            if (!ResourceReader.Exists(path))
+            {
+                Logger.Error($"Font definition \"{path}\" not found.");
+                return;
+            }
+
             FontDefinition definition;
             try
             {
-                definition = JsonConvert.DeserializeObject<FontDefinition>(ResourceReader.ReadString(DefinitionPath));
+                definition = JsonConvert.DeserializeObject<FontDefinition>(ResourceReader.ReadString(path));
             }
             catch (Exception e)
             {
-                Logger.Error($"Error loading font definition \"{DefinitionPath}\"");
+                Logger.Error($"Error loading font definition \"{path}\"");
                 Logger.Exception(e);
                 return;
             }
 
             if (definition?.Providers == null)
             {
-                Logger.Error($"Font definition \"{DefinitionPath}\" has no providers.");
+                Logger.Error($"Font definition \"{path}\" has no providers.");
                 return;
             }
 
@@ -85,10 +106,25 @@ namespace MinecraftClone3API.Client.GUI
                     case "space":
                         LoadSpaceProvider(provider);
                         break;
+                    case "reference":
+                        if (provider.Id != null)
+                            LoadDefinition(ResolveDefinitionPath(provider.Id), visited);
+                        break;
                 }
             }
+        }
 
-            _loaded = Glyphs.Count > 0;
+        /// <summary>Resolves a font id (e.g. <c>minecraft:include/default</c>) to its asset path.</summary>
+        private static string ResolveDefinitionPath(string id)
+        {
+            var ns = "minecraft";
+            var colon = id.IndexOf(':');
+            if (colon >= 0)
+            {
+                ns = id.Substring(0, colon);
+                id = id.Substring(colon + 1);
+            }
+            return $"{ns}/font/{id}.json";
         }
 
         public static int MeasureWidth(string text, int scale = 2)

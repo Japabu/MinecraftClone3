@@ -190,6 +190,11 @@ namespace MinecraftClone3.States
                 StateEngine.AddOverlay(new GuiPauseMenu(_window));
                 active = false;
             }
+            if (active && _window.KeyboardState.IsKeyPressed(Keys.E))
+            {
+                StateEngine.AddOverlay(new GuiCreativeInventory(_window, _world));
+                active = false;
+            }
 
             // Singleplayer freezes the world while paused; multiplayer can't pause a shared server. The
             // benchmark always pumps so chunks keep streaming/regenerating even with the window unfocused.
@@ -332,6 +337,8 @@ namespace MinecraftClone3.States
             var projection = Matrix4.CreatePerspectiveFieldOfView(
                 MathHelper.DegreesToRadians(GraphicsSettings.Fov), aspect, 0.1f, farPlane);
             WorldRenderer.RenderWorld(_world, projection);
+
+            HotbarRenderer.Render(_world.Inventory);
 
             if (!Profiler.Recording && !RenderDebug.ShowDiagnostics && !RenderDebug.ShowControls) return;
 

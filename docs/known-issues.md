@@ -150,3 +150,11 @@ relevant permanent doc. Not a changelog.
 - `ClientSession.SentChunks` shrinks only on `ChunkRelease`/dirty resend, so a misbehaving or crashed client
   could leave stale entries until it disconnects. Bounded in practice by client `CacheDistance` eviction;
   would need a server-side cap/timeout for hardening.
+- **No real player identity, so inventories aren't per-player in MP.** The client sends an empty name in the
+  `Login` packet, so every player's inventory saves to `Players/player.dat` (see [inventory.md](inventory.md)).
+  Singleplayer is fine; distinct MP inventories need actual player names plumbed through login. Inventory edits
+  are also **unvalidated** (creative sandbox) — the server stores whatever `InventoryAction`/`HeldSlot` sends
+  beyond a slot-range clamp, same trust model as placement.
+- **Inventory is creative-only and items are blocks.** `ItemStack.BlockId` *is* a block ref — there are no
+  non-block items, no crafting, no survival pickup/drop, and the main 27-slot region exists in the model but
+  has no GUI region yet (only the hotbar row is interactive in the creative screen).
