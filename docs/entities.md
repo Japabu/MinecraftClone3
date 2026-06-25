@@ -83,9 +83,11 @@ item spin) is matrix-only at draw time; the shared meshes stay static. Culling i
 ## Adding an entity
 
 1. Add a box model factory to [EntityModels.cs](../MinecraftClone3API/Client/Graphics/EntityModels.cs) (texels,
-   Y-up, feet at 0, facing +Z; name parts `head`/`body`/`leg0..3`/`arm0..1`/`wing0..1` for animation). A
-   quadruped/bird body carries a baked 90° pitch and its pivot sits at `leg_height + half_body_depth` so the
-   rotated torso rests on top of the legs rather than sinking to hip level.
+   Y-up, feet at 0, facing +Z; name parts `head`/`body`/`leg0..3`/`arm0..1`/`wing0..1` for animation).
+   **Author to the official Minecraft model exactly:** take Mojang's pivots/cuboids and convert from their frame
+   (Y-down, feet at y=24, head facing −Z) with `ours_y = 24 − mc_y`, `ours_z = −mc_z` — box sizes are preserved
+   so the sheet still maps straight on. A quadruped/bird body carries a baked 90° pitch (its box unwraps upright
+   but lies horizontal).
 2. `context.Register(new EntityType(...))` in your plugin, pointing at the official texture path.
 3. Creatures spawn ambiently; spawn explicitly with `world.SpawnEntity(type, pos)`, or register an
    `ItemSpawnEgg(type, spritePath)` for a right-click creative spawn egg.

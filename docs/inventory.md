@@ -84,6 +84,11 @@ Clicks resolve on button release so a press-move-release can become a drag; a pr
 normal click. Inventory `Slot.Set` closures write the replica and call `SendInventoryAction`, so every edit
 syncs to the server automatically.
 
+**Render feedback** matches vanilla: the slot under the cursor gets the translucent-white hover overlay
+(`0x80FFFFFF`, `DrawSlotHighlight`). While painting a drag, that same overlay marks each painted slot and the
+deposited items already appear *in place* — `ComputeDragDistribution` (shared with the release path so preview
+and result agree) drives both the in-slot counts and the reduced count shown on the carried cursor.
+
 ## Authority, networking, persistence
 
 The server owns the inventory; the flow is in [networking.md](networking.md) (`InventoryState` /

@@ -28,6 +28,10 @@ namespace MinecraftClone3API.Client.GUI
         /// <summary>Called once per crafted batch taken from an output slot, to consume the ingredients.</summary>
         public Action OnTakeOutput;
 
+        /// <summary>Region id used to route shift-click quick-move (e.g. grid / main inventory / hotbar). The
+        /// meaning is the owning screen's; <see cref="ContainerScreen.SlotsInGroup"/> filters by it.</summary>
+        public int Group;
+
         public Slot(Rectangle bounds, Func<ItemStack> get, Action<ItemStack> set)
         {
             Bounds = bounds;

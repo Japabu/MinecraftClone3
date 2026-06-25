@@ -31,6 +31,10 @@ namespace MinecraftClone3API.Client.GUI
         private const int SlotSize = 16;
         private const int Scale = 2;
 
+        private const int GridGroup = 1;
+        private const int MainGroup = 2;
+        private const int HotbarGroup = 3;
+
         private readonly WorldClient _world;
         private readonly CraftingState _crafting;
         private readonly List<Slot> _slots = new List<Slot>();

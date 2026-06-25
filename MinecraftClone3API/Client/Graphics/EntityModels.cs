@@ -3,11 +3,12 @@ using OpenTK.Mathematics;
 namespace MinecraftClone3API.Graphics
 {
     /// <summary>
-    /// Box-model factories for the built-in entities, authored to the official Minecraft texture layouts (each
-    /// box uses Mojang's texture offsets and dimensions so the entity sheets map straight on). Coordinates are
-    /// in texels for readability and converted to blocks here; the model convention is Y-up, feet at y=0, facing
-    /// +Z. Quadruped bodies carry a baked 90° pitch so the long box (whose texture unwraps upright) lies
-    /// horizontal. Part names drive animation (see <see cref="EntityRenderer"/>).
+    /// Box-model factories for the built-in entities, authored to the official Minecraft models (each box uses
+    /// Mojang's exact pivots, offsets, and dimensions so the entity sheets map straight on). Minecraft authors
+    /// its models Y-down with feet at y=24 and the head facing −Z; these are converted to our convention (Y-up,
+    /// feet at y=0, facing +Z) by <c>ours_y = 24 − mc_y</c> and <c>ours_z = −mc_z</c>, which leaves box sizes —
+    /// and therefore the texture unwrap — unchanged. Quadruped bodies carry a baked 90° pitch so the long box
+    /// (whose texture unwraps upright) lies horizontal. Part names drive animation (see <see cref="EntityRenderer"/>).
     /// </summary>
     public static class EntityModels
     {
@@ -35,11 +36,11 @@ namespace MinecraftClone3API.Graphics
         {
             var m = new EntityModel(64, 32);
 
-            m.AddPart(new ModelPart("head", P(0, 8, 6))).AddBox(P(-4, 0, 0), P(4, 8, 8), 0, 0)
-                .AddBox(P(-2, 0, 8), P(2, 3, 9), 16, 16); // snout
-            m.AddPart(new ModelPart("body", P(0, 8, 0), new Vector3(Deg90, 0, 0)))
-                .AddBox(P(-5, -8, -4), P(5, 8, 4), 28, 8);
-            Legs(m, 6, 3, 5, 0, 16);
+            m.AddPart(new ModelPart("head", P(0, 12, 6))).AddBox(P(-4, -4, 0), P(4, 4, 8), 0, 0)
+                .AddBox(P(-2, -3, 8), P(2, 0, 9), 16, 16); // snout
+            m.AddPart(new ModelPart("body", P(0, 13, -2), new Vector3(Deg90, 0, 0)))
+                .AddBox(P(-5, -6, -1), P(5, 10, 7), 28, 8);
+            Legs(m, 6, 3, 6, 0, 16);
 
             return m;
         }
@@ -49,13 +50,13 @@ namespace MinecraftClone3API.Graphics
         {
             var m = new EntityModel(64, 32);
 
-            m.AddPart(new ModelPart("head", P(0, 14, 8))).AddBox(P(-4, 0, 0), P(4, 8, 6), 0, 0)
-                .AddBox(P(-5, 5, 1), P(-4, 8, 3), 22, 0)   // right horn
-                .AddBox(P(4, 5, 1), P(5, 8, 3), 22, 0);    // left horn
-            // Body pivot raised so the rotated torso rests on top of the legs (leg height 12 + half-depth 5).
-            m.AddPart(new ModelPart("body", P(0, 17, 0), new Vector3(Deg90, 0, 0)))
-                .AddBox(P(-6, -9, -5), P(6, 9, 5), 18, 4);
-            Legs(m, 12, 4, 6, 0, 16);
+            m.AddPart(new ModelPart("head", P(0, 20, 8))).AddBox(P(-4, -4, 0), P(4, 4, 6), 0, 0)
+                .AddBox(P(-5, 2, 3), P(-4, 5, 4), 22, 0)   // right horn
+                .AddBox(P(4, 2, 3), P(5, 5, 4), 22, 0);    // left horn
+            m.AddPart(new ModelPart("body", P(0, 19, -2), new Vector3(Deg90, 0, 0)))
+                .AddBox(P(-6, -8, -3), P(6, 10, 7), 18, 4)
+                .AddBox(P(-2, -8, 7), P(2, -2, 8), 52, 0); // udder
+            Legs(m, 12, 4, 7, 0, 16);
 
             return m;
         }
@@ -65,11 +66,10 @@ namespace MinecraftClone3API.Graphics
         {
             var m = new EntityModel(64, 32);
 
-            m.AddPart(new ModelPart("head", P(0, 14, 8))).AddBox(P(-3, 0, 0), P(3, 6, 8), 0, 0);
-            // Body pivot raised so the rotated torso rests on the legs (leg height 12 + half-depth 3).
-            m.AddPart(new ModelPart("body", P(0, 15, 0), new Vector3(Deg90, 0, 0)))
-                .AddBox(P(-4, -8, -3), P(4, 8, 3), 28, 8);
-            Legs(m, 12, 3, 5, 0, 16);
+            m.AddPart(new ModelPart("head", P(0, 18, 8))).AddBox(P(-3, -4, 0), P(3, 4, 6), 0, 0);
+            m.AddPart(new ModelPart("body", P(0, 19, -2), new Vector3(Deg90, 0, 0)))
+                .AddBox(P(-4, -6, 1), P(4, 10, 7), 28, 8);
+            Legs(m, 12, 3, 6, 0, 16);
 
             return m;
         }
@@ -79,19 +79,18 @@ namespace MinecraftClone3API.Graphics
         {
             var m = new EntityModel(64, 32);
 
-            m.AddPart(new ModelPart("head", P(0, 9, 3)))
-                .AddBox(P(-2, 0, 0), P(2, 6, 3), 0, 0)
-                .AddBox(P(-2, 1, 3), P(2, 3, 5), 14, 4)   // beak
-                .AddBox(P(-1, -2, 1), P(1, 1, 2), 14, 0); // wattle
-            // Body pivot raised so the rotated torso rests on the legs (leg height 5 + half-depth 3).
+            m.AddPart(new ModelPart("head", P(0, 9, 4)))
+                .AddBox(P(-2, 0, -1), P(2, 6, 2), 0, 0)
+                .AddBox(P(-2, 2, 2), P(2, 4, 4), 14, 0)   // beak
+                .AddBox(P(-1, 0, 1), P(1, 2, 3), 14, 4);  // wattle
             m.AddPart(new ModelPart("body", P(0, 8, 0), new Vector3(Deg90, 0, 0)))
-                .AddBox(P(-3, -6, -3), P(3, 6, 3), 0, 9);
+                .AddBox(P(-3, -4, -3), P(3, 4, 3), 0, 9);
 
-            m.AddPart(new ModelPart("wing0", P(-3, 9, 0))).AddBox(P(-1, -4, -3), P(0, 0, 3), 24, 13);
-            m.AddPart(new ModelPart("wing1", P(3, 9, 0))).AddBox(P(0, -4, -3), P(1, 0, 3), 24, 13);
+            m.AddPart(new ModelPart("wing0", P(-4, 11, 0))).AddBox(P(0, -4, -3), P(1, 0, 3), 24, 13);
+            m.AddPart(new ModelPart("wing1", P(4, 11, 0))).AddBox(P(-1, -4, -3), P(0, 0, 3), 24, 13);
 
-            m.AddPart(new ModelPart("leg0", P(-2, 5, 0))).AddBox(P(-1.5f, -5, -1.5f), P(1.5f, 0, 1.5f), 26, 0);
-            m.AddPart(new ModelPart("leg1", P(2, 5, 0))).AddBox(P(-1.5f, -5, -1.5f), P(1.5f, 0, 1.5f), 26, 0);
+            m.AddPart(new ModelPart("leg0", P(-2, 5, -1))).AddBox(P(-1, -5, 0), P(2, 0, 3), 26, 0);
+            m.AddPart(new ModelPart("leg1", P(1, 5, -1))).AddBox(P(-1, -5, 0), P(2, 0, 3), 26, 0);
 
             return m;
         }

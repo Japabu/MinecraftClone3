@@ -40,6 +40,11 @@ namespace MinecraftClone3API.Client.GUI
         private bool _dragActive;
         private readonly List<Slot> _dragSlots = new List<Slot>();
 
+        private static readonly System.Diagnostics.Stopwatch Clock = System.Diagnostics.Stopwatch.StartNew();
+        private const double DoubleClickMs = 250;
+        private double _lastLeftClickMs = double.NegativeInfinity;
+        private Slot _lastClickSlot;
+
         protected ContainerScreen(GameWindow window)
         {
             Window = window;
@@ -58,7 +63,8 @@ namespace MinecraftClone3API.Client.GUI
         /// <summary>Mouse-wheel hook (creative inventory scrolling); default ignores it.</summary>
         protected virtual void OnScroll(float delta) { }
 
-        /// <summary>Shift-click quick-move; default no-op. Subclasses with a meaningful destination override.</summary>
+        /// <summary>Shift-click quick-move; default no-op. Subclasses route between regions via
+        /// <see cref="MergeInto"/> + <see cref="SlotsInGroup"/>.</summary>
         protected virtual void OnShiftClick(Slot slot) { }
 
         public override void Update(bool focused)
@@ -124,12 +130,52 @@ namespace MinecraftClone3API.Client.GUI
             {
                 if (_pressSlot != null) OnShiftClick(_pressSlot);
             }
+            else if (_activeButton == MouseButton.Left && IsDoubleClick(_pressSlot) && !Cursor.IsEmpty)
+                GatherToCursor();
             else
                 NormalClick(_activeButton, _pressSlot);
+
+            if (_activeButton == MouseButton.Left && !_pressShift)
+            {
+                _lastLeftClickMs = Clock.Elapsed.TotalMilliseconds;
+                _lastClickSlot = _pressSlot;
+            }
 
             _hasActive = false;
             _dragActive = false;
             _dragSlots.Clear();
+        }
+
+        private bool IsDoubleClick(Slot slot) =>
+            slot != null && slot == _lastClickSlot &&
+            Clock.Elapsed.TotalMilliseconds - _lastLeftClickMs < DoubleClickMs;
+
+        /// <summary>Double-click gather: sweep the container pulling matching items into the held cursor up to a
+        /// full stack — partial stacks first so full ones are left intact (vanilla order). Skips output/source
+        /// slots and any without a setter.</summary>
+        private void GatherToCursor()
+        {
+            var max = MaxStack(Cursor);
+            if (Cursor.Count >= max) return;
+
+            for (var pass = 0; pass < 2; pass++)
+            {
+                var slots = Slots;
+                for (var i = 0; i < slots.Count; i++)
+                {
+                    var slot = slots[i];
+                    if (slot.Set == null || slot.IsOutput || slot.IsSource) continue;
+                    var s = slot.Get();
+                    if (s.IsEmpty || !s.SameItem(Cursor)) continue;
+                    if (pass == 0 && s.Count >= MaxStack(s)) continue;
+
+                    var take = Math.Min(max - Cursor.Count, s.Count);
+                    if (take <= 0) continue;
+                    Cursor = Cursor.WithCount(Cursor.Count + take);
+                    slot.Set(Dec(s, take));
+                    if (Cursor.Count >= max) return;
+                }
+            }
         }
 
         private void NormalClick(MouseButton button, Slot slot)
@@ -244,9 +290,27 @@ namespace MinecraftClone3API.Client.GUI
         {
             if (Cursor.IsEmpty) return;
 
-            var n = _dragSlots.Count;
+            var gives = ComputeDragDistribution(out var remaining);
+            foreach (var entry in gives)
+            {
+                var cur = entry.Key.Get();
+                var existing = cur.IsEmpty ? 0 : cur.Count;
+                entry.Key.Set(new ItemStack(Cursor.ItemId, existing + entry.Value, Cursor.Metadata));
+            }
+
+            Cursor = remaining > 0 ? Cursor.WithCount(remaining) : ItemStack.Empty;
+        }
+
+        /// <summary>The per-slot amounts a release would deposit across the painted slots, and (out) the count
+        /// left on the cursor afterward. Drives both the actual deposit and the live drag preview so they agree.</summary>
+        private Dictionary<Slot, int> ComputeDragDistribution(out int cursorRemaining)
+        {
+            var gives = new Dictionary<Slot, int>();
+            cursorRemaining = Cursor.Count;
+            if (Cursor.IsEmpty || _dragSlots.Count == 0) return gives;
+
             var max = MaxStack(Cursor);
-            var per = _activeButton == MouseButton.Left ? Math.Max(1, Cursor.Count / n) : 1;
+            var per = _activeButton == MouseButton.Left ? Math.Max(1, Cursor.Count / _dragSlots.Count) : 1;
             var remaining = Cursor.Count;
 
             foreach (var slot in _dragSlots)
@@ -256,11 +320,12 @@ namespace MinecraftClone3API.Client.GUI
                 var existing = cur.IsEmpty ? 0 : cur.Count;
                 var give = Math.Min(Math.Min(per, max - existing), remaining);
                 if (give <= 0) continue;
-                slot.Set(new ItemStack(Cursor.ItemId, existing + give, Cursor.Metadata));
+                gives[slot] = give;
                 remaining -= give;
             }
 
-            Cursor = remaining > 0 ? Cursor.WithCount(remaining) : ItemStack.Empty;
+            cursorRemaining = remaining;
+            return gives;
         }
 
         private bool IsDragEligible(Slot slot)
@@ -278,6 +343,50 @@ namespace MinecraftClone3API.Client.GUI
             return null;
         }
 
+        /// <summary>Shift-click quick-move helper: merge <paramref name="stack"/> into <paramref name="targets"/>
+        /// — first topping up matching stacks, then filling empty slots — and return whatever didn't fit.
+        /// Output/source/read-only targets are skipped; each write goes through the slot's setter (so server
+        /// mirroring happens automatically).</summary>
+        protected ItemStack MergeInto(ItemStack stack, IReadOnlyList<Slot> targets)
+        {
+            if (stack.IsEmpty) return stack;
+
+            for (var i = 0; i < targets.Count; i++)
+            {
+                var t = targets[i];
+                if (t.Set == null || t.IsOutput || t.IsSource) continue;
+                var d = t.Get();
+                if (d.IsEmpty || !d.SameItem(stack)) continue;
+                var cap = MaxStack(d) - d.Count;
+                if (cap <= 0) continue;
+                var move = Math.Min(cap, stack.Count);
+                t.Set(d.WithCount(d.Count + move));
+                stack = Dec(stack, move);
+                if (stack.IsEmpty) return stack;
+            }
+
+            for (var i = 0; i < targets.Count; i++)
+            {
+                var t = targets[i];
+                if (t.Set == null || t.IsOutput || t.IsSource) continue;
+                if (!t.Get().IsEmpty) continue;
+                t.Set(stack);
+                return ItemStack.Empty;
+            }
+
+            return stack;
+        }
+
+        /// <summary>The slots tagged with the given <see cref="Slot.Group"/>, in declaration order.</summary>
+        protected IReadOnlyList<Slot> SlotsInGroup(int group)
+        {
+            var result = new List<Slot>();
+            var slots = Slots;
+            for (var i = 0; i < slots.Count; i++)
+                if (slots[i].Group == group) result.Add(slots[i]);
+            return result;
+        }
+
         private static int MaxStack(ItemStack s) => s.Item?.MaxStackSize ?? ItemStack.MaxStackSize;
 
         private static ItemStack Dec(ItemStack s, int by = 1) =>
@@ -293,20 +402,58 @@ namespace MinecraftClone3API.Client.GUI
 
             DrawBackground();
 
+            var mouse = ScaledResolution.ToGuiCoords(Window.MouseState.Position);
+
+            // While painting, mirror what a release would deposit into each slot so the items appear in place
+            // and the cursor shows only the remainder.
+            Dictionary<Slot, int> dragGives = null;
+            var cursorRemaining = Cursor.Count;
+            if (_dragActive && _dragSlots.Count >= 2)
+                dragGives = ComputeDragDistribution(out cursorRemaining);
+
             var slots = Slots;
             for (var i = 0; i < slots.Count; i++)
-                ItemStackRenderer.Draw(slots[i].Get(), slots[i].Bounds);
+            {
+                var slot = slots[i];
+                var stack = slot.Get();
+                if (dragGives != null && dragGives.TryGetValue(slot, out var give))
+                {
+                    var existing = stack.IsEmpty ? 0 : stack.Count;
+                    stack = new ItemStack(Cursor.ItemId, existing + give, Cursor.Metadata);
+                }
+                ItemStackRenderer.Draw(stack, slot.Bounds);
+            }
 
-            var mouse = ScaledResolution.ToGuiCoords(Window.MouseState.Position);
+            // Slot highlight: the painted slots while dragging, otherwise the slot under the cursor.
+            if (dragGives != null)
+            {
+                foreach (var slot in _dragSlots)
+                    DrawSlotHighlight(slot.Bounds);
+            }
+            else
+            {
+                var hovered = SlotAt(mouse);
+                if (hovered != null) DrawSlotHighlight(hovered.Bounds);
+            }
+
             if (!Cursor.IsEmpty)
-                ItemStackRenderer.Draw(Cursor,
-                    Rectangle.FromSize((int) mouse.X - IconSize / 2, (int) mouse.Y - IconSize / 2, IconSize, IconSize));
+            {
+                var carried = dragGives != null ? Cursor.WithCount(cursorRemaining) : Cursor;
+                if (!carried.IsEmpty)
+                    ItemStackRenderer.Draw(carried,
+                        Rectangle.FromSize((int) mouse.X - IconSize / 2, (int) mouse.Y - IconSize / 2, IconSize, IconSize));
+            }
             else
             {
                 var hovered = SlotAt(mouse);
                 if (hovered != null) GuiTooltip.Draw(hovered.Get(), mouse);
             }
         }
+
+        /// <summary>The vanilla translucent-white slot hover/paint overlay (<c>0x80FFFFFF</c>).</summary>
+        private static void DrawSlotHighlight(Rectangle bounds) =>
+            GuiRenderer.DrawTexture(ClientResources.WhitePixel, bounds, null,
+                new Color4(1f, 1f, 1f, 0.5f));
 
         protected static void SetBlend() => RenderState.Set(new GlState
         {
