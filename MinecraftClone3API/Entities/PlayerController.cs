@@ -159,13 +159,20 @@ namespace MinecraftClone3API.Entities
 
             var held = client.Inventory.SelectedItem;
             if (held.IsEmpty) return;
+            var item = held.Item;
+            if (item == null) return;
 
-            // Non-placeable items (sticks, ingots, tools) have no block — right-click does nothing.
-            var block = held.Item?.GetBlock();
-            if (block == null) return;
+            var target = _blockRaytrace.BlockPos + _blockRaytrace.Face.GetNormali();
+            var block = item.GetBlock();
+            if (block != null)
+            {
+                world.PlaceBlock(PlayerEntity, target, block,
+                    block.GetPlacementMetadata(ks, PlayerEntity, _blockRaytrace));
+                return;
+            }
 
-            world.PlaceBlock(PlayerEntity, _blockRaytrace.BlockPos + _blockRaytrace.Face.GetNormali(), block,
-                block.GetPlacementMetadata(ks, PlayerEntity, _blockRaytrace));
+            // Usable non-block items (a spawn egg) ask the server to act; other items do nothing.
+            if (item.IsUsable) client.SendUseItem(target);
         }
 
         /// <summary>Hotbar slot selection: number keys 1-9 jump to a slot, the scroll wheel steps through

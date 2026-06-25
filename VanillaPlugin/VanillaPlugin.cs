@@ -71,21 +71,34 @@ namespace VanillaPlugin
         }
 
         // Animals, a hostile mob, and the dropped-item type. Width/height drive server collision; the texture
-        // paths + box models drive client rendering (the official Minecraft entity sheets from the resource pack).
+        // paths + box models drive client rendering (the official Minecraft entity sheets — pig/cow/chicken
+        // carry the climate-variant suffix used by current Minecraft). Each creature also gets a creative spawn
+        // egg (its official 2D item sprite) that spawns it on right-click for testing.
         private static void RegisterEntities(PluginContext context)
         {
-            context.Register(new EntityType("Pig", EntityKind.Creature, 0.9f, 0.9f, 10f, 0.1f, false,
-                "minecraft:entity/pig/pig", EntityModels.Pig));
-            context.Register(new EntityType("Cow", EntityKind.Creature, 0.9f, 1.4f, 10f, 0.1f, false,
-                "minecraft:entity/cow/cow", EntityModels.Cow));
-            context.Register(new EntityType("Sheep", EntityKind.Creature, 0.9f, 1.3f, 8f, 0.1f, false,
-                "minecraft:entity/sheep/sheep", EntityModels.Sheep));
-            context.Register(new EntityType("Chicken", EntityKind.Creature, 0.4f, 0.7f, 4f, 0.08f, false,
-                "minecraft:entity/chicken/chicken", EntityModels.Chicken));
-            context.Register(new EntityType("Zombie", EntityKind.Creature, 0.6f, 1.95f, 20f, 0.13f, true,
-                "minecraft:entity/zombie/zombie", EntityModels.Biped));
+            var pig = new EntityType("Pig", EntityKind.Creature, 0.9f, 0.9f, 10f, 0.1f, false,
+                "minecraft:entity/pig/pig_temperate", EntityModels.Pig);
+            var cow = new EntityType("Cow", EntityKind.Creature, 0.9f, 1.4f, 10f, 0.1f, false,
+                "minecraft:entity/cow/cow_temperate", EntityModels.Cow);
+            var sheep = new EntityType("Sheep", EntityKind.Creature, 0.9f, 1.3f, 8f, 0.1f, false,
+                "minecraft:entity/sheep/sheep", EntityModels.Sheep);
+            var chicken = new EntityType("Chicken", EntityKind.Creature, 0.4f, 0.7f, 4f, 0.08f, false,
+                "minecraft:entity/chicken/chicken_temperate", EntityModels.Chicken);
+            var zombie = new EntityType("Zombie", EntityKind.Creature, 0.6f, 1.95f, 20f, 0.13f, true,
+                "minecraft:entity/zombie/zombie", EntityModels.Biped);
 
+            context.Register(pig);
+            context.Register(cow);
+            context.Register(sheep);
+            context.Register(chicken);
+            context.Register(zombie);
             context.Register(new EntityType("Item", EntityKind.Item, 0.25f, 0.25f, 1f, 0f, false, null, null));
+
+            context.Register(new ItemSpawnEgg(pig, "minecraft/textures/item/pig_spawn_egg.png"));
+            context.Register(new ItemSpawnEgg(cow, "minecraft/textures/item/cow_spawn_egg.png"));
+            context.Register(new ItemSpawnEgg(sheep, "minecraft/textures/item/sheep_spawn_egg.png"));
+            context.Register(new ItemSpawnEgg(chicken, "minecraft/textures/item/chicken_spawn_egg.png"));
+            context.Register(new ItemSpawnEgg(zombie, "minecraft/textures/item/zombie_spawn_egg.png"));
         }
 
         public void PostLoad(PluginContext context)

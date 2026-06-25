@@ -1,5 +1,7 @@
 using MinecraftClone3API.Blocks;
+using MinecraftClone3API.Entities;
 using MinecraftClone3API.Util;
+using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Items
 {
@@ -21,6 +23,15 @@ namespace MinecraftClone3API.Items
 
         /// <summary>The block this item places, or null for a non-placeable item.</summary>
         public virtual Block GetBlock() => null;
+
+        /// <summary>Whether right-clicking with this item triggers a server-side <see cref="OnUseServer"/>
+        /// action (e.g. a spawn egg) instead of placing a block — lets the client send a use request only
+        /// when one is meaningful.</summary>
+        public virtual bool IsUsable => false;
+
+        /// <summary>Server-side right-click action for a non-block item (the effect is server-authoritative).
+        /// <paramref name="position"/> is the world cell the player clicked toward. No-op by default.</summary>
+        public virtual void OnUseServer(WorldServer world, EntityPlayer player, Vector3 position) { }
 
         /// <summary>Resource-pack path of the 2D inventory sprite for a non-block item (e.g.
         /// <c>"minecraft:item/stick"</c>); null for block items, which render a 3D isometric icon instead.</summary>

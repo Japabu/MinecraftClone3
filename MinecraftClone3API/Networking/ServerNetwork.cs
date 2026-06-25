@@ -290,6 +290,9 @@ namespace MinecraftClone3API.Networking
                 case PlaceBlockRequestPacket place when session.LoggedIn:
                     ApplyPlaceRequest(session, place);
                     break;
+                case UseItemRequestPacket use when session.LoggedIn:
+                    ApplyUseRequest(session, use);
+                    break;
                 case ChunkReleasePacket release when session.LoggedIn:
                     session.SentChunks.Remove(release.Position);
                     break;
@@ -342,11 +345,18 @@ namespace MinecraftClone3API.Networking
             Logger.Info($"Player {session.EntityId} logged in");
         }
 
-        /// <summary>Fresh players get the first few placeable block items on the hotbar so the game is playable
-        /// before opening the creative menu.</summary>
+        /// <summary>Fresh players get the spawn eggs followed by the first placeable block items on the hotbar
+        /// so entities are testable and the game is playable before opening the creative menu.</summary>
         private static void SeedCreativeInventory(Inventory inventory)
         {
             var slot = 0;
+            foreach (var item in GameRegistry.Items)
+            {
+                if (slot >= Inventory.HotbarSize) break;
+                if (!item.IsUsable) continue;
+                inventory.Slots[slot++] = new ItemStack(item.Id, ItemStack.MaxStackSize);
+            }
+
             foreach (var item in GameRegistry.Items)
             {
                 if (slot >= Inventory.HotbarSize) break;
@@ -360,14 +370,24 @@ namespace MinecraftClone3API.Networking
             var block = GameRegistry.GetBlock(place.BlockId);
             if (block.Id == 0)
             {
-                // Breaking: drop the removed block as a collectible item (air/already-empty drops nothing).
+                // Breaking: drop the removed block's item form (air/already-empty drops nothing).
                 var broken = _world.GetBlock(place.Position);
-                if (broken.Id != 0)
-                    _world.DropItem(new ItemStack(broken.Id, 1), place.Position.ToVector3() + new Vector3(0.5f, 0.25f, 0.5f));
+                if (broken.Id != 0 && GameRegistry.TryGetItem(broken.RegistryKey, out var dropped))
+                    _world.DropItem(new ItemStack(dropped.Id, 1),
+                        place.Position.ToVector3() + new Vector3(0.5f, 0.25f, 0.5f));
                 _world.SetBlock(place.Position, BlockRegistry.BlockAir);
             }
             else
                 _world.PlaceBlock(session.Player, place.Position, block, place.Metadata);
+        }
+
+        /// <summary>Runs the held item's server-side use (e.g. a spawn egg spawning its mob). The held item
+        /// is read from the server's authoritative inventory copy, not the request, so it can't be spoofed.</summary>
+        private void ApplyUseRequest(ClientSession session, UseItemRequestPacket use)
+        {
+            var item = session.Inventory.SelectedItem.Item;
+            if (item == null || !item.IsUsable) return;
+            item.OnUseServer(_world, session.Player, use.Position.ToVector3() + new Vector3(0.5f, 0f, 0.5f));
         }
 
         private void RemoveDisconnected()

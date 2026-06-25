@@ -529,6 +529,9 @@ namespace MinecraftClone3API.Client.Blocks
         public void SendHeldSlot(int selectedHotbar)
             => _connection.Send(new HeldSlotPacket {SelectedHotbar = selectedHotbar});
 
+        public void SendUseItem(Vector3i position)
+            => _connection.Send(new UseItemRequestPacket {Position = position});
+
         public void Disconnect()
         {
             _stopped = true;

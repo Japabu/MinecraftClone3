@@ -8,7 +8,9 @@ a first-class registry (not just blocks), and a shaped/shapeless crafting system
 
 - **`Item`** (`Items/Item.cs`) — a `RegistryEntry` with a ushort `Id`, a `MaxStackSize`, `GetBlock()` (the
   block it places, or null), a 2D inventory-sprite `TexturePath` (for non-block items), and `GetName()` (the
-  localized display name). The base class is GL-free so the headless server uses it.
+  localized display name). The base class is GL-free so the headless server uses it. A non-block item can set
+  `IsUsable` and override `OnUseServer` for a server-side right-click action (e.g. Vanilla's `ItemSpawnEgg`
+  spawns a creature — see [entities.md](entities.md)); right-clicking a usable item sends a `UseItemRequestPacket`.
 - **`ItemBlock`** (`Items/ItemBlock.cs`) — the auto-generated item form of a block. Registering a block
   (`PluginContext.Register(Block)`) also registers an `ItemBlock` for it under the same registry key, so every
   block is an item: placeable (`GetBlock()` returns the block) and rendered as a 3D isometric icon.

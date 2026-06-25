@@ -49,7 +49,13 @@ client builds the right subclass in `WorldClient.BuildEntity` and thereafter onl
 
 Ambient spawning (`WorldServer.TrySpawnCreatures`) periodically drops a small group of a random creature type on
 loaded ground near a random player, up to a soft cap. Breaking a block (`ServerNetwork.ApplyPlaceRequest`)
-`DropItem`s the removed block.
+`DropItem`s the removed block's item form.
+
+**Spawn eggs.** Each creature also registers an `ItemSpawnEgg` (a non-block `Item` with `IsUsable = true`,
+holding the `EntityType` to spawn and the official spawn-egg sprite). Right-clicking a usable item sends a
+`UseItemRequestPacket` with the targeted cell; the server reads the held item from its own authoritative
+inventory copy (so the request can't spoof the item) and calls `Item.OnUseServer`, which spawns the creature.
+Fresh players are seeded the spawn eggs on the first hotbar slots (then blocks) so entities are testable at once.
 
 ## Rendering
 
@@ -58,7 +64,8 @@ draws every entity into the deferred **G-buffer** with the `EntityGeometry` shad
 flat light value sampled at its position, so it shades/shadows like the surrounding blocks — see
 [rendering.md](rendering.md)). Box models are textured from the **official Minecraft entity sheets**: each box uses
 Mojang's texture offsets + dimensions so the sheet maps straight on, with UVs normalized by the texture array's
-layer size. Dropped items render as the spinning, bobbing 3D icon of their block (the same mesh
+layer size. (Current Minecraft splits some mob sheets by climate variant, so the paths carry a suffix —
+`entity/pig/pig_temperate`, `entity/cow/cow_temperate`, `entity/chicken/chicken_temperate`.) Dropped items render as the spinning, bobbing 3D icon of their block (the same mesh
 [ItemIconRenderer](../MinecraftClone3API/Client/Graphics/ItemIconRenderer.cs) uses for the inventory).
 
 Per-type models are built **once** in `EntityRenderer.LoadModels`, which runs in the load flow **after** plugins
@@ -72,6 +79,7 @@ item spin) is matrix-only at draw time; the shared meshes stay static. Culling i
 1. Add a box model factory to [EntityModels.cs](../MinecraftClone3API/Client/Graphics/EntityModels.cs) (texels,
    Y-up, feet at 0, facing +Z; name parts `head`/`body`/`leg0..3`/`arm0..1`/`wing0..1` for animation).
 2. `context.Register(new EntityType(...))` in your plugin, pointing at the official texture path.
-3. Creatures spawn ambiently; spawn explicitly with `world.SpawnEntity(type, pos)`.
+3. Creatures spawn ambiently; spawn explicitly with `world.SpawnEntity(type, pos)`, or register an
+   `ItemSpawnEgg(type, spritePath)` for a right-click creative spawn egg.
 
 No on-disk or wire format changes are involved (entities aren't saved), so no world reset is needed.

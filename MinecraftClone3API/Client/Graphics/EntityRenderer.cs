@@ -145,7 +145,9 @@ namespace MinecraftClone3API.Graphics
         private static void DrawItem(EntityItem item, WorldClient world, int uModel, int uLight)
         {
             if (item.Stack.IsEmpty) return;
-            var mesh = GetItemMesh(item.Stack.BlockId);
+            var block = item.Stack.Item?.GetBlock();
+            if (block == null) return;
+            var mesh = GetItemMesh(block.Id);
             if (mesh == null) return;
 
             var pos = item.RenderPosition;

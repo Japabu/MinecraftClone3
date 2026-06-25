@@ -166,6 +166,17 @@ namespace MinecraftClone3API.Networking
         }
     }
 
+    /// <summary>Client asks the server to use the held (non-block) item — e.g. a spawn egg — toward a cell.
+    /// The server reads its own authoritative copy of the held item, so the request can't spoof which item.</summary>
+    public class UseItemRequestPacket : Packet
+    {
+        public Vector3i Position;
+
+        public override PacketId Id => PacketId.UseItemRequest;
+        public override void Write(BinaryWriter writer) => WriteVector3i(writer, Position);
+        public override void Read(BinaryReader reader) => Position = ReadVector3i(reader);
+    }
+
     /// <summary>Server → client full inventory sync (the server owns the authoritative copy). Sent on join
     /// after login; the client then mutates its replica optimistically and reports changes back via
     /// <see cref="InventoryActionPacket"/>.</summary>
