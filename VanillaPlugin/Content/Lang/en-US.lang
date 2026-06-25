@@ -1,18 +1,33 @@
 #Blocks
 vanilla.blocks.Stone=Stone
+vanilla.blocks.Cobblestone=Cobblestone
 vanilla.blocks.Dirt=Dirt
 vanilla.blocks.Grass=Grass
 vanilla.blocks.Sand=Sand
 vanilla.blocks.Gravel=Gravel
 vanilla.blocks.Snow=Snow Block
 vanilla.blocks.Bedrock=Bedrock
+vanilla.blocks.Obsidian=Obsidian
+vanilla.blocks.Bricks=Bricks
+vanilla.blocks.StoneBricks=Stone Bricks
 vanilla.blocks.CoalOre=Coal Ore
 vanilla.blocks.IronOre=Iron Ore
 vanilla.blocks.GoldOre=Gold Ore
 vanilla.blocks.DiamondOre=Diamond Ore
 vanilla.blocks.OakLog=Oak Log
+vanilla.blocks.OakPlanks=Oak Planks
 vanilla.blocks.Leaves=Oak Leaves
 vanilla.blocks.Water=Water
 vanilla.blocks.Torch=Torch
 vanilla.blocks.BrewingStand=Brewing Stand
 vanilla.blocks.OakStairs=Oak Stairs
+vanilla.blocks.CraftingTable=Crafting Table
+vanilla.blocks.Glowstone=Glowstone
+
+#Items
+vanilla.items.Stick=Stick
+vanilla.items.Coal=Coal
+vanilla.items.IronIngot=Iron Ingot
+vanilla.items.GoldIngot=Gold Ingot
+vanilla.items.Diamond=Diamond
+vanilla.items.Apple=Apple

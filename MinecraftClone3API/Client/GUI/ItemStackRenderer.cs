@@ -1,5 +1,8 @@
+using System.Collections.Generic;
+using MinecraftClone3API.Client;
 using MinecraftClone3API.Client.Graphics;
 using MinecraftClone3API.Graphics;
+using MinecraftClone3API.IO;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using OpenTK.Graphics.OpenGL4;
@@ -7,27 +10,39 @@ using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Client.GUI
 {
-    /// <summary>Draws an <see cref="ItemStack"/> in a GUI slot: the block's cached isometric icon (see
-    /// <see cref="ItemIconRenderer"/>) plus a stack-count label when the count is above one.</summary>
+    /// <summary>Draws an <see cref="ItemStack"/> in a GUI slot: a block item's cached 3D isometric icon (see
+    /// <see cref="ItemIconRenderer"/>) or a standalone item's flat 2D sprite, plus a stack-count label when the
+    /// count is above one.</summary>
     public static class ItemStackRenderer
     {
         // The icon framebuffer is rendered with GL's bottom-left origin, so it reads upside-down through the
         // GUI's top-left sampling; flip V (MinY/MaxY swapped) to present it upright.
         private static readonly Rectangle FlipV = new Rectangle(0, ItemIconRenderer.Size, ItemIconRenderer.Size, 0);
 
+        // Lazily-loaded 2D sprites for non-block items, cached by item id (null = no resource pack provides it).
+        private static readonly Dictionary<ushort, Texture> Sprites = new Dictionary<ushort, Texture>();
+
         public static void Draw(ItemStack stack, Rectangle rect)
         {
             if (stack.IsEmpty) return;
+            var item = stack.Item;
+            if (item == null) return;
 
-            // GetIcon may render into its own framebuffer (depth on, blend off); restore alpha blending
-            // before drawing the icon so its transparent background doesn't overwrite the GUI as black.
-            var icon = ItemIconRenderer.GetIcon(stack.BlockId);
-            RenderState.Set(new GlState
+            if (item is ItemBlock blockItem)
             {
-                Blend = true,
-                BlendFunc = (BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha)
-            });
-            GuiRenderer.DrawTexture(icon, rect, FlipV);
+                // GetIcon may render into its own framebuffer (depth on, blend off); restore alpha blending
+                // afterwards so the icon's transparent background doesn't overwrite the GUI as black.
+                var icon = ItemIconRenderer.GetIcon(blockItem.Block.Id);
+                SetBlend();
+                GuiRenderer.DrawTexture(icon, rect, FlipV);
+            }
+            else
+            {
+                var sprite = Sprite(item);
+                SetBlend();
+                if (sprite != null) GuiRenderer.DrawTexture(sprite, rect, null);
+                else GuiRenderer.DrawTexture(ClientResources.WhitePixel, rect, null, new Color4(0.7f, 0.7f, 0.7f, 1f));
+            }
 
             if (stack.Count > 1)
             {
@@ -37,6 +52,22 @@ namespace MinecraftClone3API.Client.GUI
                 var ty = rect.MaxY - Font.LineHeight(scale) - 1;
                 Font.DrawString(text, tx, ty, scale, Color4.White);
             }
+        }
+
+        private static void SetBlend() => RenderState.Set(new GlState
+        {
+            Blend = true,
+            BlendFunc = (BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha)
+        });
+
+        private static Texture Sprite(Item item)
+        {
+            if (Sprites.TryGetValue(item.Id, out var tex)) return tex;
+            tex = item.TexturePath != null && ResourceReader.Exists(item.TexturePath)
+                ? ResourceReader.ReadTexture(item.TexturePath)
+                : null;
+            Sprites[item.Id] = tex;
+            return tex;
         }
     }
 }

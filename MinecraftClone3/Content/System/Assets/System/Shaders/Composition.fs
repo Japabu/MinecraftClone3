@@ -65,6 +65,12 @@ uniform vec3 uCameraPos;
 uniform vec3 uSunDirection;
 uniform float uTime;
 
+// Moonlight specular on water at night: the moon sits opposite the sun, uMoonFade ramps in as the sun sets
+// (mirroring uSunFade), uMoonColor is the cool moonlight tint. Lets the moon glint on water once the sun's
+// own (uSunFade-gated) specular has faded out.
+uniform float uMoonFade;
+uniform vec3 uMoonColor;
+
 // --- Sky (background + water reflection) -------------------------------------------------------------
 uniform vec3 uSkyColor;         // zenith colour (time of day)
 uniform vec3 uHorizonColor;     // horizon haze colour (also the distance-fog colour)
@@ -295,7 +301,11 @@ vec4 GetColor(vec3 worldPos, float viewDepth)
 		vec3 skyRefl = SkyColor(reflect(-V, N));
 		vec3 H = normalize(V + uSunDirection);
 		float spec = pow(max(dot(N, H), 0.0), WaterSpecExp)*uSunFade*shadow*lightSample.a*WaterSpecGain;
-		vec3 col = mix(baseColor, skyRefl, fres*lightSample.a) + uSunColor*spec;
+		// Moon glint: opposite the sun, gated to night by uMoonFade (the sun shadow map is the sun's, so the
+		// moon term isn't shadowed by it).
+		vec3 Hm = normalize(V - uSunDirection);
+		float specMoon = pow(max(dot(N, Hm), 0.0), WaterSpecExp)*uMoonFade*lightSample.a*WaterSpecGain;
+		vec3 col = mix(baseColor, skyRefl, fres*lightSample.a) + uSunColor*spec + uMoonColor*specMoon;
 		return vec4(ApplyFog(col, viewDepth), diffuse.a);
 	}
 

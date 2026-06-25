@@ -17,9 +17,10 @@ using OpenTK.Windowing.GraphicsLibraryFramework;
 namespace MinecraftClone3.States
 {
     /// <summary>
-    /// Minecraft-style creative inventory: a scrollable grid of every registered block (infinite supply)
+    /// Minecraft-style creative inventory: a scrollable grid of every registered item (infinite supply)
     /// over the official <c>creative_inventory/tab_items.png</c> background, with a cursor-held stack and a
-    /// bottom hotbar row the player fills by clicking. Hotbar edits are sent to the server (authoritative).
+    /// bottom hotbar row the player fills by clicking. Hovering a slot shows the item name. Hotbar edits are
+    /// sent to the server (authoritative).
     /// </summary>
     internal class GuiCreativeInventory : GuiBase
     {
@@ -41,12 +42,22 @@ namespace MinecraftClone3.States
 
         private const int Scale = 2;
 
+        // 2x2 crafting panel drawn in the free area left of the item grid (Minecraft puts player crafting in
+        // the creative survival tab). Absolute GUI-space coordinates, computed in the constructor.
+        private const int CraftSlot = IconSize * Scale;
+        private const int CraftStride = CraftSlot + 4;
+
         private readonly GameWindow _window;
         private readonly WorldClient _world;
-        private readonly List<ushort> _blocks = new List<ushort>();
+        private readonly List<ushort> _items = new List<ushort>();
+        private readonly CraftingState _crafting;
 
         private readonly int _bgX;
         private readonly int _bgY;
+        private readonly int _craftX;
+        private readonly int _craftY;
+        private readonly int _resultX;
+        private readonly int _resultY;
 
         private int _scrollRow;
         private ItemStack _cursor = ItemStack.Empty;
@@ -56,20 +67,25 @@ namespace MinecraftClone3.States
         {
             _window = window;
             _world = world;
+            _crafting = new CraftingState(world, 2);
             _window.CursorState = CursorState.Normal;
 
-            foreach (var block in GameRegistry.Blocks)
-                if (block.Id != 0) _blocks.Add(block.Id);
+            foreach (var item in GameRegistry.Items)
+                _items.Add(item.Id);
 
             _bgX = ((int) ScaledResolution.GuiResolution.X - BgWidth * Scale) / 2;
             _bgY = ((int) ScaledResolution.GuiResolution.Y - BgHeight * Scale) / 2;
+            _craftX = _bgX - CraftStride * 3 - 24;
+            _craftY = _bgY + 40;
+            _resultX = _craftX + CraftStride * 2 + 18;
+            _resultY = _craftY + CraftStride / 2;
         }
 
         private int MaxScrollRow
         {
             get
             {
-                var totalRows = (_blocks.Count + Columns - 1) / Columns;
+                var totalRows = (_items.Count + Columns - 1) / Columns;
                 return totalRows > Rows ? totalRows - Rows : 0;
             }
         }
@@ -98,6 +114,20 @@ namespace MinecraftClone3.States
 
         private void HandleClick(Vector2 pos)
         {
+            // 2x2 crafting grid + result slot.
+            for (var r = 0; r < 2; r++)
+                for (var c = 0; c < 2; c++)
+                    if (InRect(pos, _craftX + c * CraftStride, _craftY + r * CraftStride, CraftSlot))
+                    {
+                        _crafting.InteractGrid(r * 2 + c, ref _cursor);
+                        return;
+                    }
+            if (InRect(pos, _resultX, _resultY, CraftSlot))
+            {
+                _crafting.TakeResult(ref _cursor);
+                return;
+            }
+
             // Grid: pick up a full stack of that block (creative = infinite). Empty grid cell with a held
             // stack discards it (the item-list acts as a trash slot).
             for (var row = 0; row < Rows; row++)
@@ -105,8 +135,8 @@ namespace MinecraftClone3.States
                 {
                     if (!InSlot(pos, GridX + col * SlotStride, GridY + row * SlotStride)) continue;
                     var index = (_scrollRow + row) * Columns + col;
-                    _cursor = index < _blocks.Count
-                        ? new ItemStack(_blocks[index], ItemStack.MaxStackSize)
+                    _cursor = index < _items.Count
+                        ? new ItemStack(_items[index], GameRegistry.GetItem(_items[index]).MaxStackSize)
                         : ItemStack.Empty;
                     return;
                 }
@@ -130,6 +160,9 @@ namespace MinecraftClone3.States
             var size = IconSize * Scale;
             return pos.X >= x && pos.X < x + size && pos.Y >= y && pos.Y < y + size;
         }
+
+        private static bool InRect(Vector2 pos, int x, int y, int size)
+            => pos.X >= x && pos.X < x + size && pos.Y >= y && pos.Y < y + size;
 
         public override void Render()
         {
@@ -159,20 +192,66 @@ namespace MinecraftClone3.States
                 for (var col = 0; col < Columns; col++)
                 {
                     var index = (_scrollRow + row) * Columns + col;
-                    if (index >= _blocks.Count) continue;
-                    ItemStackRenderer.Draw(new ItemStack(_blocks[index], 1), SlotRect(GridX + col * SlotStride, GridY + row * SlotStride));
+                    if (index >= _items.Count) continue;
+                    ItemStackRenderer.Draw(new ItemStack(_items[index], 1), SlotRect(GridX + col * SlotStride, GridY + row * SlotStride));
                 }
 
             for (var col = 0; col < Columns; col++)
                 ItemStackRenderer.Draw(_world.Inventory.Slots[col], SlotRect(GridX + col * SlotStride, HotbarY));
 
+            DrawCraftingPanel();
+
+            var mousePos = ScaledResolution.ToGuiCoords(_window.MouseState.Position);
             if (!_cursor.IsEmpty)
-            {
-                var pos = ScaledResolution.ToGuiCoords(_window.MouseState.Position);
                 ItemStackRenderer.Draw(_cursor,
-                    Rectangle.FromSize((int) pos.X - IconSize * Scale / 2, (int) pos.Y - IconSize * Scale / 2,
+                    Rectangle.FromSize((int) mousePos.X - IconSize * Scale / 2, (int) mousePos.Y - IconSize * Scale / 2,
                         IconSize * Scale, IconSize * Scale));
-            }
+            else
+                GuiTooltip.Draw(HoveredStack(mousePos), mousePos);
+        }
+
+        private void DrawCraftingPanel()
+        {
+            Font.DrawString("Crafting", _craftX, _craftY - 18, 2, Color4.White);
+
+            for (var r = 0; r < 2; r++)
+                for (var c = 0; c < 2; c++)
+                {
+                    var x = _craftX + c * CraftStride;
+                    var y = _craftY + r * CraftStride;
+                    GuiRenderer.DrawTexture(ClientResources.WhitePixel, Rectangle.FromSize(x, y, CraftSlot, CraftSlot),
+                        null, new Color4(0.36f, 0.36f, 0.36f, 1f));
+                    ItemStackRenderer.Draw(_crafting.Grid[r * 2 + c], Rectangle.FromSize(x, y, CraftSlot, CraftSlot));
+                }
+
+            GuiRenderer.DrawTexture(ClientResources.WhitePixel, Rectangle.FromSize(_resultX, _resultY, CraftSlot, CraftSlot),
+                null, new Color4(0.36f, 0.36f, 0.36f, 1f));
+            ItemStackRenderer.Draw(_crafting.Result, Rectangle.FromSize(_resultX, _resultY, CraftSlot, CraftSlot));
+        }
+
+        /// <summary>The item stack under the cursor (crafting slot, grid item, or hotbar slot), or empty if
+        /// none — for tooltips.</summary>
+        private ItemStack HoveredStack(Vector2 pos)
+        {
+            for (var r = 0; r < 2; r++)
+                for (var c = 0; c < 2; c++)
+                    if (InRect(pos, _craftX + c * CraftStride, _craftY + r * CraftStride, CraftSlot))
+                        return _crafting.Grid[r * 2 + c];
+            if (InRect(pos, _resultX, _resultY, CraftSlot)) return _crafting.Result;
+
+            for (var row = 0; row < Rows; row++)
+                for (var col = 0; col < Columns; col++)
+                {
+                    if (!InSlot(pos, GridX + col * SlotStride, GridY + row * SlotStride)) continue;
+                    var index = (_scrollRow + row) * Columns + col;
+                    return index < _items.Count ? new ItemStack(_items[index], 1) : ItemStack.Empty;
+                }
+
+            for (var col = 0; col < Columns; col++)
+                if (InSlot(pos, GridX + col * SlotStride, HotbarY))
+                    return _world.Inventory.Slots[col];
+
+            return ItemStack.Empty;
         }
 
         private void DrawScrollKnob()
@@ -193,6 +272,7 @@ namespace MinecraftClone3.States
 
         private void Close()
         {
+            _crafting.ReturnAllToInventory(ref _cursor);
             _window.CursorState = CursorState.Grabbed;
             PlayerController.ResetMouse();
             IsDead = true;
