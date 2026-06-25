@@ -75,8 +75,15 @@ inventory slot, a crafting result, or a creative infinite source):
 - **Right-click** — pick up half (ceil) from a slot, or place one onto an empty/matching slot.
 - **Left-drag** across ≥2 slots — distribute the held stack evenly, remainder back to the cursor.
 - **Right-drag** across slots — one item per slot.
+- **Double-click** (left) — gather all matching items from the container into the held stack, up to a full
+  stack; partial stacks are consumed first so full ones stay intact. Handled generically in `ContainerScreen`
+  (`GatherToCursor`), timed by a 250 ms `Stopwatch` on the same slot.
+- **Shift-click** — quick-move a stack to the other region. Routing is per-screen via `OnShiftClick` using the
+  `MergeInto`/`SlotsInGroup` helpers and each slot's `Group` tag: the crafting table moves grid→inventory and
+  main↔hotbar (and the output crafts the full batch); the creative screen grants a full stack from the item
+  list to the hotbar and trashes a shift-clicked hotbar slot.
 - **Output slot** — can't be placed into; taking crafts one batch (`OnTakeOutput` → `ConsumeOne`); merges with
-  a matching cursor. **Shift-click** the output crafts as many batches as the grid allows into the inventory.
+  a matching cursor.
 - **Source slot** (creative item list) — left-click takes a full stack, right-click one; dropping a held stack
   onto it discards it (vanilla trash behavior).
 

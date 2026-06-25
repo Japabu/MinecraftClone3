@@ -62,7 +62,7 @@ namespace MinecraftClone3API.Client.GUI
                 {
                     var index = row * 3 + col;
                     _slots.Add(new Slot(SlotRect(GridX + col * SlotStride, GridY + row * SlotStride),
-                        () => _crafting.Grid[index], v => _crafting.Grid[index] = v));
+                        () => _crafting.Grid[index], v => _crafting.Grid[index] = v) { Group = GridGroup });
                 }
 
             _slots.Add(new Slot(SlotRect(ResultX, ResultY), () => _crafting.Result, null)
@@ -73,30 +73,45 @@ namespace MinecraftClone3API.Client.GUI
 
             for (var row = 0; row < 3; row++)
                 for (var col = 0; col < 9; col++)
-                    AddInventorySlot(9 + row * 9 + col, InvX + col * SlotStride, InvY + row * SlotStride);
+                    AddInventorySlot(9 + row * 9 + col, InvX + col * SlotStride, InvY + row * SlotStride, MainGroup);
 
             for (var col = 0; col < 9; col++)
-                AddInventorySlot(col, InvX + col * SlotStride, HotbarY);
+                AddInventorySlot(col, InvX + col * SlotStride, HotbarY, HotbarGroup);
         }
 
-        private void AddInventorySlot(int index, int texX, int texY)
+        private void AddInventorySlot(int index, int texX, int texY, int group)
         {
             _slots.Add(new Slot(SlotRect(texX, texY), () => _world.Inventory.Slots[index], v =>
             {
                 _world.Inventory.Slots[index] = v;
                 _world.SendInventoryAction(index, v);
-            }));
+            }) { Group = group });
         }
 
         protected override void OnShiftClick(Slot slot)
         {
-            if (!slot.IsOutput) return; // inventory↔grid quick-move not implemented; see docs/inventory.md
-
-            while (!_crafting.Result.IsEmpty)
+            if (slot.IsOutput)
             {
-                _crafting.AddToInventory(_crafting.Result);
-                _crafting.ConsumeOne();
+                while (!_crafting.Result.IsEmpty)
+                {
+                    _crafting.AddToInventory(_crafting.Result);
+                    _crafting.ConsumeOne();
+                }
+                return;
             }
+
+            // Grid → inventory; within the inventory, main ↔ hotbar (vanilla quick-move).
+            IReadOnlyList<Slot> targets;
+            if (slot.Group == GridGroup)
+            {
+                var inv = new List<Slot>(SlotsInGroup(MainGroup));
+                inv.AddRange(SlotsInGroup(HotbarGroup));
+                targets = inv;
+            }
+            else
+                targets = SlotsInGroup(slot.Group == HotbarGroup ? MainGroup : HotbarGroup);
+
+            slot.Set(MergeInto(slot.Get(), targets));
         }
 
         protected override void DrawBackground()

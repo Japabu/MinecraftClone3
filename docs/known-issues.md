@@ -160,9 +160,7 @@ relevant permanent doc. Not a changelog.
   3×3 crafting table has full vanilla slot interaction (pick/place/split/drag) — see [inventory.md](inventory.md).
   Accepted scope: crafting is computed **client-side** and the result mutations go up as ordinary (unvalidated)
   `InventoryAction`s — fine for a creative sandbox, exploitable in real MP. No survival pickup/drop, no recipe
-  book. Standalone items are inert (the apple isn't edible, no tools/durability). **Shift-click quick-move is
-  only implemented for the crafting result** (craft a full batch into the inventory); shift-clicking inventory
-  or grid slots is a no-op (no inventory↔grid/hotbar transfer yet).
+  book. Standalone items are inert (the apple isn't edible, no tools/durability).
 - **Item ids aren't remapped from disk.** Like block ids, the `registry.bin` save/load path exists but is
   unwired, so item ids are assigned by registration order — stable only for a fixed plugin set. A changed
   plugin set shifts ids and a saved inventory would show wrong items (delete the world, per the no-back-compat

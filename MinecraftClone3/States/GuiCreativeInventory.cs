@@ -37,6 +37,8 @@ namespace MinecraftClone3.States
 
         private const int Scale = 2;
 
+        private const int HotbarGroup = 1;
+
         private readonly WorldClient _world;
         private readonly List<ushort> _items = new List<ushort>();
         private readonly List<Slot> _slots = new List<Slot>();
@@ -87,8 +89,23 @@ namespace MinecraftClone3.States
                     {
                         _world.Inventory.Slots[index] = v;
                         _world.SendInventoryAction(index, v);
-                    }));
+                    }) { Group = HotbarGroup });
             }
+        }
+
+        protected override void OnShiftClick(Slot slot)
+        {
+            // Shift-click the item list grants a full stack to the hotbar; shift-click a hotbar slot trashes it
+            // (the creative void), matching vanilla creative.
+            if (slot.IsSource)
+            {
+                var give = slot.Get();
+                if (give.IsEmpty) return;
+                MergeInto(give.WithCount(give.Item?.MaxStackSize ?? ItemStack.MaxStackSize),
+                    SlotsInGroup(HotbarGroup));
+            }
+            else
+                slot.Set(ItemStack.Empty);
         }
 
         private int MaxScrollRow
