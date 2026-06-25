@@ -68,6 +68,12 @@ layer size. (Current Minecraft splits some mob sheets by climate variant, so the
 `entity/pig/pig_temperate`, `entity/cow/cow_temperate`, `entity/chicken/chicken_temperate`.) Dropped items render as the spinning, bobbing 3D icon of their block (the same mesh
 [ItemIconRenderer](../MinecraftClone3API/Client/Graphics/ItemIconRenderer.cs) uses for the inventory).
 
+Some humanoid sheets (e.g. the zombie) use the **legacy single-layer layout**: the left arm/leg regions are
+blank and the right-limb texels serve both sides. At model-build time `MirrorEmptyLimbs` detects a fully
+transparent left-limb (`arm1`/`leg1`) region in the texture and copies the matching right-limb (`arm0`/`leg0`)
+UVs onto it, so legacy sheets keep all four limbs while a modern skin (the player's, with painted left limbs)
+is left untouched.
+
 Per-type models are built **once** in `EntityRenderer.LoadModels`, which runs in the load flow **after** plugins
 register their types and **before** `BlockTextureManager.Upload` — so the entity textures are indexed into the
 arrays before they're baked to the GPU. Animation (limb swing keyed by part name `leg*`/`arm*`/`wing*`/`head`,
@@ -77,7 +83,9 @@ item spin) is matrix-only at draw time; the shared meshes stay static. Culling i
 ## Adding an entity
 
 1. Add a box model factory to [EntityModels.cs](../MinecraftClone3API/Client/Graphics/EntityModels.cs) (texels,
-   Y-up, feet at 0, facing +Z; name parts `head`/`body`/`leg0..3`/`arm0..1`/`wing0..1` for animation).
+   Y-up, feet at 0, facing +Z; name parts `head`/`body`/`leg0..3`/`arm0..1`/`wing0..1` for animation). A
+   quadruped/bird body carries a baked 90° pitch and its pivot sits at `leg_height + half_body_depth` so the
+   rotated torso rests on top of the legs rather than sinking to hip level.
 2. `context.Register(new EntityType(...))` in your plugin, pointing at the official texture path.
 3. Creatures spawn ambiently; spawn explicitly with `world.SpawnEntity(type, pos)`, or register an
    `ItemSpawnEgg(type, spritePath)` for a right-click creative spawn egg.

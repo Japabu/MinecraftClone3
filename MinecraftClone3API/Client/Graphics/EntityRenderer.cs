@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Client;
 using MinecraftClone3API.Client.Blocks;
@@ -51,13 +52,14 @@ namespace MinecraftClone3API.Graphics
         /// texture-array upload. Main-thread (GL) only.</summary>
         public static void LoadModels()
         {
-            _playerModel = BuildModel(EntityModels.Biped(), LoadPlayerSkin());
+            var skinPath = ResolvePath(PlayerSkinPath) ?? ResolvePath(PlayerSkinPathLegacy);
+            _playerModel = BuildModel(EntityModels.Biped(), LoadPlayerSkin(), ReadData(skinPath));
 
             foreach (var type in GameRegistry.EntityTypes)
             {
                 if (type.Kind != EntityKind.Creature || type.ModelFactory == null) continue;
                 var texture = ResourceReader.ReadBlockTexture(type.TexturePath);
-                CreatureModels[type.Id] = BuildModel(type.ModelFactory(), texture);
+                CreatureModels[type.Id] = BuildModel(type.ModelFactory(), texture, ReadData(ResolvePath(type.TexturePath)));
             }
         }
 
@@ -68,10 +70,18 @@ namespace MinecraftClone3API.Graphics
             return skin;
         }
 
-        private static RenderModel BuildModel(EntityModel model, BlockTexture texture)
+        private static string ResolvePath(string path) =>
+            path == null ? null : BlockModel.GetRelativePaths(path, path, ".png").FirstOrDefault(ResourceReader.Exists);
+
+        private static TextureData ReadData(string resolved) =>
+            resolved == null ? null : ResourceReader.ReadTextureData(resolved);
+
+        private static RenderModel BuildModel(EntityModel model, BlockTexture texture, TextureData data)
         {
             var render = new RenderModel {Texture = texture};
             var layerSize = BlockTextureManager.Sizes[texture.ArrayId];
+
+            MirrorEmptyLimbs(model, data);
 
             foreach (var part in model.Parts)
             {
@@ -83,6 +93,47 @@ namespace MinecraftClone3API.Graphics
             }
 
             return render;
+        }
+
+        // Some entity sheets (this pack's zombie) use the legacy single-layer humanoid layout: the left arm/leg
+        // regions are empty and the right-limb texels serve both sides. When a left part maps to a fully
+        // transparent region, copy the matching right part's UVs so it textures from the populated right limb
+        // instead of being discarded by the shader. A modern skin (the player's) paints real left limbs, so its
+        // regions aren't empty and nothing is remapped.
+        private static void MirrorEmptyLimbs(EntityModel model, TextureData data)
+        {
+            if (data == null) return;
+            MirrorPart(model, "arm1", "arm0", data);
+            MirrorPart(model, "leg1", "leg0", data);
+        }
+
+        private static void MirrorPart(EntityModel model, string leftName, string rightName, TextureData data)
+        {
+            var left = model.Parts.Find(p => p.Name == leftName);
+            var right = model.Parts.Find(p => p.Name == rightName);
+            if (left == null || right == null) return;
+
+            for (var i = 0; i < left.Boxes.Count && i < right.Boxes.Count; i++)
+                if (BoxRegionEmpty(left.Boxes[i], data))
+                {
+                    left.Boxes[i].TexU = right.Boxes[i].TexU;
+                    left.Boxes[i].TexV = right.Boxes[i].TexV;
+                }
+        }
+
+        // True if the box's whole texture-unwrap rectangle is fully transparent in the sheet (an unpainted limb).
+        private static bool BoxRegionEmpty(ModelBox box, TextureData data)
+        {
+            var sx = (int) MathF.Round((box.To.X - box.From.X) * 16f);
+            var sy = (int) MathF.Round((box.To.Y - box.From.Y) * 16f);
+            var sz = (int) MathF.Round((box.To.Z - box.From.Z) * 16f);
+            var u1 = box.TexU + 2 * sz + 2 * sx;
+            var v1 = box.TexV + sz + sy;
+
+            for (var y = box.TexV; y < v1 && y < data.Height; y++)
+            for (var x = box.TexU; x < u1 && x < data.Width; x++)
+                if (data.Pixels[(y * data.Width + x) * 4 + 3] > 0) return false;
+            return true;
         }
 
         public static void Render(WorldClient world, Camera camera, Matrix4 projection)

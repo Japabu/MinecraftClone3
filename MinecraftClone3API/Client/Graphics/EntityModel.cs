@@ -70,8 +70,11 @@ namespace MinecraftClone3API.Graphics
     {
         public readonly Vector3 From;
         public readonly Vector3 To;
-        public readonly int TexU;
-        public readonly int TexV;
+
+        /// <summary>Top-left corner of the box's unwrap in the texture sheet (texels). Mutable so the renderer
+        /// can remap a legacy humanoid's empty left-limb boxes onto the right-limb texels.</summary>
+        public int TexU;
+        public int TexV;
 
         public ModelBox(Vector3 from, Vector3 to, int texU, int texV)
         {
