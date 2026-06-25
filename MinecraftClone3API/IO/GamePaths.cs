@@ -46,6 +46,9 @@ namespace MinecraftClone3API.IO
         /// <summary>Per-user graphics options file (vsync, shadows, fullscreen).</summary>
         public static string GraphicsSettingsFile => Path.Combine(UserDataDir, "GraphicsSettings.json");
 
+        /// <summary>Per-user keybind file (action → key, rebindable in the Controls screen).</summary>
+        public static string KeybindsFile => Path.Combine(UserDataDir, "Keybinds.json");
+
         /// <summary>
         /// The dedicated server's fixed world-save directory. Singleplayer worlds instead each live in
         /// their own subfolder under <see cref="WorldsDir"/>; the server keeps using this single folder.

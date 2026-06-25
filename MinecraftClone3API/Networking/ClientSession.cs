@@ -23,6 +23,11 @@ namespace MinecraftClone3API.Networking
         /// persisted per player on disconnect/shutdown.</summary>
         public readonly Inventory Inventory = new Inventory();
 
+        /// <summary>The container block this client currently has open (a furnace), or null. While set, the
+        /// server streams that block's <see cref="ContainerStatePacket"/> each tick so the screen shows live
+        /// progress; cleared on <see cref="CloseContainerPacket"/>.</summary>
+        public Vector3i? OpenContainer;
+
         // Gate for StreamChunks: the player chunk + loaded-chunk count at the last fully-drained interest
         // scan. When neither changed there is nothing new to stream, so the O(loaded) ConcurrentDictionary
         // scan is skipped (it was ~88% of CPU in a trace while standing still in a fully-streamed area).

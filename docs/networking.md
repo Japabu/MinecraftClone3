@@ -35,13 +35,29 @@ tolerates the server mutating the source chunk concurrently (a torn entry self-c
   S→C  InventoryState        full 36-slot inventory + selected hotbar slot; sent once on login (see inventory.md)
   C→S  InventoryAction       slot index + ItemStack; client edited a slot in the creative screen
   C→S  HeldSlot              selected hotbar index changed (number key / scroll wheel)
+  C→S  DropItemRequest       drop the held hotbar item (Q); bool All = whole stack (Ctrl+Q)
+  C→S  OpenContainer/CloseContainer   client opened/closed a container block (furnace) screen
+  S→C  ContainerState        open container's item slots + progress fields, streamed each tick to its viewers
+  C→S  ContainerSlot         client edited one of a container block's own slots (input/fuel/output)
 ```
 
 **Inventory is server-authoritative** (see [inventory.md](inventory.md)). The server owns each
 `ClientSession.Inventory`, persists it per player, and pushes the whole thing once via `InventoryState` on
 join. The client mutates its local replica optimistically for responsiveness and mirrors every change up:
 `InventoryAction` (a slot edit from the creative screen) and `HeldSlot` (hotbar selection). Like placement
-metadata these are trusted, not validated — this is a creative sandbox. The `InventoryState` packet carries
+metadata these are trusted, not validated — this is a creative sandbox. **Dropping** is handled fully
+server-side: `DropItemRequest` makes the server decrement its own copy of the held slot, spawn an
+`EntityItem` thrown along the player's look direction, and **re-push the whole `InventoryState`** so the
+client replica matches (the only other time `InventoryState` is sent besides login).
+
+**Container blocks** (a furnace) are server-authoritative too, but their state lives in the block, not the
+player inventory. When the client opens one it sends `OpenContainer` (pos); the server records it on the
+session and, each `Pump`, streams that block's `ContainerState` (item slots + integer progress fields, read
+generically from the block's `ContainerBlockData`) to its viewers, which the client copies into a per-block
+`ContainerView`. Editing a furnace slot sends `ContainerSlot` (trusted, like `InventoryAction`); the player's
+own inventory rows in the furnace screen still use `InventoryAction`. `CloseContainer` stops the stream. Like
+`InventoryState`, `ContainerState` carries the server's live arrays by reference over loopback, so the client
+**copies them by value**. The `InventoryState` packet carries
 the live server `Inventory` by reference over loopback, so the client receive **copies it slot-by-slot**
 (`ItemStack` is a struct) rather than aliasing the server's array.
 

@@ -165,8 +165,29 @@ relevant permanent doc. Not a changelog.
   unwired, so item ids are assigned by registration order — stable only for a fixed plugin set. A changed
   plugin set shifts ids and a saved inventory would show wrong items (delete the world, per the no-back-compat
   rule).
-- **Right-clicking a crafting table always opens it.** `Block.OnActivated` returning true suppresses placement,
-  so you can't place a block against a crafting table's face, and there's no sneak-to-place override.
+- **Right-clicking a crafting table or furnace always opens it.** `Block.OnActivated` returning true suppresses
+  placement, so you can't place a block against their face, and there's no sneak-to-place override.
+- **Furnaces are plain-furnace only; no XP, no blast furnace/smoker.** Smelting matches `minecraft:smelting`
+  recipes with a hardcoded vanilla fuel table (see [inventory.md](inventory.md)); blasting/smoking recipes are
+  ignored and those blocks aren't registered. No experience is granted on collecting output (the engine has no
+  XP system). Container slot edits are client-trusted like inventory edits. If a furnace is broken while its
+  screen is open the screen shows stale state until closed (its block data is gone server-side).
+- **The blockstate parser only handles the `variants` form.** `BlockStateDefinition` reads
+  `blockstates/<name>.json` variants (model + x/y rotation; weighted lists take the first). The `multipart`
+  form (fences, redstone, walls) resolves to null → the block falls back to its single `Block.Model`. Add
+  multipart support before relying on connected/multipart blocks.
 - **Crafting-grid items are returned to the inventory on close; leftovers are lost.** If the inventory is full
   when a crafting screen closes, items still in the grid/cursor that don't fit are dropped (no world item
   entities exist). Accepted for the creative sandbox.
+- **Entity models load from Bedrock geometry data, but the loader is a useful subset.** `BedrockModelLoader`
+  reads the built-in mobs from `*.geo.json` (see [entities.md](entities.md)) and honors per-cube
+  `uv`/`inflate` and X-axis bone rotation. **Not** interpreted (so an arbitrary Blockbench/community export may
+  not load faithfully): bone `parent` hierarchies (our `EntityModel` is a flat part list — the renderer pivots
+  each part independently, no parent transform), cube `mirror` (we author explicit per-box UVs instead), and the
+  Y/Z bone-rotation sign conventions (only the X-axis quadruped pitch is exercised + verified). Supporting
+  parented bones would mean giving the renderer a real bone matrix stack. Geometry is transcribed from the
+  **official Mojang Bedrock** `.geo.json` (verified cube-for-cube), so the built-in mobs match vanilla exactly.
+- **The sheep renders sheared (no wool layer).** Vanilla's wool is a second, inflated body/head/leg geometry
+  (`geometry.sheep.v1.8`, `inflate` 0.6–1.75) drawn over the bare sheep with the dyeable wool texture; we ship
+  only the sheared body, so the sheep looks thin. Now that the loader supports `inflate`, it's an added overlay
+  model (like the player's) plus the `wool` texture — deferred.

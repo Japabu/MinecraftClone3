@@ -195,6 +195,7 @@ namespace MinecraftClone3
             // Saved graphics options seed the window so it opens with the user's vsync/fullscreen choice;
             // runtime changes go through the GraphicsSettings setters (which push onto the live window).
             GraphicsSettings.Load();
+            Keybinds.Load();
 
             // Automated modes: --benchmark boots into the FPS flythrough; --inspect boots into the LOD A/B
             // capture tool (its own large window so artifacts are visible). Both force VSync off and apply

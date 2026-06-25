@@ -2,7 +2,6 @@ using MinecraftClone3API.Client;
 using MinecraftClone3API.Client.Graphics;
 using MinecraftClone3API.Client.GUI;
 using MinecraftClone3API.Client.StateSystem;
-using MinecraftClone3API.Entities;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.Util;
 using OpenTK.Graphics.OpenGL4;
@@ -13,17 +12,22 @@ using OpenTK.Windowing.GraphicsLibraryFramework;
 
 namespace MinecraftClone3.States
 {
-    internal class GuiPauseMenu : GuiBase
+    /// <summary>
+    /// Top-level options screen. An overlay over whatever opened it (the main menu state or the pause-menu
+    /// overlay); its buttons open the per-category sub-screens (<see cref="GuiGraphicsOptions"/>,
+    /// <see cref="GuiControls"/>) as further overlays, and Done/Escape reveals the opener again.
+    /// </summary>
+    internal class GuiOptions : GuiBase
     {
         private const int ButtonWidth = 200;
         private const int ButtonHeight = 40;
         private const int ButtonGap = 12;
         private const int TitleScale = 3;
-        private const string Title = "Game Menu";
+        private const string Title = "Options";
 
         private readonly GameWindow _window;
 
-        public GuiPauseMenu(GameWindow window)
+        public GuiOptions(GameWindow window)
         {
             _window = window;
             _window.CursorState = CursorState.Normal;
@@ -32,18 +36,19 @@ namespace MinecraftClone3.States
             var y = (int) ScaledResolution.GuiResolution.Y / 2 - (3 * ButtonHeight + 2 * ButtonGap) / 2;
             var step = ButtonHeight + ButtonGap;
 
-            Elements.Add(new GuiButton(Rectangle.FromSize(x, y, ButtonWidth, ButtonHeight), "Back to Game", Close));
-            Elements.Add(new GuiButton(Rectangle.FromSize(x, y + step, ButtonWidth, ButtonHeight), "Options",
-                () => StateEngine.AddOverlay(new GuiOptions(_window))));
-            Elements.Add(new GuiButton(Rectangle.FromSize(x, y + 2 * step, ButtonWidth, ButtonHeight),
-                "Save and Quit to Title", () => StateEngine.ReplaceState(new GuiMainMenu(_window))));
+            Elements.Add(new GuiButton(Rectangle.FromSize(x, y, ButtonWidth, ButtonHeight), "Graphics...",
+                () => StateEngine.AddOverlay(new GuiGraphicsOptions(_window))));
+            Elements.Add(new GuiButton(Rectangle.FromSize(x, y + step, ButtonWidth, ButtonHeight), "Controls...",
+                () => StateEngine.AddOverlay(new GuiControls(_window))));
+            Elements.Add(new GuiButton(Rectangle.FromSize(x, y + 2 * step, ButtonWidth, ButtonHeight), "Done",
+                () => IsDead = true));
         }
 
         public override void Update(bool focused)
         {
             base.Update(focused);
             if (focused && _window.KeyboardState.IsKeyPressed(Keys.Escape))
-                Close();
+                IsDead = true;
         }
 
         public override void Render()
@@ -56,7 +61,7 @@ namespace MinecraftClone3.States
 
             var screen = _window.FramebufferSize;
             GuiRenderer.DrawTexture(ClientResources.WhitePixel, new Rectangle(0, 0, screen.X, screen.Y), null,
-                new Color4(0f, 0f, 0f, 0.5f), false);
+                new Color4(0f, 0f, 0f, 0.7f), false);
 
             var width = (int) ScaledResolution.GuiResolution.X;
             var height = (int) ScaledResolution.GuiResolution.Y;
@@ -64,13 +69,6 @@ namespace MinecraftClone3.States
             Font.DrawString(Title, titleX, height / 4, TitleScale, Color4.White);
 
             base.Render();
-        }
-
-        private void Close()
-        {
-            _window.CursorState = CursorState.Grabbed;
-            PlayerController.ResetMouse();
-            IsDead = true;
         }
     }
 }

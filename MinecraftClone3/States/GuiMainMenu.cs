@@ -41,7 +41,7 @@ namespace MinecraftClone3.States
             Elements.Add(new GuiButton(Rectangle.FromSize(x, y + step, ButtonWidth, ButtonHeight), "Multiplayer",
                 () => StateEngine.ReplaceState(new StateWorld(_window, multiplayer: true))));
             Elements.Add(new GuiButton(Rectangle.FromSize(x, y + 2 * step, ButtonWidth, ButtonHeight), "Options",
-                () => StateEngine.AddOverlay(new GuiGraphicsOptions(_window))));
+                () => StateEngine.AddOverlay(new GuiOptions(_window))));
             Elements.Add(new GuiButton(Rectangle.FromSize(x, y + 3 * step, ButtonWidth, ButtonHeight), "Quit Game",
                 () => _window.Close()));
         }

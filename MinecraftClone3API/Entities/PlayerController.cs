@@ -54,7 +54,7 @@ namespace MinecraftClone3API.Entities
             var sensitivity = GraphicsSettings.MouseSensitivity;
             PlayerEntity.Rotate(-delta.Y * sensitivity, -delta.X * sensitivity);
 
-            if (ks.IsKeyPressed(Keys.Space))
+            if (Keybinds.IsPressed(ks, GameAction.Jump))
             {
                 if (_spaceTapTimer.Elapsed.TotalSeconds < DoubleTapSeconds)
                 {
@@ -64,7 +64,12 @@ namespace MinecraftClone3API.Entities
                 _spaceTapTimer.Restart();
             }
 
-            if (world is WorldClient client) UpdateHotbarSelection(client, ks, ms);
+            if (world is WorldClient client)
+            {
+                UpdateHotbarSelection(client, ks, ms);
+                if (Keybinds.IsPressed(ks, GameAction.Drop))
+                    client.SendDropItem(ks.IsKeyDown(Keys.LeftControl) || ks.IsKeyDown(Keys.RightControl));
+            }
 
             if (ks.IsKeyPressed(Keys.F1)) RenderDebug.ShowControls = !RenderDebug.ShowControls;
             if (ks.IsKeyPressed(Keys.F3)) RenderDebug.ShowDiagnostics = !RenderDebug.ShowDiagnostics;
@@ -103,16 +108,16 @@ namespace MinecraftClone3API.Entities
         private static void TickFlying(KeyboardState ks)
         {
             var a = Vector3.Zero;
-            if (ks.IsKeyDown(Keys.A)) a.X -= 1;
-            if (ks.IsKeyDown(Keys.D)) a.X += 1;
-            if (ks.IsKeyDown(Keys.LeftShift)) a.Y -= 1;
-            if (ks.IsKeyDown(Keys.Space)) a.Y += 1;
-            if (ks.IsKeyDown(Keys.S)) a.Z -= 1;
-            if (ks.IsKeyDown(Keys.W)) a.Z += 1;
+            if (Keybinds.IsDown(ks, GameAction.Left)) a.X -= 1;
+            if (Keybinds.IsDown(ks, GameAction.Right)) a.X += 1;
+            if (Keybinds.IsDown(ks, GameAction.Sneak)) a.Y -= 1;
+            if (Keybinds.IsDown(ks, GameAction.Jump)) a.Y += 1;
+            if (Keybinds.IsDown(ks, GameAction.Back)) a.Z -= 1;
+            if (Keybinds.IsDown(ks, GameAction.Forward)) a.Z += 1;
             if (Math.Abs(a.LengthSquared) > 0.0001f)
             {
                 var speed = FlySpeed;
-                if (ks.IsKeyDown(Keys.LeftControl)) speed *= SprintMultiplier;
+                if (Keybinds.IsDown(ks, GameAction.Sprint)) speed *= SprintMultiplier;
                 PlayerEntity.Move(a.Normalized() * speed * PlayerPhysics.TickSeconds);
             }
         }
@@ -121,17 +126,17 @@ namespace MinecraftClone3API.Entities
         {
             var inputX = 0f;
             var inputZ = 0f;
-            if (ks.IsKeyDown(Keys.A)) inputX -= 1;
-            if (ks.IsKeyDown(Keys.D)) inputX += 1;
-            if (ks.IsKeyDown(Keys.S)) inputZ -= 1;
-            if (ks.IsKeyDown(Keys.W)) inputZ += 1;
+            if (Keybinds.IsDown(ks, GameAction.Left)) inputX -= 1;
+            if (Keybinds.IsDown(ks, GameAction.Right)) inputX += 1;
+            if (Keybinds.IsDown(ks, GameAction.Back)) inputZ -= 1;
+            if (Keybinds.IsDown(ks, GameAction.Forward)) inputZ += 1;
 
             var forward = new Vector2((float)Math.Sin(PlayerEntity.Yaw), (float)Math.Cos(PlayerEntity.Yaw));
             var wish = PlayerEntity.Right.Xz * inputX + forward * inputZ;
             if (wish.LengthSquared > 1f) wish = wish.Normalized();
 
-            var jump = ks.IsKeyDown(Keys.Space);
-            var sprint = ks.IsKeyDown(Keys.LeftControl) && inputZ > 0;
+            var jump = Keybinds.IsDown(ks, GameAction.Jump);
+            var sprint = Keybinds.IsDown(ks, GameAction.Sprint) && inputZ > 0;
 
             PlayerPhysics.Tick(world, PlayerEntity, wish, jump, sprint);
         }

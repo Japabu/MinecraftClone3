@@ -25,6 +25,7 @@ namespace MinecraftClone3API.Graphics
     {
         private const string PlayerSkinPath = "minecraft:entity/player/wide/steve";
         private const string PlayerSkinPathLegacy = "minecraft:entity/steve";
+        private const string PlayerModelPath = "System/Models/Entity/player.geo.json";
 
         private class RenderModel
         {
@@ -53,13 +54,13 @@ namespace MinecraftClone3API.Graphics
         public static void LoadModels()
         {
             var skinPath = ResolvePath(PlayerSkinPath) ?? ResolvePath(PlayerSkinPathLegacy);
-            _playerModel = BuildModel(EntityModels.Biped(), LoadPlayerSkin(), ReadData(skinPath));
+            _playerModel = BuildModel(LoadModel(PlayerModelPath), LoadPlayerSkin(), ReadData(skinPath));
 
             foreach (var type in GameRegistry.EntityTypes)
             {
-                if (type.Kind != EntityKind.Creature || type.ModelFactory == null) continue;
+                if (type.Kind != EntityKind.Creature || type.ModelPath == null) continue;
                 var texture = ResourceReader.ReadBlockTexture(type.TexturePath);
-                CreatureModels[type.Id] = BuildModel(type.ModelFactory(), texture, ReadData(ResolvePath(type.TexturePath)));
+                CreatureModels[type.Id] = BuildModel(LoadModel(type.ModelPath), texture, ReadData(ResolvePath(type.TexturePath)));
             }
         }
 
@@ -69,6 +70,8 @@ namespace MinecraftClone3API.Graphics
             if (skin == ClientResources.MissingTexture) skin = ResourceReader.ReadBlockTexture(PlayerSkinPathLegacy);
             return skin;
         }
+
+        private static EntityModel LoadModel(string path) => BedrockModelLoader.Parse(ResourceReader.ReadString(path));
 
         private static string ResolvePath(string path) =>
             path == null ? null : BlockModel.GetRelativePaths(path, path, ".png").FirstOrDefault(ResourceReader.Exists);
@@ -275,12 +278,15 @@ namespace MinecraftClone3API.Graphics
         // pivot); UVs come from the classic Minecraft box-unwrap, normalized by the texture array's layer size.
         private static void AddBox(VertexArrayObject vao, ModelBox box, BlockTexture tex, int layerSize)
         {
-            var f = box.From;
-            var t = box.To;
-            // Box pixel dimensions (1 block = 16 texels) drive the unwrap rectangle widths.
-            var sx = (int) MathF.Round((t.X - f.X) * 16f);
-            var sy = (int) MathF.Round((t.Y - f.Y) * 16f);
-            var sz = (int) MathF.Round((t.Z - f.Z) * 16f);
+            // Box pixel dimensions (1 block = 16 texels) drive the unwrap rectangle widths — from the base
+            // (un-inflated) size so an overlay box still maps its base texture region.
+            var sx = (int) MathF.Round((box.To.X - box.From.X) * 16f);
+            var sy = (int) MathF.Round((box.To.Y - box.From.Y) * 16f);
+            var sz = (int) MathF.Round((box.To.Z - box.From.Z) * 16f);
+            // Inflate grows the rendered geometry on every side (Minecraft's overlay-layer delta).
+            var grow = new Vector3(box.Inflate);
+            var f = box.From - grow;
+            var t = box.To + grow;
             int u = box.TexU, v = box.TexV;
 
             // Left (-X) and Right (+X)
@@ -301,7 +307,9 @@ namespace MinecraftClone3API.Graphics
                 new Vector3(f.X, t.Y, f.Z), new Vector3(t.X, t.Y, f.Z),
                 new Vector3(f.X, f.Y, f.Z), new Vector3(t.X, f.Y, f.Z),
                 u + 2 * sz + sx, v + sz, u + 2 * sz + 2 * sx, v + sz + sy);
-            // Top (+Y) and Bottom (-Y)
+            // Top (+Y) and Bottom (-Y). Minecraft's box-unwrap mirrors the down face vertically relative to the
+            // up face, so the bottom quad's V runs the opposite way (v+sz→v) — without it a body laid horizontal
+            // by a baked pitch shows its underside texture upside-down.
             Quad(vao, tex, layerSize, new Vector3(0, 1, 0),
                 new Vector3(t.X, t.Y, f.Z), new Vector3(f.X, t.Y, f.Z),
                 new Vector3(t.X, t.Y, t.Z), new Vector3(f.X, t.Y, t.Z),
@@ -309,7 +317,7 @@ namespace MinecraftClone3API.Graphics
             Quad(vao, tex, layerSize, new Vector3(0, -1, 0),
                 new Vector3(t.X, f.Y, t.Z), new Vector3(f.X, f.Y, t.Z),
                 new Vector3(t.X, f.Y, f.Z), new Vector3(f.X, f.Y, f.Z),
-                u + sz + sx, v, u + 2 * sz + sx, v + sz);
+                u + sz + sx, v + sz, u + 2 * sz + sx, v);
         }
 
         private static void Quad(VertexArrayObject vao, BlockTexture tex, int layerSize, Vector3 normal,

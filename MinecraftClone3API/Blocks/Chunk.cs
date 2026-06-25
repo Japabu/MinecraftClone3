@@ -136,6 +136,17 @@ namespace MinecraftClone3API.Blocks
             return _blockDatas.TryGetValue(blockPos, out var data) ? data : null;
         }
 
+        /// <summary>The in-chunk positions (0..Size-1) that carry block data, for the server to find the blocks
+        /// it must tick (e.g. furnaces) when a chunk loads.</summary>
+        public IEnumerable<Vector3i> BlockDataPositions
+        {
+            get
+            {
+                foreach (var key in _blockDatas.Keys)
+                    yield return new Vector3i(key.X, key.Y, key.Z);
+            }
+        }
+
         public void SetLightLevel(Vector3i blockPos, LightLevel lightLevel)
         {
             var index = Index(blockPos.X, blockPos.Y, blockPos.Z);

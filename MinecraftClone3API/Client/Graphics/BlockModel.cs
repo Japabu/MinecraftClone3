@@ -123,9 +123,15 @@ namespace MinecraftClone3API.Graphics
                     else //If variable try to find its value
                     {
                         if (loadedTextures.TryGetValue(entry.Value.Substring(1), out var texture))
+                        {
                             loadedTextures.Add(entry.Key, texture);
-
-                        variableFound = true;
+                            // Count a resolved variable as progress, so multi-level chains (a furnace's
+                            // down -> #bottom -> #top -> texture) keep iterating instead of stopping a pass
+                            // early once all the real texture files are loaded.
+                            loadedSomething = true;
+                        }
+                        else
+                            variableFound = true;
                     }
                 }
 

@@ -9,7 +9,8 @@ layer — that's how a world saves on "Save and Quit to Title" and on window clo
 GuiResourceLoading ──(done)──▶ GuiMainMenu ──Multiplayer──────────────────────────▶ StateWorld(window, multiplayer:true)
                                     ▲ │ │ Options                                        │ Esc
                                     │ │ ▼                                                ▼
-                                    │ │ GuiGraphicsOptions (overlay) ◀── Options ── GuiPauseMenu (overlay)
+                                    │ │ GuiOptions (overlay) ◀──────── Options ── GuiPauseMenu (overlay)
+                                    │ │   └▶ GuiGraphicsOptions / GuiControls (overlays)
                                     │ └────────── Save & Quit ◀──────────────────────────┘
                                     │ Singleplayer
                                     ▼                  Create New World
@@ -46,8 +47,10 @@ thread). The player is a **0.6 × 1.8 AABB**; `Entity.Position` is the **feet** 
 `Position + EyeOffset` (1.62) via `Entity.RenderPosition`/`EyeOffset` (defaults keep non-player entities a
 point). `PlayerController` is split into `UpdateFrame` (per frame: look, fly toggle, hotbar selection, debug keys,
 break/place — see [inventory.md](inventory.md)) and `Tick` (one fixed **20 tps** step), driven by
-`StateWorld`'s accumulator; **E** opens the creative inventory overlay (`StateWorld.Update`; no crafting grid,
-matching vanilla creative). Right-click first tries `Block.OnActivated` on the targeted block (a **crafting
+`StateWorld`'s accumulator; the **Inventory** keybind (default **E**) opens the creative inventory overlay
+(`StateWorld.Update`; no crafting grid, matching vanilla creative), and the **Drop** keybind (default **Q**,
+Ctrl+Q for the whole stack) throws the held item (`WorldClient.SendDropItem` → server, see
+[entities.md](entities.md)). Right-click first tries `Block.OnActivated` on the targeted block (a **crafting
 table** opens the 3×3 `GuiCraftingTable` overlay) and only places the held block if no block handled it.
 `ApplyInterpolation(alpha)` lerps `PrevPosition→Position` so 20 tps motion is smooth at the frame rate. Two
 modes, toggled by **double-tapping Space**:
@@ -78,9 +81,22 @@ position, so remote players (drawn by `EntityRenderer` as 0.6×1.8 boxes, offset
 `EntityMove`) aims a lerp from the current visual position toward the new target, advanced per frame by
 `WorldClient.UpdateEntityInterpolation`, and `Entity.RenderPosition` returns the lerp.
 
-**Graphics options.** `GuiGraphicsOptions` (reachable from `GuiMainMenu` and the `GuiPauseMenu` overlay) is
-an **overlay** — it draws over whichever screen opened it and closing it reveals that screen again, so opening
-options from the pause menu doesn't tear down the world. Each control mutates `GraphicsSettings`
+**Keybinds.** Movement/interaction keys are rebindable via `Keybinds` (`Client/Keybinds.cs`), a static
+`GameAction → Keys` map persisted to `GamePaths.KeybindsFile` (`Keybinds.json`), loaded in `Program.Main`
+alongside `GraphicsSettings`. `PlayerController` (and `StateWorld`/`ContainerScreen` for the Inventory action)
+read the live binding each frame via `Keybinds.IsDown`/`IsPressed`, so a rebind takes effect immediately.
+`GuiControls` (`States/GuiControls.cs`, an overlay opened from a "Controls..." button **inside the parent
+`GuiOptions` screen** — see Graphics options below) lists each action: clicking a row arms it and the next key press rebinds it (Escape
+cancels the arm), plus a "Reset to Defaults". The fixed debug keys (F1/F3/F4/F7/F10, number-key hotbar, Ctrl
+drop-all modifier) stay hardcoded.
+
+**Options.** The "Options" button (on `GuiMainMenu` and the `GuiPauseMenu` overlay) opens `GuiOptions`
+(`States/GuiOptions.cs`), a small overlay menu that branches into the per-category sub-screens —
+`GuiGraphicsOptions` ("Graphics...") and `GuiControls` ("Controls...") — each pushed as a further overlay.
+Everything here is an **overlay** — each draws over whichever screen opened it and closing it (Done/Escape)
+reveals that screen again, so opening options from the pause menu doesn't tear down the world.
+
+`GuiGraphicsOptions` is the video-settings screen. Each control mutates `GraphicsSettings`
 (`Client/GraphicsSettings.cs`), a static holder persisted to `GamePaths.GraphicsSettingsFile`. The widget
 toolkit is **`GuiButton`** (cycles a discrete value, relabelling itself) and **`GuiSlider`** (a drag slider;
 `onChange` fires only when the snapped value changes). Controls:

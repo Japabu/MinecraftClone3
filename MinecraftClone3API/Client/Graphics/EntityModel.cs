@@ -58,10 +58,11 @@ namespace MinecraftClone3API.Graphics
 
         /// <summary>Adds a box. <paramref name="from"/>/<paramref name="to"/> are in blocks, relative to this
         /// part's <see cref="Pivot"/>; <paramref name="texU"/>/<paramref name="texV"/> is the box's top-left
-        /// corner in the texture sheet (texels).</summary>
-        public ModelPart AddBox(Vector3 from, Vector3 to, int texU, int texV)
+        /// corner in the texture sheet (texels). <paramref name="inflate"/> (blocks) grows the rendered geometry
+        /// on every side while the UV unwrap stays at the base size — Minecraft's overlay-layer "delta".</summary>
+        public ModelPart AddBox(Vector3 from, Vector3 to, int texU, int texV, float inflate = 0f)
         {
-            Boxes.Add(new ModelBox(from, to, texU, texV));
+            Boxes.Add(new ModelBox(from, to, texU, texV, inflate));
             return this;
         }
     }
@@ -71,17 +72,23 @@ namespace MinecraftClone3API.Graphics
         public readonly Vector3 From;
         public readonly Vector3 To;
 
+        /// <summary>Uniform expansion of the rendered box on all sides (blocks); the UV unwrap is derived from the
+        /// un-inflated <see cref="From"/>/<see cref="To"/> size, so a grown overlay box still samples its base
+        /// texture region.</summary>
+        public readonly float Inflate;
+
         /// <summary>Top-left corner of the box's unwrap in the texture sheet (texels). Mutable so the renderer
         /// can remap a legacy humanoid's empty left-limb boxes onto the right-limb texels.</summary>
         public int TexU;
         public int TexV;
 
-        public ModelBox(Vector3 from, Vector3 to, int texU, int texV)
+        public ModelBox(Vector3 from, Vector3 to, int texU, int texV, float inflate)
         {
             From = from;
             To = to;
             TexU = texU;
             TexV = texV;
+            Inflate = inflate;
         }
     }
 }

@@ -233,13 +233,14 @@ namespace MinecraftClone3API.Util
             MeshBuffer vao, MeshBuffer transparentVao)
         {
             //If block is invisible or does not have a model for some reason ignore it
-            if (!block.IsVisible(world, blockPos) || block.Model == null) return;
+            var (model, orient) = block.GetRenderModel(world, blockPos);
+            if (!block.IsVisible(world, blockPos) || model == null) return;
 
-            // Block-state orientation (e.g. a stair's facing) applied after the element transform, so it
-            // rotates the centred element about the block origin. Identity for every normal block.
-            var orient = block.GetModelTransform(world, blockPos);
+            // Block-state orientation (a stair's facing, a furnace's blockstate variant rotation) applied after
+            // the element transform, so it rotates the centred element about the block origin. Identity for
+            // every normal block.
 
-            foreach (var element in block.Model.Elements)
+            foreach (var element in model.Elements)
             {
                 var transform = Matrix4.CreateScale((element.To - element.From) / 16) *
                                 Matrix4.CreateTranslation((element.To - element.From) / 32 + element.From / 16) *

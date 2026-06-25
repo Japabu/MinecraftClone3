@@ -124,6 +124,11 @@ namespace MinecraftClone3API.Blocks
         // resend. The network layer reads and clears this each tick. ConcurrentDictionary used as a set.
         public readonly ConcurrentDictionary<Vector3i, byte> DirtyChunks = new ConcurrentDictionary<Vector3i, byte>();
 
+        // Block positions whose block requests a per-tick server update (Block.NeedsServerTick — e.g. furnaces).
+        // Maintained as a set on SetBlock, on chunk load (scanning loaded block data), and chunk unload; ticked
+        // each Update on the tick thread. Far cheaper than scanning every loaded block every tick.
+        private readonly ConcurrentDictionary<Vector3i, byte> _tickingBlocks = new ConcurrentDictionary<Vector3i, byte>();
+
         private readonly Thread _unloadThread;
         private readonly Thread _loadThread;
 
@@ -230,6 +235,10 @@ namespace MinecraftClone3API.Blocks
                 LoadedChunks[chunkInWorld] = chunk;
             }
 
+            var worldPos = new Vector3i(x, y, z);
+            if (block.NeedsServerTick) _tickingBlocks[worldPos] = 0;
+            else _tickingBlocks.TryRemove(worldPos, out _);
+
             if (!update) return;
 
             QueueLightUpdate(new Vector3i(x, y, z));
@@ -303,6 +312,14 @@ namespace MinecraftClone3API.Blocks
             return LoadedChunks.TryGetValue(chunkInWorld, out Chunk chunk)
                 ? chunk.GetSkyLight(blockInChunk)
                 : 0;
+        }
+
+        /// <summary>Flags the chunk owning a block as needing a save, without the resend/relight a full
+        /// <see cref="SetBlockData"/> triggers. Used by ticking blocks (furnaces) that mutate their block data
+        /// in place every tick: the change must persist, but it does not affect the mesh or light.</summary>
+        public void TouchBlockDataForSave(Vector3i pos)
+        {
+            if (LoadedChunks.TryGetValue(ChunkInWorld(pos), out var chunk)) chunk.NeedsSaving = true;
         }
 
         public override BlockData GetBlockData(int x, int y, int z)
@@ -390,13 +407,13 @@ namespace MinecraftClone3API.Blocks
 
         /// <summary>Spawns a dropped-item entity carrying <paramref name="stack"/>, given a registered item
         /// entity type (the first <see cref="EntityKind.Item"/> type). No-op if none is registered.</summary>
-        public void DropItem(ItemStack stack, Vector3 position)
+        public EntityItem DropItem(ItemStack stack, Vector3 position)
         {
-            if (stack.IsEmpty) return;
+            if (stack.IsEmpty) return null;
             EntityType itemType = null;
             foreach (var type in GameRegistry.EntityTypes)
                 if (type.Kind == EntityKind.Item) { itemType = type; break; }
-            if (itemType == null) return;
+            if (itemType == null) return null;
 
             var item = (EntityItem) SpawnEntity(itemType, position);
             item.Stack = stack;
@@ -404,6 +421,7 @@ namespace MinecraftClone3API.Blocks
             item.Velocity = new Vector3(
                 (float) (_spawnRng.NextDouble() - 0.5) * 0.2f, 0.2f,
                 (float) (_spawnRng.NextDouble() - 0.5) * 0.2f);
+            return item;
         }
 
         public override void Update()
@@ -434,6 +452,7 @@ namespace MinecraftClone3API.Blocks
                 {
                     if (LoadedChunks.TryRemove(chunkPos, out _))
                         _populatedChunks.TryRemove(chunkPos, out _);
+                    UnregisterTickingBlocks(chunkPos);
                     ChunkTracer.Abandon(chunkPos);
                 }
 
@@ -449,7 +468,11 @@ namespace MinecraftClone3API.Blocks
                     if (LoadedChunks.ContainsKey(entry.Key))
                         Logger.Error("Chunk has already been loaded! " + entry.Key);
                     else
-                        LoadedChunks[entry.Key] = new Chunk(entry.Value);
+                    {
+                        var chunk = new Chunk(entry.Value);
+                        LoadedChunks[entry.Key] = chunk;
+                        RegisterTickingBlocks(entry.Key, chunk);
+                    }
                     _populatedChunks[entry.Key] = 0;
                     ChunkTracer.Published(entry.Key);
                     drained++;
@@ -460,6 +483,35 @@ namespace MinecraftClone3API.Blocks
             }
             Profiler.AddDrainAddTime((Stopwatch.GetTimestamp() - drainStart) * 1000.0 / Stopwatch.Frequency);
             Profiler.AddDrainAddCount(drained);
+
+            TickBlocks();
+        }
+
+        // Register the freshly-loaded chunk's ticking blocks (those whose persisted block data marks a
+        // Block.NeedsServerTick block, e.g. a furnace), so the server resumes ticking them after a load.
+        private void RegisterTickingBlocks(Vector3i chunkInWorld, Chunk chunk)
+        {
+            foreach (var blockInChunk in chunk.BlockDataPositions)
+            {
+                var pos = chunkInWorld * Chunk.Size + blockInChunk;
+                if (GetBlock(pos.X, pos.Y, pos.Z).NeedsServerTick) _tickingBlocks[pos] = 0;
+            }
+        }
+
+        private void UnregisterTickingBlocks(Vector3i chunkInWorld)
+        {
+            foreach (var pos in _tickingBlocks.Keys)
+                if (ChunkInWorld(pos) == chunkInWorld) _tickingBlocks.TryRemove(pos, out _);
+        }
+
+        private void TickBlocks()
+        {
+            foreach (var pos in _tickingBlocks.Keys)
+            {
+                var block = GetBlock(pos.X, pos.Y, pos.Z);
+                if (block.NeedsServerTick) block.OnServerTick(this, pos);
+                else _tickingBlocks.TryRemove(pos, out _);
+            }
         }
 
         /// <summary>Removes entities flagged <see cref="Entity.Dead"/> (despawn timeout, item pickup, death)

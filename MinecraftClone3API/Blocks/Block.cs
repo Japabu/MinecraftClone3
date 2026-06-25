@@ -87,6 +87,38 @@ namespace MinecraftClone3API.Blocks
         /// the block's stored metadata.</summary>
         public virtual Matrix4 GetModelTransform(WorldBase world, Vector3i blockPos) => Matrix4.Identity;
 
+        /// <summary>The block's parsed blockstate definition (from the pack's <c>blockstates/&lt;name&gt;.json</c>),
+        /// or null if it has none. When set, the mesher selects the model + rotation for the block's current
+        /// <see cref="GetBlockState"/> from this definition instead of using the single <see cref="Model"/>.</summary>
+        public BlockStateDefinition StateDefinition;
+
+        /// <summary>This block's current blockstate property values (e.g. <c>facing=east, lit=true</c>) derived
+        /// from its stored block data, used to pick a variant from <see cref="StateDefinition"/>. Null/empty for
+        /// stateless blocks (matches the unconditional <c>""</c> variant).</summary>
+        public virtual IReadOnlyDictionary<string, string> GetBlockState(WorldBase world, Vector3i blockPos) => null;
+
+        /// <summary>The model and orientation the mesher should emit for this block at this position. When the
+        /// block has a <see cref="StateDefinition"/>, both come from the variant matching <see cref="GetBlockState"/>
+        /// (so a furnace's facing/lit appearance is driven straight from the pack's blockstate file); otherwise
+        /// the single <see cref="Model"/> with <see cref="GetModelTransform"/>.</summary>
+        public virtual (BlockModel Model, Matrix4 Orient) GetRenderModel(WorldBase world, Vector3i blockPos)
+        {
+            if (StateDefinition != null)
+            {
+                var variant = StateDefinition.Resolve(GetBlockState(world, blockPos));
+                if (variant != null) return (variant.Model, variant.Rotation);
+            }
+            return (Model, GetModelTransform(world, blockPos));
+        }
+
+        /// <summary>True for blocks whose <see cref="OnServerTick"/> must run every server tick (e.g. a smelting
+        /// furnace). The server keeps a registry of such block positions so it ticks only them.</summary>
+        public virtual bool NeedsServerTick => false;
+
+        /// <summary>Server-authoritative per-tick update for a <see cref="NeedsServerTick"/> block (never called
+        /// on the client). Reads/writes the block's stored <see cref="BlockData"/>.</summary>
+        public virtual void OnServerTick(WorldServer world, Vector3i blockPos) { }
+
         public virtual Color4 GetTintColor(WorldBase world, Vector3i blockPos, int tintId) => Color4.White;
         public virtual LightLevel GetLightLevel(WorldBase world, Vector3i blockPos) => LightLevel.Zero;
 

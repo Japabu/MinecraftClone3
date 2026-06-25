@@ -13,13 +13,16 @@ namespace MinecraftClone3API.Entities
         public const float Width = 0.25f;
         public const float Height = 0.25f;
 
-        private const int PickupDelayTicks = 10;
         private const int LifetimeTicks = 20 * 300; // ~5 minutes
 
         public ItemStack Stack;
         public int Age;
 
-        public bool CanPickup => Age >= PickupDelayTicks;
+        /// <summary>Ticks after spawn before this drop can be collected. Default ~0.5 s for block-break drops;
+        /// player-thrown drops set it higher so they don't fly straight back into the thrower.</summary>
+        public int PickupDelay = 10;
+
+        public bool CanPickup => Age >= PickupDelay;
 
         public override void Update()
         {

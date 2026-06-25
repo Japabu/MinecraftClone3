@@ -14,6 +14,7 @@ namespace MinecraftClone3API.Util
         internal static readonly BlockRegistry BlockRegistry = new BlockRegistry();
         internal static readonly ItemRegistry ItemRegistry = new ItemRegistry();
         internal static readonly Registry<CraftingRecipe> RecipeRegistry = new Registry<CraftingRecipe>();
+        internal static readonly Registry<SmeltingRecipe> SmeltingRegistry = new Registry<SmeltingRecipe>();
         internal static readonly Registry<BlockDataRegistryEntry> BlockDataRegistry = new Registry<BlockDataRegistryEntry>();
         internal static readonly Registry<Biome> BiomeRegistry = new Registry<Biome>();
         internal static readonly Registry<Feature> FeatureRegistry = new Registry<Feature>();
@@ -42,6 +43,18 @@ namespace MinecraftClone3API.Util
 
         internal static void RegisterRecipe(string prefix, CraftingRecipe recipe) =>
             RecipeRegistry.Register(prefix, recipe);
+
+        /// <summary>The smelting recipe whose input the given stack satisfies, or null. First match wins.</summary>
+        public static SmeltingRecipe MatchSmelting(ItemStack input)
+        {
+            if (input.IsEmpty) return null;
+            foreach (var recipe in SmeltingRegistry.Values)
+                if (recipe.Matches(input)) return recipe;
+            return null;
+        }
+
+        internal static void RegisterSmelting(string prefix, SmeltingRecipe recipe) =>
+            SmeltingRegistry.Register(prefix, recipe);
 
         public static Biome GetBiome(string key) => BiomeRegistry[key];
         public static Feature GetFeature(string key) => FeatureRegistry[key];

@@ -46,6 +46,7 @@ namespace VanillaPlugin
             context.Register(new BlockTorch());
             context.Register(new BlockStairs());
             context.Register(new BlockCraftingTable());
+            context.Register(new BlockFurnace());
             context.Register(new BlockGlowstone());
             // BlockGlass stays disabled: this resource pack's block/glass.json stores textures.all as an
             // object, which BlockModel.Parse can't read (the reason it was never enabled).
@@ -61,6 +62,7 @@ namespace VanillaPlugin
             context.Register(new ItemSimple("Apple", "minecraft/textures/item/apple.png"));
 
             context.Register<BlockDataMetadata>();
+            context.Register<BlockDataFurnace>();
 
             VanillaWorldGen.Register(context);
             context.Register(new OverworldDimension());
@@ -69,21 +71,22 @@ namespace VanillaPlugin
         }
 
         // Animals, a hostile mob, and the dropped-item type. Width/height drive server collision; the texture
-        // paths + box models drive client rendering (the official Minecraft entity sheets — pig/cow/chicken
-        // carry the climate-variant suffix used by current Minecraft). Each creature also gets a creative spawn
-        // egg (its official 2D item sprite) that spawns it on right-click for testing.
+        // paths + Bedrock geometry files drive client rendering (the official Minecraft entity sheets —
+        // pig/cow/chicken carry the climate-variant suffix used by current Minecraft; the zombie reuses the
+        // shared humanoid model from the System plugin). Each creature also gets a creative spawn egg (its
+        // official 2D item sprite) that spawns it on right-click for testing.
         private static void RegisterEntities(PluginContext context)
         {
             var pig = new EntityType("Pig", EntityKind.Creature, 0.9f, 0.9f, 10f, 0.1f, false,
-                "minecraft:entity/pig/pig_temperate", EntityModels.Pig);
+                "minecraft:entity/pig/pig_temperate", "Vanilla/Models/Entity/pig.geo.json");
             var cow = new EntityType("Cow", EntityKind.Creature, 0.9f, 1.4f, 10f, 0.1f, false,
-                "minecraft:entity/cow/cow_temperate", EntityModels.Cow);
+                "minecraft:entity/cow/cow_temperate", "Vanilla/Models/Entity/cow.geo.json");
             var sheep = new EntityType("Sheep", EntityKind.Creature, 0.9f, 1.3f, 8f, 0.1f, false,
-                "minecraft:entity/sheep/sheep", EntityModels.Sheep);
+                "minecraft:entity/sheep/sheep", "Vanilla/Models/Entity/sheep.geo.json");
             var chicken = new EntityType("Chicken", EntityKind.Creature, 0.4f, 0.7f, 4f, 0.08f, false,
-                "minecraft:entity/chicken/chicken_temperate", EntityModels.Chicken);
+                "minecraft:entity/chicken/chicken_temperate", "Vanilla/Models/Entity/chicken.geo.json");
             var zombie = new EntityType("Zombie", EntityKind.Creature, 0.6f, 1.95f, 20f, 0.13f, true,
-                "minecraft:entity/zombie/zombie", EntityModels.Biped);
+                "minecraft:entity/zombie/zombie", "System/Models/Entity/biped.geo.json");
 
             context.Register(pig);
             context.Register(cow);

@@ -34,13 +34,17 @@ fills air everywhere; expanding would defeat the single-value fast path, blow up
 loop, and break `IsEmpty`).
 
 `ChunkMesher.AddBlockToVao(WorldBase, ...)` reads neighbour blocks through `WorldBase`, so it works for any
-world. It meshes each of `Block.Model.Elements` (Minecraft `from`/`to` boxes with per-face `uv`/texture/
-`cullface`), so partial-cube models (stairs) render as-is. **Per-block orientation** is
-`Block.GetModelTransform` (default identity), composed after the element transform so it rotates the centred
-element about the block origin — the engine parses **no blockstate files**, so a stair's facing is applied
-here from the block's stored metadata. (Face normals + `cullface` are not rotated — harmless: a partial
-block is never the both-full pair the face cull needs, so its faces always draw; only flat shading on
-rotated faces is mildly off.) Chunk serialization (`Chunk.Write` ↔ `new CachedChunk(world, pos, reader)`) is
+world. It asks each block for its render model + orientation via `Block.GetRenderModel(world, pos)` and meshes
+that model's `Elements` (Minecraft `from`/`to` boxes with per-face `uv`/texture/`cullface`), so partial-cube
+models (stairs) render as-is. **Two ways a block varies its appearance** by state: a parsed
+**`BlockStateDefinition`** (the pack's `blockstates/<name>.json`, loaded by `ResourceReader.ReadBlockState`) —
+the block reports its current property values via `GetBlockState` (e.g. `facing=east, lit=true`) and the
+matching variant supplies model + rotation, so a furnace's facing/lit appearance is driven straight from the
+jar; or, for blocks with no blockstate file, the single `Block.Model` plus `Block.GetModelTransform` (default
+identity) driven by stored metadata (a stair's facing). Either way the orientation is composed after the
+element transform so it rotates the centred element about the block origin. (Face normals + `cullface` are not
+rotated — harmless: a partial block is never the both-full pair the face cull needs, so its faces always draw;
+only flat shading on rotated faces is mildly off.) Chunk serialization (`Chunk.Write` ↔ `new CachedChunk(world, pos, reader)`) is
 reused for both disk saves (`WorldSerializer`) and the `ChunkData` packet; both go through
 `PaletteStorage.Write`/`Read`.
 
@@ -52,6 +56,17 @@ tolerated), while a `Set` introducing a new value returns a NEW storage the chun
 = light/Update thread, plus the LoadThread seeds sky at gen before publish; client: all three = apply
 thread), so concurrent readers (mesher, network serialize, raytrace) always see a structurally consistent
 snapshot. **Do not introduce a second writer to any container.**
+
+**Block entities & per-tick blocks.** A block whose `Block.NeedsServerTick` is true (a furnace) is run every
+server tick by `WorldServer.TickBlocks`. The server keeps a small **ticking-block registry** (`_tickingBlocks`,
+a position set) maintained on `SetBlock` (add when the new block needs ticking, drop otherwise), on chunk load
+(scan the loaded chunk's `BlockData` positions so a persisted furnace resumes), and on chunk unload (drop the
+chunk's positions) — far cheaper than scanning every loaded block. Such a block keeps its state in a `BlockData`
+(persisted with the chunk). A ticking block that mutates its data in place each tick calls
+`WorldServer.TouchBlockDataForSave` (flag the chunk dirty for *saving* only); it goes through the heavier
+`SetBlockData` (which also queues a relight + whole-chunk **resend**) only when the change affects the mesh or
+light — e.g. a furnace lighting/extinguishing. Container blocks expose their state to the network generically
+through `ContainerBlockData` (see [inventory.md](inventory.md), [networking.md](networking.md)).
 
 ## LOD columns: the distant-horizon storage model
 

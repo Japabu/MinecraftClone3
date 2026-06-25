@@ -28,15 +28,15 @@ width/height. It runs **server-side only** and reuses the same collision contrac
 
 An `EntityType` ([Entities/EntityType.cs](../MinecraftClone3API/Entities/EntityType.cs)) is a registered species:
 collision `Width`/`Height`, AI fields (`Hostile`, `MoveSpeed`, `MaxHealth`), an `EntityKind` (`Creature`/`Item`),
-and the **client-only** render data (`TexturePath` + a GL-free `ModelFactory`). Plugins register them with
+and the **client-only** render data (`TexturePath` + a `ModelPath` resource key). Plugins register them with
 `context.Register(EntityType)`; the `EntityRegistry` assigns each a sequential numeric `Id` in registration order.
 **Client and server load the same plugins in the same order, so the ids agree on the wire** — the same
 block-id-agreement contract. A remote player uses the reserved `EntityType.PlayerTypeId`.
 
-The model description (`EntityModel`/`ModelPart`/`ModelBox`,
-[Client/Graphics/EntityModel.cs](../MinecraftClone3API/Client/Graphics/EntityModel.cs)) is pure data — boxes with
-texture offsets, authored in the Minecraft mob-model style — so the headless server holds it harmlessly and only
-the client ever turns it into GPU buffers.
+The in-memory model (`EntityModel`/`ModelPart`/`ModelBox`,
+[Client/Graphics/EntityModel.cs](../MinecraftClone3API/Client/Graphics/EntityModel.cs)) is GL-free data — a flat
+list of parts, each a group of texture-offset boxes that pivots for animation. The server never builds it; only
+the client loads it (from a data file — see Rendering) and turns it into GPU buffers.
 
 ## Networking
 
@@ -49,7 +49,10 @@ client builds the right subclass in `WorldClient.BuildEntity` and thereafter onl
 
 Ambient spawning (`WorldServer.TrySpawnCreatures`) periodically drops a small group of a random creature type on
 loaded ground near a random player, up to a soft cap. Breaking a block (`ServerNetwork.ApplyPlaceRequest`)
-`DropItem`s the removed block's item form.
+`DropItem`s the removed block's item form. **Player drops** (the Drop keybind, default Q; Ctrl+Q for the whole
+stack) go through `DropItemRequest` → `ServerNetwork.ApplyDropRequest`, which throws the item along the player's
+look direction with `EntityItem.PickupDelay` raised to ~2 s so it doesn't fly straight back into the thrower
+(block-break drops keep the short ~0.5 s default).
 
 **Spawn eggs.** Each creature also registers an `ItemSpawnEgg` (a non-block `Item` with `IsUsable = true`,
 holding the `EntityType` to spawn and the official spawn-egg sprite). Right-clicking a usable item sends a
@@ -68,6 +71,20 @@ layer size. (Current Minecraft splits some mob sheets by climate variant, so the
 `entity/pig/pig_temperate`, `entity/cow/cow_temperate`, `entity/chicken/chicken_temperate`.) Dropped items render as the spinning, bobbing 3D icon of their block (the same mesh
 [ItemIconRenderer](../MinecraftClone3API/Client/Graphics/ItemIconRenderer.cs) uses for the inventory).
 
+**Models are data, not code.** Each type's geometry is a **Bedrock-edition geometry JSON** file (the
+Blockbench-native mob format — bones with `pivot`/`rotation`, cubes with absolute `origin`/`size`/`uv`), loaded
+by `BedrockModelLoader` ([Client/Graphics/BedrockModelLoader.cs](../MinecraftClone3API/Client/Graphics/BedrockModelLoader.cs)).
+Mob geometry is **not** in the Minecraft jar (it lives in compiled Java there), so — like `Vanilla/Models/Water.json`
+— these are the few authored model files we ship: `System/Models/Entity/biped.geo.json` (the plain humanoid, used
+by the zombie), `System/Models/Entity/player.geo.json` (the same biped **plus the modern skin's overlay layer** —
+hat/jacket/sleeves/pants, each a base part copied and grown by cube `inflate`, textured from the lower sheet rows;
+overlay bones reuse the base part name so they swing with the limb), and the animals under
+`Vanilla/Models/Entity/`. The loader reflects Bedrock's −Z-facing, y-up
+coordinates into our +Z-facing convention (`z → −z`) and rebases each cube's absolute origin onto its bone pivot;
+it honors per-cube `uv`/`inflate` and X-axis bone rotation (the quadruped body pitch), but not bone parenting,
+cube `mirror`, or Y/Z rotation conventions (unused by the built-in models). Bone names drive animation, so author
+them `head`/`body`/`leg0..3`/`arm0..1`/`wing0..1`.
+
 Some humanoid sheets (e.g. the zombie) use the **legacy single-layer layout**: the left arm/leg regions are
 blank and the right-limb texels serve both sides. At model-build time `MirrorEmptyLimbs` detects a fully
 transparent left-limb (`arm1`/`leg1`) region in the texture and copies the matching right-limb (`arm0`/`leg0`)
@@ -82,13 +99,12 @@ item spin) is matrix-only at draw time; the shared meshes stay static. Culling i
 
 ## Adding an entity
 
-1. Add a box model factory to [EntityModels.cs](../MinecraftClone3API/Client/Graphics/EntityModels.cs) (texels,
-   Y-up, feet at 0, facing +Z; name parts `head`/`body`/`leg0..3`/`arm0..1`/`wing0..1` for animation).
-   **Author to the official Minecraft model exactly:** take Mojang's pivots/cuboids and convert from their frame
-   (Y-down, feet at y=24, head facing −Z) with `ours_y = 24 − mc_y`, `ours_z = −mc_z` — box sizes are preserved
-   so the sheet still maps straight on. A quadruped/bird body carries a baked 90° pitch (its box unwraps upright
-   but lies horizontal).
-2. `context.Register(new EntityType(...))` in your plugin, pointing at the official texture path.
+1. Add a **Bedrock geometry** `*.geo.json` under your plugin's `Assets/<NS>/Models/Entity/` (author it in
+   Blockbench, or hand-write it — bones with `pivot`/`rotation`, cubes with `origin`/`size`/`uv`). Name the bones
+   `head`/`body`/`leg0..3`/`arm0..1`/`wing0..1` so the animator picks them up; a quadruped/bird body bone gets a
+   `"rotation": [90, 0, 0]` pitch.
+2. `context.Register(new EntityType(...))` in your plugin, pointing at the official texture path and the model's
+   resource key (e.g. `Vanilla/Models/Entity/cow.geo.json`).
 3. Creatures spawn ambiently; spawn explicitly with `world.SpawnEntity(type, pos)`, or register an
    `ItemSpawnEgg(type, spritePath)` for a right-click creative spawn egg.
 

@@ -73,7 +73,7 @@ namespace MinecraftClone3API.Client.GUI
             if (!focused) return;
 
             var ks = Window.KeyboardState;
-            if (ks.IsKeyPressed(Keys.Escape) || ks.IsKeyPressed(Keys.E))
+            if (ks.IsKeyPressed(Keys.Escape) || Keybinds.IsPressed(ks, GameAction.Inventory))
             {
                 Close();
                 return;

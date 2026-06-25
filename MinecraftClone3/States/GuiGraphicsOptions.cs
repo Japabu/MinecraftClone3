@@ -13,8 +13,8 @@ using OpenTK.Windowing.GraphicsLibraryFramework;
 namespace MinecraftClone3.States
 {
     /// <summary>
-    /// Graphics options screen. Shown as an overlay over whatever opened it (the main menu state or the
-    /// pause-menu overlay), so closing it via Done/Escape reveals that screen again. Each control mutates the
+    /// Graphics options screen. Shown as an overlay over the parent <see cref="GuiOptions"/> screen, so closing
+    /// it via Done/Escape reveals that screen again. Each control mutates the
     /// persisted <see cref="GraphicsSettings"/>; the renderer/player/world read those values live, so changes
     /// (render distance, FOV, brightness, …) take effect immediately with no reload.
     /// </summary>

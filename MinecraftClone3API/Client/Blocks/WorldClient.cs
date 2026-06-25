@@ -90,6 +90,10 @@ namespace MinecraftClone3API.Client.Blocks
         /// to the server with <see cref="SendInventoryAction"/> / <see cref="SendHeldSlot"/>.</summary>
         public readonly Inventory Inventory = new Inventory();
 
+        /// <summary>Local replicas of open container blocks (furnaces), keyed by block position. Updated from
+        /// <see cref="ContainerStatePacket"/>s and read by the container screens (see <see cref="ContainerView"/>).</summary>
+        public readonly Dictionary<Vector3i, ContainerView> Containers = new Dictionary<Vector3i, ContainerView>();
+
         public int LocalEntityId = -1;
 
         public Vector3 SpawnPosition;
@@ -529,8 +533,35 @@ namespace MinecraftClone3API.Client.Blocks
         public void SendHeldSlot(int selectedHotbar)
             => _connection.Send(new HeldSlotPacket {SelectedHotbar = selectedHotbar});
 
+        /// <summary>Tells the server this client opened the container block at <paramref name="pos"/> (a furnace),
+        /// so it streams that block's state; the returned <see cref="ContainerView"/> is the screen's live replica.</summary>
+        public ContainerView OpenContainer(Vector3i pos, int slotCount, int fieldCount)
+        {
+            if (!Containers.TryGetValue(pos, out var view) || view.Slots.Length != slotCount)
+            {
+                view = new ContainerView(slotCount, fieldCount);
+                Containers[pos] = view;
+            }
+            _connection.Send(new OpenContainerPacket {Position = pos});
+            return view;
+        }
+
+        public void CloseContainer(Vector3i pos)
+        {
+            Containers.Remove(pos);
+            _connection.Send(new CloseContainerPacket());
+        }
+
+        public void SendContainerSlot(Vector3i pos, int slot, ItemStack stack)
+            => _connection.Send(new ContainerSlotPacket {Position = pos, Slot = slot, Stack = stack});
+
         public void SendUseItem(Vector3i position)
             => _connection.Send(new UseItemRequestPacket {Position = position});
+
+        /// <summary>Asks the server to drop the held hotbar item (one, or the whole stack when
+        /// <paramref name="all"/>). The server is authoritative for the inventory and echoes the result back.</summary>
+        public void SendDropItem(bool all)
+            => _connection.Send(new DropItemRequestPacket {All = all});
 
         public void Disconnect()
         {
@@ -595,7 +626,25 @@ namespace MinecraftClone3API.Client.Blocks
                     for (var i = 0; i < Inventory.Size; i++)
                         Inventory.Slots[i] = inv.Inventory.Slots[i];
                     break;
+                case ContainerStatePacket state:
+                    ApplyContainerState(state);
+                    break;
             }
+        }
+
+        // Copies a container snapshot into the local view by value (ItemStack is a struct; the loopback
+        // transport carries the server's live arrays by reference, so we must not alias them).
+        private void ApplyContainerState(ContainerStatePacket state)
+        {
+            if (!Containers.TryGetValue(state.Position, out var view) ||
+                view.Slots.Length != state.Slots.Length || view.Fields.Length != state.Fields.Length)
+            {
+                view = new ContainerView(state.Slots.Length, state.Fields.Length);
+                Containers[state.Position] = view;
+            }
+
+            for (var i = 0; i < state.Slots.Length; i++) view.Slots[i] = state.Slots[i];
+            for (var i = 0; i < state.Fields.Length; i++) view.Fields[i] = state.Fields[i];
         }
 
         /// <summary>Builds the client-side entity for a spawn packet: a bare <see cref="Entity"/> for a remote

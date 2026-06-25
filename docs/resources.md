@@ -55,8 +55,10 @@ subdirs → `FileSystemRaw`, `*.zip`/`*.jar` → `FileSystemCompressed`, sorted 
 and `AddResourcePack` indexes each (assets + lang only; **no `PluginInfo.json`/DLL**, so a plain client jar
 loads without the "no info file" error).
 
-**The Vanilla plugin ships no models or textures** (those are Mojang-derived) — only code + its `Lang/`. It
-references blocks by **explicit Minecraft resource locations** (`minecraft:block/stone`,
+**The Vanilla plugin ships almost no models or textures** (those are Mojang-derived) — only code, its `Lang/`,
+and the handful of assets the jar genuinely lacks: the `Water.json` cube model and the Bedrock **entity geometry**
+files under `Vanilla/Models/Entity/` (mob geometry is compiled Java in the jar, not data — see
+[entities.md](entities.md)). It references blocks by **explicit Minecraft resource locations** (`minecraft:block/stone`,
 `minecraft:block/grass_block`, …) and the engine loads the real Minecraft model JSON + PNGs from a
 user-provided pack. The vanilla model format **is** the engine's format (`parent`/`textures`
 `#vars`/`elements`/`faces`); extra fields (`shade`, `gui_light`, element `rotation`) are silently dropped by

@@ -13,6 +13,9 @@ namespace MinecraftClone3API.Client.GUI
     {
         public const string Widgets = "minecraft/textures/gui/widgets.png";
         public const string CreativeTab = "minecraft/textures/gui/container/creative_inventory/tab_items.png";
+        public const string Furnace = "minecraft/textures/gui/container/furnace.png";
+        public const string FurnaceLit = "minecraft/textures/gui/sprites/container/furnace/lit_progress.png";
+        public const string FurnaceBurn = "minecraft/textures/gui/sprites/container/furnace/burn_progress.png";
         public const string CraftingTable = "minecraft/textures/gui/container/crafting_table.png";
 
         private static readonly Dictionary<string, Texture> Cache = new Dictionary<string, Texture>();

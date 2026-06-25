@@ -8,13 +8,14 @@ using Newtonsoft.Json.Linq;
 namespace MinecraftClone3API.Items
 {
     /// <summary>
-    /// Builds the crafting recipes from the resource pack's own <c>data/&lt;ns&gt;/recipe/*.json</c> (the
-    /// Minecraft data format), resolving ingredient tags from <c>data/&lt;ns&gt;/tags/item/*.json</c> and mapping
-    /// every Minecraft item id to the item we actually registered (by <see cref="Item.MinecraftId"/>). A recipe
-    /// is registered only when its result and every ingredient cell resolve to at least one item we have, so a
-    /// pack with thousands of recipes contributes exactly the ones craftable from the registered content. Runs
-    /// once after all plugins load. Only shaped/shapeless crafting recipes are used; smelting/stonecutting/etc.
-    /// are ignored.
+    /// Builds the crafting and smelting recipes from the resource pack's own <c>data/&lt;ns&gt;/recipe/*.json</c>
+    /// (the Minecraft data format), resolving ingredient tags from <c>data/&lt;ns&gt;/tags/item/*.json</c> and
+    /// mapping every Minecraft item id to the item we actually registered (by <see cref="Item.MinecraftId"/>). A
+    /// recipe is registered only when its result and every ingredient cell resolve to at least one item we have,
+    /// so a pack with thousands of recipes contributes exactly the ones usable with the registered content. Runs
+    /// once after all plugins load. Only shaped/shapeless crafting and <c>minecraft:smelting</c> (plain furnace)
+    /// recipes are used; blasting/smoking/stonecutting/etc. are ignored. Also builds the furnace fuel table
+    /// (<see cref="FurnaceFuel"/>), whose burn times are not in the pack and so are defined in code.
     /// </summary>
     public static class RecipeLoader
     {
@@ -24,7 +25,8 @@ namespace MinecraftClone3API.Items
             if (items.Count == 0) return;
 
             var tagCache = new Dictionary<string, HashSet<string>>();
-            var loaded = 0;
+            var crafting = 0;
+            var smelting = 0;
 
             foreach (var key in new List<string>(ResourceManager.DataKeys))
             {
@@ -34,10 +36,23 @@ namespace MinecraftClone3API.Items
 
                 try
                 {
-                    var recipe = ParseRecipe(key, items, tagCache);
-                    if (recipe == null) continue;
-                    GameRegistry.RegisterRecipe("minecraft", recipe);
-                    loaded++;
+                    var json = JObject.Parse(Encoding.UTF8.GetString(ResourceManager.LoadData(key)));
+                    var type = StripNamespace((string) json["type"]);
+
+                    if (type == "smelting")
+                    {
+                        var smelt = ParseSmelting(key, json, items, tagCache);
+                        if (smelt == null) continue;
+                        GameRegistry.RegisterSmelting("minecraft", smelt);
+                        smelting++;
+                    }
+                    else
+                    {
+                        var recipe = ParseCrafting(key, json, type, items, tagCache);
+                        if (recipe == null) continue;
+                        GameRegistry.RegisterRecipe("minecraft", recipe);
+                        crafting++;
+                    }
                 }
                 catch (Exception e)
                 {
@@ -46,7 +61,71 @@ namespace MinecraftClone3API.Items
                 }
             }
 
-            Logger.Info($"Loaded {loaded} crafting recipes from resources");
+            BuildFuel(items, tagCache);
+
+            Logger.Info($"Loaded {crafting} crafting and {smelting} smelting recipes from resources");
+        }
+
+        // Vanilla fuel burn times in ticks (selector → ticks). These live in code because the resource pack has
+        // no fuel data; each selector is a Minecraft item id or a "#tag" and resolves to the items we have. Listed
+        // general-to-specific so a later, more specific entry overrides an earlier tag for the same item.
+        private static readonly (string selector, int ticks)[] FuelTable =
+        {
+            ("#minecraft:logs", 300),
+            ("#minecraft:planks", 300),
+            ("#minecraft:wooden_stairs", 300),
+            ("#minecraft:wooden_trapdoors", 300),
+            ("#minecraft:wooden_pressure_plates", 300),
+            ("#minecraft:wooden_fences", 300),
+            ("#minecraft:wooden_doors", 200),
+            ("#minecraft:signs", 200),
+            ("#minecraft:wooden_slabs", 150),
+            ("#minecraft:wool", 100),
+            ("#minecraft:wooden_buttons", 100),
+            ("#minecraft:saplings", 100),
+            ("minecraft:crafting_table", 300),
+            ("minecraft:bookshelf", 300),
+            ("minecraft:chest", 300),
+            ("minecraft:ladder", 300),
+            ("minecraft:bow", 300),
+            ("minecraft:bowl", 100),
+            ("minecraft:stick", 100),
+            ("minecraft:bamboo", 50),
+            ("minecraft:dried_kelp_block", 4000),
+            ("minecraft:blaze_rod", 2400),
+            ("minecraft:coal", 1600),
+            ("minecraft:charcoal", 1600),
+            ("minecraft:coal_block", 16000),
+            ("minecraft:lava_bucket", 20000),
+        };
+
+        private static void BuildFuel(Dictionary<string, ushort> items, Dictionary<string, HashSet<string>> tagCache)
+        {
+            FurnaceFuel.Reset();
+            foreach (var (selector, ticks) in FuelTable)
+            {
+                var mcIds = new HashSet<string>();
+                if (selector.Length > 0 && selector[0] == '#')
+                    mcIds.UnionWith(ResolveTag(selector.Substring(1), tagCache, new HashSet<string>()));
+                else
+                    AddId(selector, mcIds);
+
+                foreach (var mcId in mcIds)
+                    if (items.TryGetValue(mcId, out var id)) FurnaceFuel.Set(id, ticks);
+            }
+        }
+
+        private static SmeltingRecipe ParseSmelting(string dataKey, JObject json, Dictionary<string, ushort> items,
+            Dictionary<string, HashSet<string>> tagCache)
+        {
+            var result = ParseResult(json["result"], items);
+            if (result.IsEmpty) return null;
+
+            var ingredient = MapIngredient(json["ingredient"], items, tagCache);
+            if (ingredient.Length == 0) return null;
+
+            var cookingTime = json["cookingtime"] != null ? json["cookingtime"].Value<int>() : 200;
+            return new SmeltingRecipe(dataKey) { Ingredient = ingredient, Result = result, CookingTime = cookingTime };
         }
 
         private static Dictionary<string, ushort> BuildItemMap()
@@ -60,11 +139,9 @@ namespace MinecraftClone3API.Items
             return map;
         }
 
-        private static CraftingRecipe ParseRecipe(string dataKey, Dictionary<string, ushort> items,
-            Dictionary<string, HashSet<string>> tagCache)
+        private static CraftingRecipe ParseCrafting(string dataKey, JObject json, string type,
+            Dictionary<string, ushort> items, Dictionary<string, HashSet<string>> tagCache)
         {
-            var json = JObject.Parse(Encoding.UTF8.GetString(ResourceManager.LoadData(dataKey)));
-            var type = StripNamespace((string) json["type"]);
             if (type != "crafting_shaped" && type != "crafting_shapeless") return null;
 
             var result = ParseResult(json["result"], items);

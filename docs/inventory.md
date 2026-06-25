@@ -47,9 +47,15 @@ resource pack's `lang/*.json` (see [resources.md](resources.md)) — there is no
   reads the pack's `data/<ns>/recipe/*.json` (the Minecraft data format), resolving ingredient tags from
   `data/<ns>/tags/item/*.json` (recursively). A recipe registers **only when its result and every ingredient
   cell resolve to at least one item we have**, so a pack with thousands of recipes contributes exactly those
-  craftable from the registered content (planks, sticks, crafting table, oak stairs, torches, stone bricks
-  with the current Vanilla set). Only shaped/shapeless crafting recipes are used; smelting/stonecutting/etc.
-  are ignored.
+  usable with the registered content (planks, sticks, crafting table, oak stairs, torches, stone bricks, and
+  the smelts below with the current Vanilla set). Shaped/shapeless crafting **and** `minecraft:smelting`
+  (plain-furnace) recipes are loaded; blasting/smoking/stonecutting/etc. are ignored.
+- **Smelting** — `SmeltingRecipe` (`Items/SmeltingRecipe.cs`) is a single input id-set → result with a
+  `CookingTime` (ticks); `GameRegistry.MatchSmelting(input)` returns the recipe a stack satisfies. Furnace
+  **fuel** burn-times aren't in the pack (vanilla hardcodes them), so `FurnaceFuel` (`Items/FurnaceFuel.cs`)
+  holds the table, built by `RecipeLoader` by resolving vanilla selectors (`#planks`, `#logs`, coal, …) against
+  the items we have. With the current content: iron/gold ore → ingot and cobblestone → stone, fuelled by
+  coal/logs/planks/sticks.
 - **`CraftingState`** (`Client/GUI/CraftingState.cs`) — the backing state of a crafting grid: the N×N scratch
   grid (local, not part of the inventory), the recipe result, consuming one batch's ingredients
   (`ConsumeOne`), and returning leftovers to the inventory on close. The cursor and all slot interaction live
@@ -59,6 +65,31 @@ resource pack's `lang/*.json` (see [resources.md](resources.md)) — there is no
   crafting table block**, over the official `container/crafting_table.png` (placeholder slot frames without a
   pack). The 3×3 grid + result slot + the full player inventory. The creative inventory has **no** crafting
   grid (crafting is the table's job, matching vanilla creative).
+
+## Furnace (a server-authoritative container block)
+
+Unlike the crafting table (a purely client-side scratch grid), a furnace has **persistent, server-owned state**
+that **ticks even with the screen closed** — so it's the engine's first *block entity* and first *networked
+container*. The pieces:
+
+- **State** — `BlockDataFurnace` (`VanillaPlugin/BlockDatas/`) is a `ContainerBlockData`
+  (`Blocks/ContainerBlockData.cs`): facing + three `ItemStack` slots (input/fuel/output) + burn/cook counters,
+  persisted with the chunk like any `BlockData`. `ContainerBlockData` is the API's generic view of a synced
+  container (`Slots`, `SetSlot`, `SyncFields`), so the networking never needs to know the concrete furnace type.
+- **Smelting tick** — `BlockFurnace.OnServerTick` (run by the server's ticking-block registry, see
+  [world-model.md](world-model.md)) is the vanilla algorithm: light fresh fuel when there's something to smelt,
+  burn it down, advance the cook timer, and on completion consume one input → add one result. While burning it
+  emits light and renders the **lit** model; lit↔unlit transitions go through `SetBlockData` (remesh + relight),
+  while per-tick progress only flags the chunk for saving.
+- **Sync & interaction** — opening the screen sends `OpenContainerPacket`; while open the server streams the
+  furnace's `Slots`+`SyncFields` each tick as a `ContainerStatePacket`, which the client mirrors into a
+  `ContainerView` (`Client/Blocks/`). Moving items in the three furnace slots sends `ContainerSlotPacket`
+  (trusted, like inventory edits); the player-inventory rows still use `SendInventoryAction`. Closing sends
+  `CloseContainerPacket`. (See [networking.md](networking.md).)
+- **Screen** — `GuiFurnace` (`Client/GUI/GuiFurnace.cs`) over `container/furnace.png`: input/fuel/output slots
+  + the player inventory, with the lit flame (burn remaining, fills bottom-up) and cook arrow (fills
+  left-to-right) drawn from the sheet's progress sprites. Output is an `IsOutput` slot (take-only); shift-click
+  moves furnace↔inventory (smeltables to input, fuels to fuel). No XP (the engine has no XP system).
 
 **Right-click interaction.** `Block.OnActivated(window, world, pos, player)` (default false) lets a block
 handle a right-click (and suppress placing the held item). It is **client-only** — `PlayerController` calls it

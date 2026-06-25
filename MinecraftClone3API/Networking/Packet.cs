@@ -22,7 +22,12 @@ namespace MinecraftClone3API.Networking
         LodColumnData,
         InventoryState,
         InventoryAction,
-        HeldSlot
+        HeldSlot,
+        DropItemRequest,
+        OpenContainer,
+        CloseContainer,
+        ContainerState,
+        ContainerSlot
     }
 
     /// <summary>
@@ -49,7 +54,12 @@ namespace MinecraftClone3API.Networking
             {PacketId.LodColumnData, () => new LodColumnDataPacket()},
             {PacketId.InventoryState, () => new InventoryStatePacket()},
             {PacketId.InventoryAction, () => new InventoryActionPacket()},
-            {PacketId.HeldSlot, () => new HeldSlotPacket()}
+            {PacketId.HeldSlot, () => new HeldSlotPacket()},
+            {PacketId.DropItemRequest, () => new DropItemRequestPacket()},
+            {PacketId.OpenContainer, () => new OpenContainerPacket()},
+            {PacketId.CloseContainer, () => new CloseContainerPacket()},
+            {PacketId.ContainerState, () => new ContainerStatePacket()},
+            {PacketId.ContainerSlot, () => new ContainerSlotPacket()}
         };
 
         public abstract PacketId Id { get; }

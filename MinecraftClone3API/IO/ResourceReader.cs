@@ -94,5 +94,23 @@ namespace MinecraftClone3API.IO
             _cachedModels.Add(resolved, model);
             return model;
         }
+
+        /// <summary>The parsed blockstate definition for a content id (e.g. <c>"minecraft:furnace"</c>) from the
+        /// pack's <c>&lt;ns&gt;/blockstates/&lt;name&gt;.json</c>, or null if the pack has no such file (the block
+        /// then falls back to its single model).</summary>
+        public static BlockStateDefinition ReadBlockState(string id)
+        {
+            var ns = "minecraft";
+            var name = id;
+            var colon = id.IndexOf(':');
+            if (colon >= 0)
+            {
+                ns = id.Substring(0, colon);
+                name = id.Substring(colon + 1);
+            }
+
+            var path = $"{ns}/blockstates/{name}.json";
+            return Exists(path) ? BlockStateDefinition.Parse(ReadString(path), path) : null;
+        }
     }
 }

@@ -165,6 +165,7 @@ namespace MinecraftClone3API.Networking
             SendReadySignals();
             SendTimeSync();
             SyncEntities();
+            SyncContainers();
 
             _pumpTimer.Restart();
             FlushBlockChanges();
@@ -293,10 +294,47 @@ namespace MinecraftClone3API.Networking
                 case UseItemRequestPacket use when session.LoggedIn:
                     ApplyUseRequest(session, use);
                     break;
+                case DropItemRequestPacket drop when session.LoggedIn:
+                    ApplyDropRequest(session, drop);
+                    break;
                 case ChunkReleasePacket release when session.LoggedIn:
                     session.SentChunks.Remove(release.Position);
                     break;
+                case OpenContainerPacket open when session.LoggedIn:
+                    session.OpenContainer = open.Position;
+                    SendContainerState(session, open.Position);
+                    break;
+                case CloseContainerPacket _ when session.LoggedIn:
+                    session.OpenContainer = null;
+                    break;
+                case ContainerSlotPacket slot when session.LoggedIn:
+                    if (_world.GetBlockData(slot.Position) is ContainerBlockData container)
+                    {
+                        container.SetSlot(slot.Slot, slot.Stack);
+                        _world.TouchBlockDataForSave(slot.Position);
+                    }
+                    break;
             }
+        }
+
+        // Streams the live state of every open container block to the clients viewing it (called each Pump),
+        // so furnace burn/cook progress and slot contents stay in sync on the screen.
+        private void SyncContainers()
+        {
+            foreach (var session in _sessions)
+                if (session.OpenContainer.HasValue)
+                    SendContainerState(session, session.OpenContainer.Value);
+        }
+
+        private void SendContainerState(ClientSession session, Vector3i pos)
+        {
+            if (_world.GetBlockData(pos) is ContainerBlockData container)
+                session.Connection.Send(new ContainerStatePacket
+                {
+                    Position = pos,
+                    Slots = container.Slots,
+                    Fields = container.SyncFields
+                });
         }
 
         private void Login(ClientSession session, string name)
@@ -388,6 +426,37 @@ namespace MinecraftClone3API.Networking
             var item = session.Inventory.SelectedItem.Item;
             if (item == null || !item.IsUsable) return;
             item.OnUseServer(_world, session.Player, use.Position.ToVector3() + new Vector3(0.5f, 0f, 0.5f));
+        }
+
+        /// <summary>Drops the player's held hotbar item (one, or the whole stack on Ctrl+Q): decrements the
+        /// authoritative inventory, spawns the drop in front of the player thrown along their look direction,
+        /// and echoes the new inventory back so the client replica stays in step.</summary>
+        private void ApplyDropRequest(ClientSession session, DropItemRequestPacket drop)
+        {
+            var slot = session.Inventory.SelectedHotbar;
+            var held = session.Inventory.Slots[slot];
+            if (held.IsEmpty) return;
+
+            var count = drop.All ? held.Count : 1;
+            session.Inventory.Slots[slot] =
+                held.Count - count <= 0 ? ItemStack.Empty : held.WithCount(held.Count - count);
+
+            var yaw = session.Player.Yaw;
+            var pitch = session.Player.Pitch;
+            var forward = new Vector3(
+                (float) (Math.Sin(yaw) * Math.Cos(pitch)),
+                (float) Math.Sin(pitch),
+                (float) (Math.Cos(yaw) * Math.Cos(pitch)));
+
+            var entity = _world.DropItem(held.WithCount(count),
+                session.Player.Position + new Vector3(0f, 1.4f, 0f) + forward * 0.3f);
+            if (entity != null)
+            {
+                entity.Velocity = forward * 0.3f + new Vector3(0f, 0.1f, 0f);
+                entity.PickupDelay = 40; // ~2 s so a thrown item doesn't fly straight back in
+            }
+
+            session.Connection.Send(new InventoryStatePacket {Inventory = session.Inventory});
         }
 
         private void RemoveDisconnected()

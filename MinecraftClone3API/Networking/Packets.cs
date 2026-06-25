@@ -223,6 +223,18 @@ namespace MinecraftClone3API.Networking
         public override void Read(BinaryReader reader) => SelectedHotbar = reader.ReadInt32();
     }
 
+    /// <summary>Client→server request to drop the held hotbar item: one item, or the whole stack
+    /// (<see cref="All"/>, Ctrl+Q). The server decrements its authoritative inventory, spawns the dropped
+    /// item entity in front of the player, and echoes the new inventory back.</summary>
+    public class DropItemRequestPacket : Packet
+    {
+        public bool All;
+
+        public override PacketId Id => PacketId.DropItemRequest;
+        public override void Write(BinaryWriter writer) => writer.Write(All);
+        public override void Read(BinaryReader reader) => All = reader.ReadBoolean();
+    }
+
     /// <summary>Entity position/orientation update (client→server for the local player, relayed to others).</summary>
     public class EntityMovePacket : Packet
     {
@@ -343,6 +355,79 @@ namespace MinecraftClone3API.Networking
         {
             Position = ReadVector3i(reader);
             CompressedData = reader.ReadBytes(reader.ReadInt32());
+        }
+    }
+
+    /// <summary>Client opened the container block at <see cref="Position"/> (e.g. a furnace); the server then
+    /// streams that block's <see cref="ContainerStatePacket"/> to this client while it stays open.</summary>
+    public class OpenContainerPacket : Packet
+    {
+        public Vector3i Position;
+        public override PacketId Id => PacketId.OpenContainer;
+        public override void Write(BinaryWriter writer) => WriteVector3i(writer, Position);
+        public override void Read(BinaryReader reader) => Position = ReadVector3i(reader);
+    }
+
+    /// <summary>Client closed its open container screen; the server stops streaming its state.</summary>
+    public class CloseContainerPacket : Packet
+    {
+        public override PacketId Id => PacketId.CloseContainer;
+        public override void Write(BinaryWriter writer) { }
+        public override void Read(BinaryReader reader) { }
+    }
+
+    /// <summary>Server → client live snapshot of a container block the client has open: its item
+    /// <see cref="Slots"/> and integer progress <see cref="Fields"/> (e.g. furnace burn/cook counters). The
+    /// client copies these into its view by value (the loopback transport carries the live arrays by reference).</summary>
+    public class ContainerStatePacket : Packet
+    {
+        public Vector3i Position;
+        public ItemStack[] Slots;
+        public int[] Fields;
+
+        public override PacketId Id => PacketId.ContainerState;
+
+        public override void Write(BinaryWriter writer)
+        {
+            WriteVector3i(writer, Position);
+            writer.Write((byte) Slots.Length);
+            foreach (var slot in Slots) slot.Write(writer);
+            writer.Write((byte) Fields.Length);
+            foreach (var field in Fields) writer.Write(field);
+        }
+
+        public override void Read(BinaryReader reader)
+        {
+            Position = ReadVector3i(reader);
+            Slots = new ItemStack[reader.ReadByte()];
+            for (var i = 0; i < Slots.Length; i++) Slots[i] = ItemStack.Read(reader);
+            Fields = new int[reader.ReadByte()];
+            for (var i = 0; i < Fields.Length; i++) Fields[i] = reader.ReadInt32();
+        }
+    }
+
+    /// <summary>Client → server edit of one item slot of an open container block (trusted, as inventory edits
+    /// are). The server applies it to the block's <see cref="MinecraftClone3API.Blocks.ContainerBlockData"/>.</summary>
+    public class ContainerSlotPacket : Packet
+    {
+        public Vector3i Position;
+        public int Slot;
+        public ItemStack Stack;
+
+        public override PacketId Id => PacketId.ContainerSlot;
+
+        public override void Write(BinaryWriter writer)
+        {
+            WriteVector3i(writer, Position);
+            writer.Write(Slot);
+            Stack.Write(writer);
+        }
+
+        public override void Read(BinaryReader reader)
+        {
+            Position = ReadVector3i(reader);
+            Slot = reader.ReadInt32();
+            Stack = ItemStack.Read(reader);
         }
     }
 }

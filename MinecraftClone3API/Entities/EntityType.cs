@@ -1,5 +1,3 @@
-using System;
-using MinecraftClone3API.Graphics;
 using MinecraftClone3API.Util;
 
 namespace MinecraftClone3API.Entities
@@ -16,8 +14,8 @@ namespace MinecraftClone3API.Entities
     /// <summary>
     /// A registered species of entity. Shared client/server: the server reads <see cref="Width"/>/<see
     /// cref="Height"/> for collision and the AI fields for behaviour; the client additionally reads
-    /// <see cref="TexturePath"/> and <see cref="ModelFactory"/> to build its render model. The model
-    /// description is GL-free data, so the headless server holds it harmlessly. Numeric <see cref="Id"/>s
+    /// <see cref="TexturePath"/> and <see cref="ModelPath"/> to build its render model. The model is loaded
+    /// from a Bedrock geometry data file, so the headless server never touches it. Numeric <see cref="Id"/>s
     /// are assigned by registration order (client and server load the same plugins, so the ids agree —
     /// the same block-id-agreement contract); player entities use the reserved <see cref="PlayerTypeId"/>.
     /// </summary>
@@ -43,12 +41,13 @@ namespace MinecraftClone3API.Entities
         /// <summary>Entity texture resource location (e.g. <c>minecraft:entity/pig/pig</c>); null for items.</summary>
         public readonly string TexturePath;
 
-        /// <summary>Builds the client render model (box parts). Invoked once, lazily, on the client; never on
-        /// the headless server. Null for items (they render the dropped block's icon mesh instead).</summary>
-        public readonly Func<EntityModel> ModelFactory;
+        /// <summary>Resource key of the Bedrock geometry file for the client render model (e.g.
+        /// <c>Vanilla/Models/Entity/cow.geo.json</c>). Read once, lazily, on the client; never on the headless
+        /// server. Null for items (they render the dropped block's icon mesh instead).</summary>
+        public readonly string ModelPath;
 
         public EntityType(string name, EntityKind kind, float width, float height, float maxHealth,
-            float moveSpeed, bool hostile, string texturePath, Func<EntityModel> modelFactory) : base(name)
+            float moveSpeed, bool hostile, string texturePath, string modelPath) : base(name)
         {
             Kind = kind;
             Width = width;
@@ -57,7 +56,7 @@ namespace MinecraftClone3API.Entities
             MoveSpeed = moveSpeed;
             Hostile = hostile;
             TexturePath = texturePath;
-            ModelFactory = modelFactory;
+            ModelPath = modelPath;
         }
 
         /// <summary>Creates a server-side instance of this type (used by <c>WorldServer.SpawnEntity</c>).</summary>

@@ -194,7 +194,7 @@ namespace MinecraftClone3.States
                 StateEngine.AddOverlay(new GuiPauseMenu(_window));
                 active = false;
             }
-            if (active && _window.KeyboardState.IsKeyPressed(Keys.E))
+            if (active && Keybinds.IsPressed(_window.KeyboardState, GameAction.Inventory))
             {
                 StateEngine.AddOverlay(new GuiCreativeInventory(_window, _world));
                 active = false;
