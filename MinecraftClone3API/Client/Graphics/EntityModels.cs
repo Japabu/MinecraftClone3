@@ -54,8 +54,7 @@ namespace MinecraftClone3API.Graphics
                 .AddBox(P(-5, 2, 3), P(-4, 5, 4), 22, 0)   // right horn
                 .AddBox(P(4, 2, 3), P(5, 5, 4), 22, 0);    // left horn
             m.AddPart(new ModelPart("body", P(0, 19, -2), new Vector3(Deg90, 0, 0)))
-                .AddBox(P(-6, -8, -3), P(6, 10, 7), 18, 4)
-                .AddBox(P(-2, -8, 7), P(2, -2, 8), 52, 0); // udder
+                .AddBox(P(-6, -8, -3), P(6, 10, 7), 18, 4);
             Legs(m, 12, 4, 7, 0, 16);
 
             return m;
@@ -66,7 +65,7 @@ namespace MinecraftClone3API.Graphics
         {
             var m = new EntityModel(64, 32);
 
-            m.AddPart(new ModelPart("head", P(0, 18, 8))).AddBox(P(-3, -4, 0), P(3, 4, 6), 0, 0);
+            m.AddPart(new ModelPart("head", P(0, 18, 8))).AddBox(P(-3, -2, -2), P(3, 4, 6), 0, 0);
             m.AddPart(new ModelPart("body", P(0, 19, -2), new Vector3(Deg90, 0, 0)))
                 .AddBox(P(-4, -6, 1), P(4, 10, 7), 28, 8);
             Legs(m, 12, 3, 6, 0, 16);
