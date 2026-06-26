@@ -154,6 +154,11 @@ layer size. (Current Minecraft splits some mob sheets by climate variant, so the
 `entity/pig/pig_temperate`, `entity/cow/cow_temperate`, `entity/chicken/chicken_temperate`.) Dropped items render as the spinning, bobbing 3D icon of their block (the same mesh
 [ItemIconRenderer](../MinecraftClone3API/Client/Graphics/ItemIconRenderer.cs) uses for the inventory).
 
+The **local player** is normally excluded from rendering (it isn't in `world.Entities`), but in a third-person
+view (F5, see [state-gameloop.md](state-gameloop.md)) `EntityRenderer.Render` also draws it with the built-in
+player model at `PlayerController.PlayerEntity`. Its walk cycle is advanced from its own physics in
+`PlayerController` (via `Entity.AdvanceWalkCycle`), not the network-interpolation path the other entities use.
+
 **Models are data, not code.** Each type's geometry is a **Bedrock-edition geometry JSON** file (the
 Blockbench-native mob format — bones with `pivot`/`rotation`, cubes with absolute `origin`/`size`/`uv`), loaded
 by `BedrockModelLoader` ([Client/Graphics/BedrockModelLoader.cs](../MinecraftClone3API/Client/Graphics/BedrockModelLoader.cs)).
