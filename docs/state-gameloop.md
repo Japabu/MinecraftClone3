@@ -64,7 +64,9 @@ thread). The player is a **0.6 × 1.8 AABB**; `Entity.Position` is the **feet** 
 point). **F5** cycles the camera perspective (`PlayerController.Perspective`): first-person → third-person
 behind → third-person facing; the two third-person views trail/face the eye by 4 blocks, pulled in by a
 block raytrace so the view never clips into terrain, and the renderer draws the player's own body
-(`PlayerController.RenderSelf`). `PlayerController` is split into `UpdateFrame` (per frame: look, fly toggle, hotbar selection, debug keys,
+(`PlayerController.RenderSelf`). In first-person the held item renders as a viewmodel in the lower-right
+(`HeldItemRenderer`, see [rendering.md](rendering.md)); attack/mine/place/use call `PlayerController.Swing()`,
+which drives a swing arc (`SwingPhase`, advanced each frame; mining loops it). `PlayerController` is split into `UpdateFrame` (per frame: look, fly toggle, hotbar selection, debug keys,
 break/place — see [inventory.md](inventory.md)) and `Tick` (one fixed **20 tps** step), driven by
 `StateWorld`'s accumulator; the **Inventory** keybind (default **E**) opens the creative inventory overlay
 (`StateWorld.Update`; no crafting grid, matching vanilla creative), and the **Drop** keybind (default **Q**,

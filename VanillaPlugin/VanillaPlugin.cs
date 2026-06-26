@@ -99,6 +99,7 @@ namespace VanillaPlugin
             context.Register(new BlockStairs());
             context.Register(new BlockCraftingTable());
             context.Register(new BlockFurnace());
+            context.Register(new BlockChest());
             context.Register(new BlockGlowstone());
             context.Register(new BlockBasic("WhiteWool", "minecraft:block/white_wool", true, 0.8f));
             context.Register(new BlockGlass());
@@ -188,6 +189,7 @@ namespace VanillaPlugin
 
             context.Register<BlockDataMetadata>();
             context.Register<BlockDataFurnace>();
+            context.Register<BlockDataChest>();
 
             context.RegisterEntityData<FallingBlockData>();
 

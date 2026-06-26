@@ -129,6 +129,7 @@ namespace MinecraftClone3.States
             // constructors have run, but before the upload — LoadModels registers the entity sheet textures into
             // the same arrays, so they must be indexed before BlockTextureManager.Upload bakes them to the GPU.
             EntityRenderer.LoadModels();
+            BlockEntityRenderer.LoadModels();
 
             GlTextureUploader.Upload();
 

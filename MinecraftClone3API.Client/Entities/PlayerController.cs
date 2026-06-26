@@ -53,6 +53,33 @@ namespace MinecraftClone3API.Entities
         private static bool _attacking;
         private static readonly Stopwatch _frameTimer = Stopwatch.StartNew();
 
+        // First-person swing: a one-shot 0..1 arc (re)started by Swing() on attack/mine/place/use and advanced
+        // each frame; the held-item viewmodel maps it to the arm/item arc. Mining re-triggers it so it loops.
+        private const float SwingSeconds = 0.25f;
+        private static readonly Stopwatch _swingTimer = Stopwatch.StartNew();
+        private static bool _swinging;
+        private static float _swingProgress;
+
+        /// <summary>The current swing arc position (0..1), or 0 when no swing is in progress.</summary>
+        public static float SwingPhase => _swinging ? _swingProgress : 0f;
+
+        /// <summary>(Re)starts the first-person swing animation (a melee/mine/place gesture).</summary>
+        public static void Swing()
+        {
+            _swinging = true;
+            _swingProgress = 0f;
+        }
+
+        private static void AdvanceSwing()
+        {
+            var dt = (float) _swingTimer.Elapsed.TotalSeconds;
+            _swingTimer.Restart();
+            if (!_swinging) return;
+            if (dt > 0.25f) dt = 0.25f;
+            _swingProgress += dt / SwingSeconds;
+            if (_swingProgress >= 1f) { _swinging = false; _swingProgress = 0f; }
+        }
+
         public static void SetEntity(EntityPlayer playerEntity)
         {
             PlayerEntity = playerEntity;
@@ -66,6 +93,8 @@ namespace MinecraftClone3API.Entities
         {
             _blockRaytrace = world.BlockRaytrace(PlayerEntity.RenderPosition + PlayerEntity.EyeOffset,
                 PlayerEntity.Forward, 8);
+
+            AdvanceSwing();
 
             if (!window.IsFocused) return;
 
@@ -243,6 +272,7 @@ namespace MinecraftClone3API.Entities
                 {
                     attackClient.SendAttackEntity(entity.EntityId);
                     _attacking = true;
+                    Swing();
                 }
             }
             if (!leftDown) _attacking = false;
@@ -250,7 +280,7 @@ namespace MinecraftClone3API.Entities
 
             if (PlayerEntity.GameMode == GameMode.Creative)
             {
-                if (leftDown && !ms.WasButtonDown(MouseButton.Left)) BreakBlock(world);
+                if (leftDown && !ms.WasButtonDown(MouseButton.Left)) { BreakBlock(world); Swing(); }
                 _miningTarget = null;
                 _miningProgress = 0f;
                 return;
@@ -279,6 +309,9 @@ namespace MinecraftClone3API.Entities
 
             var breakSeconds = BreakSeconds(_blockRaytrace.Block, tool);
             if (breakSeconds < 0f) { _miningProgress = 0f; return; }   // unbreakable (bedrock)
+
+            // Loop the swing while actively mining.
+            if (!_swinging) Swing();
 
             if (breakSeconds <= 0f) _miningProgress = 1f;
             else _miningProgress += dt / breakSeconds;
@@ -335,7 +368,7 @@ namespace MinecraftClone3API.Entities
             if (item.UsableOnEntity)
             {
                 var entity = PickEntity(client);
-                if (entity != null) { client.SendUseItemOnEntity(entity.EntityId); return; }
+                if (entity != null) { client.SendUseItemOnEntity(entity.EntityId); Swing(); return; }
             }
 
             if (_blockRaytrace == null) return;
@@ -345,11 +378,12 @@ namespace MinecraftClone3API.Entities
             {
                 world.PlaceBlock(PlayerEntity, target, block,
                     block.GetPlacementMetadata(PlayerEntity, _blockRaytrace));
+                Swing();
                 return;
             }
 
             // Usable non-block items (a spawn egg) ask the server to act; other items do nothing.
-            if (item.IsUsable) client.SendUseItem(target);
+            if (item.IsUsable) { client.SendUseItem(target); Swing(); }
         }
 
         // The entity the player is aiming at within reach (and nearer than the targeted block, so you can't

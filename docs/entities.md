@@ -73,8 +73,10 @@ without the API knowing the concrete subclass. The base `Entity` stays free of p
 
 ## Networking
 
-`EntitySpawnPacket` carries `TypeId` (+ an `ItemStack` for items); `EntityMovePacket`/`EntityDespawnPacket` are
-unchanged. `WorldServer` owns id allocation (`NextEntityId`, shared with players) and `SpawnEntity`/`DropItem`,
+`EntitySpawnPacket` carries `TypeId` (+ an `ItemStack` for items); `EntityMovePacket` also carries `HurtTime`
+(damage flash) and `HeldItemId` (the player's main-hand item, so others can see what's held — a session-local id,
+safe on the live wire as the client and server share the plugin load); `EntityDespawnPacket` is unchanged.
+`WorldServer` owns id allocation (`NextEntityId`, shared with players) and `SpawnEntity`/`DropItem`,
 queuing spawns/despawns onto `PendingSpawns`/`PendingDespawns`. Each `Pump`, `ServerNetwork.SyncEntities` drains
 those queues (broadcasting spawn/despawn), lets players collect nearby pickup-ready items into their inventory,
 and relays every live world entity's position. A joining client is sent a spawn for every existing entity. The
@@ -107,8 +109,10 @@ creature is hit (nearer than the targeted block) the click is an **attack**, not
 server resolves the id against its own `FindEntity` list and runs `EntityCombat.DamageEntity` with the held
 item's `Item.AttackDamage` (bare hand = `EntityCombat.BaseHandDamage` = 1; swords raise it). `EntityCombat`
 ([Entities/EntityCombat.cs](../MinecraftClone3API/Entities/EntityCombat.cs)) is the GL-free, stateless server
-combat sink: it gates on the target's `HurtCooldown` (0.5 s invuln), subtracts `Health`, applies horizontal +
-upward knockback to the target's `Velocity`, and on death rolls the type's `LootTable`
+combat sink: it gates on the target's `HurtCooldown` (0.5 s invuln), subtracts `Health`, sets a `HurtTime`
+flash timer (streamed in `EntityMovePacket`; the client renders the model red while it runs — see
+[rendering.md](rendering.md)), applies horizontal + upward knockback to the target's `Velocity`, and on death
+rolls the type's `LootTable`
 ([Entities/LootTable.cs](../MinecraftClone3API/Entities/LootTable.cs)) — `DropItem`-ing each stack — before
 setting `Dead`. Death/despawn then streams through the existing `PendingDespawns` path, so **no new server→client
 packet is needed**. Loot is declared on the `EntityType` by item registry key (resolved lazily, like the shears'

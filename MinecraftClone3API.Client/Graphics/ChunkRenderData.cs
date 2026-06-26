@@ -144,9 +144,13 @@ namespace MinecraftClone3API.Graphics
             for (var z = min.Z; z <= max.Z; z++)
             {
                 var id = chunk.GetBlock(new Vector3i(x, y, z));
-                if (id != 0) //Remove GetBlock overhead of Air
-                    ChunkMesher.AddBlockToVao(chunk.World, chunk.Position * Chunk.Size + new Vector3i(x, y, z), x, y, z,
-                        GameRegistry.BlockRegistry[id], _opaque, _transparentVao);
+                if (id == 0) continue; //Remove GetBlock overhead of Air
+                var block = GameRegistry.BlockRegistry[id];
+                // Block-entities (chests) are drawn by the block-entity renderer as their own box model, not
+                // baked into the chunk mesh.
+                if (block.RendersAsBlockEntity) continue;
+                ChunkMesher.AddBlockToVao(chunk.World, chunk.Position * Chunk.Size + new Vector3i(x, y, z), x, y, z,
+                    block, _opaque, _transparentVao);
             }
         }
     }
