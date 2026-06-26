@@ -48,36 +48,8 @@ namespace MinecraftClone3.States
 
         public override void Update(bool focused) => base.Update(focused);
 
-        private int _diagFrames;
-
         public override void Render()
         {
-            // TEMP FREEZE DIAG: dump the real GL state for the first handful of menu frames so a frozen/black
-            // window after quitting a world reveals what state the world renderer left behind (bound FBO,
-            // color/depth masks, enabled caps, viewport vs framebuffer size, pending GL error).
-            if (_diagFrames < 5)
-            {
-                _diagFrames++;
-                var err = GL.GetError();
-                GL.GetInteger(GetPName.DrawFramebufferBinding, out int drawFbo);
-                GL.GetInteger(GetPName.ReadFramebufferBinding, out int readFbo);
-                var vp = new int[4];
-                GL.GetInteger(GetPName.Viewport, vp);
-                var colorMask = new bool[4];
-                GL.GetBoolean(GetPName.ColorWritemask, colorMask);
-                GL.GetBoolean(GetPName.DepthWritemask, out bool depthMask);
-                var fb = _window.FramebufferSize;
-                Logger.Info($"FREEZE-DIAG menu frame {_diagFrames}: glError={err} drawFbo={drawFbo} readFbo={readFbo} " +
-                            $"viewport=[{vp[0]},{vp[1]},{vp[2]},{vp[3]}] fbSize={fb.X}x{fb.Y} " +
-                            $"colorMask=[{colorMask[0]},{colorMask[1]},{colorMask[2]},{colorMask[3]}] depthMask={depthMask} " +
-                            $"depthTest={GL.IsEnabled(EnableCap.DepthTest)} blend={GL.IsEnabled(EnableCap.Blend)} " +
-                            $"cull={GL.IsEnabled(EnableCap.CullFace)} scissor={GL.IsEnabled(EnableCap.ScissorTest)}");
-
-                // If a GL error is already standing here, arm the GuiRenderer per-step probe to pinpoint which
-                // draw call regenerates it this frame (GuiRenderer's draws run right after this block).
-                if (err != ErrorCode.NoError) GuiRenderer.ProbeArmed = 8;
-            }
-
             RenderState.Set(new GlState
             {
                 Blend = true,

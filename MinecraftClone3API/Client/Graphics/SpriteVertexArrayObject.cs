@@ -19,10 +19,6 @@ namespace MinecraftClone3API.Graphics
         public int VertexCount => (Positions?.Count).GetValueOrDefault();
         public int IndicesCount => (Indices?.Count).GetValueOrDefault();
 
-        // FREEZE DIAG accessors.
-        public int DebugVaoId => VaoId;
-        public int DebugIndexBufferId => IndicesId;
-
         public SpriteVertexArrayObject()
         {
             VaoId = GL.GenVertexArray();
@@ -93,6 +89,13 @@ namespace MinecraftClone3API.Graphics
             if (UploadedCount <= 0) return;
 
             GL.BindVertexArray(VaoId);
+            // Re-assert the element buffer on the VAO every draw. The macOS OpenGL-over-Metal driver drops a
+            // VAO's element-array binding when *unrelated* VAOs/buffers are deleted (e.g. the chunk-mesh arena
+            // teardown on "Save and Quit to Title"). Since this VAO (the persistent screen-quad/sprite buffer)
+            // outlives worlds, that left glDrawElements raising GL_INVALID_OPERATION on every GUI draw at the
+            // main menu — which on macOS also stalls the window's surface presentation (frozen/black window).
+            // Binding it here is idempotent and cheap; it does not rely on the driver preserving VAO state.
+            GL.BindBuffer(BufferTarget.ElementArrayBuffer, IndicesId);
             GL.DrawElements(mode, UploadedCount, DrawElementsType.UnsignedInt, 0);
         }
 

@@ -166,6 +166,15 @@ OpenGL is capped at **4.1 Core / GLSL 4.10** (macOS limit). Consequences: **unif
 queried by name** (no `layout(location=)`/`layout(binding=)` on uniforms); vertex-attribute and
 fragment-output locations *do* use `layout(location=)`.
 
+**macOS VAO element-binding quirk.** On the macOS OpenGL-over-Metal driver, deleting *unrelated* VAOs/buffers
+resets the **element-array-buffer binding of other, live VAOs** to 0. A `glDrawElements` on such a VAO then
+raises `GL_INVALID_OPERATION`, draws nothing, and (because the error wedges the command stream) stops the
+window surface from presenting — a frozen/black window even though the app loop is alive. This bit the
+persistent `ScreenRectVao` (every GUI draw + the fullscreen passes) after a world teardown disposed the chunk
+arenas, and could silently drop transparent chunk meshes during eviction. Fix: `SpriteVertexArrayObject.Draw`
+and `VertexArrayObject.Draw` **re-bind their element buffer every draw** (`GL.BindBuffer(ElementArrayBuffer,
+IndicesId)` after `BindVertexArray`) instead of trusting the VAO to retain it. Don't remove that line.
+
 ## Phase-2 distant horizon (LOD)
 
 **Full detail to the render distance — the only LOD is the Phase-2 horizon beyond it.** Loaded chunks
