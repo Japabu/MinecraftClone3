@@ -3,6 +3,7 @@ using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Util;
 using MinecraftClone3API.WorldGen;
 using OpenTK.Mathematics;
+using VanillaPlugin.BlockDatas;
 using VanillaPlugin.Blocks;
 
 namespace VanillaPlugin.WorldGen
@@ -80,9 +81,10 @@ namespace VanillaPlugin.WorldGen
                 if (!IsObsidian(world, left + Up * height + axis * i)) return false;
             }
 
+            var axisMeta = axis.X != 0 ? BlockNetherPortal.AxisX : BlockNetherPortal.AxisZ;
             for (var h = 0; h < height; h++)
             for (var i = 0; i < width; i++)
-                world.SetBlock(left + Up * h + axis * i, Portal);
+                PlacePortal(world, left + Up * h + axis * i, axisMeta);
             return true;
         }
 
@@ -198,15 +200,22 @@ namespace VanillaPlugin.WorldGen
                 world.SetBlock(new Vector3i(x0 + dx, y0 + 3, z0), Obsidian);
             }
 
-            // Portal interior (2 wide × 3 tall).
+            // Portal interior (2 wide × 3 tall), pane along the X axis.
             for (var dx = 0; dx <= 1; dx++)
             for (var dy = 0; dy <= 2; dy++)
-                world.SetBlock(new Vector3i(x0 + dx, y0 + dy, z0), Portal);
+                PlacePortal(world, new Vector3i(x0 + dx, y0 + dy, z0), BlockNetherPortal.AxisX);
 
             return new Vector3(x0 + 1.0f, y0, z0 + 0.5f);
         }
 
         // ---- helpers ----------------------------------------------------------------------------
+
+        /// <summary>Places a portal block carrying its axis (so it renders the correct oriented thin pane).</summary>
+        private void PlacePortal(WorldServer world, Vector3i p, int axisMeta)
+        {
+            world.SetBlock(p, Portal);
+            world.SetBlockData(p.X, p.Y, p.Z, new BlockDataMetadata(axisMeta));
+        }
 
         private bool IsObsidian(WorldServer world, Vector3i p) => world.GetBlock(p.X, p.Y, p.Z) == Obsidian;
 

@@ -857,8 +857,7 @@ namespace MinecraftClone3API.Networking
             {
                 if (!session.LoggedIn || session.PendingPortalWorld != null) continue;
 
-                var feet = BlockPos(session.Player.Position);
-                if (!portals.IsPortalBlock(session.World.GetBlock(feet.X, feet.Y, feet.Z)))
+                if (!TryFindPortalCell(portals, session, out var cell))
                 {
                     session.PortalTimer = 0;
                     session.PortalImmune = false;
@@ -868,8 +867,28 @@ namespace MinecraftClone3API.Networking
                 if (session.PortalImmune) continue;
                 if (++session.PortalTimer < PortalSoakTicks) continue;
 
-                BeginTransfer(session, feet, portals);
+                BeginTransfer(session, cell, portals);
             }
+        }
+
+        /// <summary>True if any cell the player's body occupies is a portal block (their column from feet to
+        /// head). Checking the whole body — not just the floored feet block — matters because a player standing
+        /// on the obsidian sill settles a hair below the portal's bottom block (feet floor to the sill), which
+        /// would otherwise miss the portal every tick. Returns the matched cell (used as the transfer source).</summary>
+        private static bool TryFindPortalCell(IDimensionPortals portals, ClientSession session, out Vector3i cell)
+        {
+            var p = session.Player.Position;
+            var bx = (int) MathF.Floor(p.X);
+            var bz = (int) MathF.Floor(p.Z);
+            // Lift a touch off the floor so standing jitter (feet at y-0.0001) doesn't drop a block.
+            var by = (int) MathF.Floor(p.Y + 0.2f);
+            for (var dy = 0; dy <= 1; dy++)
+            {
+                cell = new Vector3i(bx, by + dy, bz);
+                if (portals.IsPortalBlock(session.World.GetBlock(cell.X, cell.Y, cell.Z))) return true;
+            }
+            cell = default;
+            return false;
         }
 
         /// <summary>Moves the player into the linked dimension at the scaled coordinates, tells the client to drop
@@ -982,9 +1001,6 @@ namespace MinecraftClone3API.Networking
                 Logger.Info($"Player {session.EntityId} entered \"{world.DimensionKey}\"");
             }
         }
-
-        private static Vector3i BlockPos(Vector3 p)
-            => new Vector3i((int) MathF.Floor(p.X), (int) MathF.Floor(p.Y), (int) MathF.Floor(p.Z));
 
         private void Broadcast(Packet packet, ClientSession except)
         {
