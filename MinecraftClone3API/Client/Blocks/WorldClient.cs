@@ -207,6 +207,22 @@ namespace MinecraftClone3API.Client.Blocks
 
         private volatile bool _stopped;
 
+        /// <summary>Generic per-dimension visuals the renderer reads (no engine knowledge of specific
+        /// dimensions): <see cref="HasSky"/> false drops the sun/day-night and stars and uses <see cref="FogColor"/>
+        /// for the sky/fog, and <see cref="AmbientLight"/> is a minimum light floor. Set by a
+        /// <see cref="DimensionChangePacket"/>; defaults to the open-sky Overworld.</summary>
+        public bool HasSky = true;
+        public Vector3 FogColor;
+        public Vector3 AmbientLight;
+
+        // Dimension-change barrier. _resetting parks the apply thread (sole writer of LoadedChunks/LodStore) so
+        // the main thread can drop the whole cached world race-free in ResetForDimensionChange; _applyParked is
+        // the apply thread's acknowledgement. _dimensionChanged is the one-shot the host (StateWorld) consumes to
+        // re-enter its loading screen for the new dimension.
+        private volatile bool _resetting;
+        private volatile bool _applyParked;
+        private volatile bool _dimensionChanged;
+
         public WorldClient(IConnection connection)
         {
             _connection = connection;
@@ -588,6 +604,9 @@ namespace MinecraftClone3API.Client.Blocks
                 case PlayerReadyPacket _:
                     Ready = true;
                     break;
+                case DimensionChangePacket dim:
+                    ResetForDimensionChange(dim);
+                    break;
                 case ChunkDataPacket chunkData:
                     ChunkTracer.ApplyEnq(chunkData.Position);
                     _applyQueue.Enqueue(packet);
@@ -632,6 +651,74 @@ namespace MinecraftClone3API.Client.Blocks
             }
         }
 
+        /// <summary>Tears the whole cached world down for a dimension transfer: parks the apply thread, discards
+        /// its queued (old-dimension) packets, then drops every chunk + LOD region through the same main-thread
+        /// paths normal eviction uses (safe alongside the mesh threads), clears entities/containers, and resets
+        /// the join gates. The host re-enters loading via <see cref="ConsumeDimensionChange"/>; the new spawn
+        /// arrives in a following <see cref="LoginAcceptPacket"/>. Main-thread only (runs inside HandlePacket).</summary>
+        private void ResetForDimensionChange(DimensionChangePacket dim)
+        {
+            _resetting = true;
+            _applySignal.Set();
+            while (!_applyParked && !_stopped) Thread.Sleep(1);
+
+            while (_applyQueue.TryDequeue(out _)) Interlocked.Decrement(ref _applyQueueDepth);
+
+            foreach (var pos in new List<Vector3i>(LoadedChunks.Keys)) UnloadChunk(pos);
+            foreach (var key in new List<Vector3i>(LodRegions.Keys)) UnloadLodRegion(key);
+
+            // Drop any decoded-but-not-yet-rendered LOD regions too (UnloadLodRegion only covered the rendered
+            // ones), so no stale horizon survives the dimension switch.
+            var lodKeys = new List<Vector3i>();
+            LodStore.SnapshotKeys(lodKeys);
+            foreach (var key in lodKeys) LodStore.RemoveRegion(key);
+
+            while (_renderReady.TryDequeue(out _)) Interlocked.Decrement(ref _renderReadyDepth);
+            while (_lodRenderReady.TryDequeue(out _)) Interlocked.Decrement(ref _lodRenderReadyDepth);
+
+            lock (_meshLock)
+            {
+                _meshQueueHigh.Clear();
+                _meshQueueLow.Clear();
+                _meshPending.Clear();
+                _lodMeshQueue.Clear();
+                _lodMeshPending.Clear();
+                _meshQueueDepth = 0;
+            }
+            lock (_uploadLock)
+            {
+                _uploadQueue.Clear();
+                _uploadPending.Clear();
+                _lodUploadQueue.Clear();
+                _lodUploadPending.Clear();
+                _uploadQueueDepth = 0;
+            }
+
+            Entities.Clear();
+            Containers.Clear();
+
+            SpawnReceived = false;
+            Ready = false;
+            HasSky = dim.HasSky;
+            FogColor = dim.FogColor;
+            AmbientLight = dim.AmbientLight;
+            _lastEvictChunk = new Vector3i(int.MinValue);
+            _lastLodEvictChunk = new Vector3i(int.MinValue);
+            _lastLodStepChunk = new Vector3i(int.MinValue);
+            _dimensionChanged = true;
+
+            _resetting = false;
+        }
+
+        /// <summary>One-shot read by the host (StateWorld) each frame: returns true exactly once after a
+        /// dimension change so it can re-enter its loading screen for the destination.</summary>
+        public bool ConsumeDimensionChange()
+        {
+            if (!_dimensionChanged) return false;
+            _dimensionChanged = false;
+            return true;
+        }
+
         // Copies a container snapshot into the local view by value (ItemStack is a struct; the loopback
         // transport carries the server's live arrays by reference, so we must not alias them).
         private void ApplyContainerState(ContainerStatePacket state)
@@ -672,6 +759,16 @@ namespace MinecraftClone3API.Client.Blocks
         {
             while (!_stopped)
             {
+                if (_resetting)
+                {
+                    // Park while the main thread tears the world down for a dimension change (it is the sole
+                    // writer of LoadedChunks/LodStore, so it must stand still while they're cleared).
+                    _applyParked = true;
+                    while (_resetting && !_stopped) Thread.Sleep(1);
+                    _applyParked = false;
+                    continue;
+                }
+
                 if (!_applyQueue.TryDequeue(out var packet))
                 {
                     _applySignal.WaitOne(50);

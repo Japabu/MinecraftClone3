@@ -3,6 +3,21 @@
 This list is for *open* work only — when an item is resolved, delete it or move its rationale into the
 relevant permanent doc. Not a changelog.
 
+- **Nether is the "core, one-biome" slice.** Implemented: the dimension + generator (netherrack/lava/soul-sand/
+  glowstone/quartz-ore), obsidian portals lit with flint & steel (`VanillaPortals`), 8:1 Overworld↔Nether
+  travel with find-or-build destination portals, the multi-dimension server, and the sunless red-fog render
+  mode. **Deferred / accepted:** only one biome (no soul-sand valley / crimson-warped forests, no fortresses,
+  no nether mobs — ambient spawning is dimension-blind, so **Overworld animals can spawn in the Nether**);
+  the portal block is an opaque-ish cutoff cube (no translucency, no axis-aware model, **not animated**) and is
+  **not removed when its obsidian frame is broken**; **lava deals no damage** and is a pass-through fluid (no
+  flow, no fire); the **current dimension is not persisted** — relog always lands in the Overworld at its
+  spawn; an Overworld return portal builds at the floor under the scaled coords, which may be far from where
+  you left (no surface-match beyond a local floor scan / portal search radius of 16).
+- **Dimension transfer briefly stalls the client.** `WorldClient.ResetForDimensionChange` parks the apply
+  thread and tears the whole cached world down on the main thread (reusing the eviction paths), so the
+  transfer frame can hitch by up to the apply-thread park latency (~50 ms) plus the teardown. One-time per
+  portal trip; accepted.
+
 - **Player physics is the "80%" walk model.** Implemented: gravity, jump, swept per-axis AABB collision, Ctrl
   sprint, walk/fly toggle, auto-step up `StepHeight` (0.6 = MC) ledges, non-cube collision (multi-box
   `GetCollisionBoxes`, used by stairs). **Not** implemented: sprint-jump forward boost, sneaking, per-block

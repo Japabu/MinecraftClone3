@@ -156,8 +156,11 @@ namespace MinecraftClone3API.Blocks
         public readonly HashSet<Entity> Entities = new HashSet<Entity>();
 
         // Entity-id allocator shared by players (ServerNetwork.Login) and world entities (SpawnEntity), so
-        // every networked entity has a unique id. Entities are transient, so ids are session-local.
-        private int _nextEntityId = 1;
+        // every networked entity has a unique id. Static so ids stay unique ACROSS dimensions (each dimension is
+        // its own WorldServer; a per-instance counter would collide a Nether mob's id with an Overworld one).
+        // All NextEntityId calls run on the single server tick thread, so a plain increment is safe. Entities are
+        // transient, so ids are process-local and reset on restart.
+        private static int _nextEntityId = 1;
 
         // Spawns/despawns the network layer hasn't broadcast yet, drained each Pump by ServerNetwork. Mob/item
         // entities are server-authoritative: the world owns their lifetime, the network only relays it.
@@ -179,20 +182,30 @@ namespace MinecraftClone3API.Blocks
         private volatile int _stageQueueDepth;
         public int StageQueueDepth => _stageQueueDepth;
 
-        private const string OverworldDimensionKey = "Vanilla:Overworld";
+        public const string OverworldDimensionKey = "Vanilla:Overworld";
 
         public Vector3 SpawnPosition => _generator.Spawn().ToVector3();
 
         public readonly string WorldDir;
 
-        public WorldServer(long seed, string worldDir)
+        /// <summary>The world seed and the dimension this server simulates. Each dimension is a separate
+        /// <see cref="WorldServer"/> over its own directory; <see cref="Seed"/> lets the network layer spin up
+        /// a sibling dimension (the Nether) with the same seed.</summary>
+        public readonly long Seed;
+        public readonly string DimensionKey;
+
+        public WorldServer(long seed, string worldDir) : this(seed, worldDir, OverworldDimensionKey) { }
+
+        public WorldServer(long seed, string worldDir, string dimensionKey)
         {
+            Seed = seed;
+            DimensionKey = dimensionKey;
             WorldDir = worldDir;
             _serializer = new WorldSerializer(worldDir);
 
-            _generator = GameRegistry.TryGetDimension(OverworldDimensionKey, out var dimension)
+            _generator = GameRegistry.TryGetDimension(dimensionKey, out var dimension)
                 ? dimension.CreateGenerator(seed)
-                : CreateFallbackGenerator();
+                : CreateFallbackGenerator(dimensionKey);
 
             _loadSort = (v0, v1) =>
                 (int) (v0.ToVector3() - _loadSortOrigin.ToVector3()).LengthSquared -
@@ -209,14 +222,19 @@ namespace MinecraftClone3API.Blocks
             _lodThread.Start();
         }
 
-        private static IChunkGenerator CreateFallbackGenerator()
+        private static IChunkGenerator CreateFallbackGenerator(string dimensionKey)
         {
-            Logger.Error($"Dimension \"{OverworldDimensionKey}\" is not registered — generating an empty " +
+            Logger.Error($"Dimension \"{dimensionKey}\" is not registered — generating an empty " +
                          "world. Is the Vanilla plugin loaded?");
             return new FlatChunkGenerator();
         }
 
         public int ChunksLoadedCount => LoadedChunks.Count;
+
+        /// <summary>True once the load thread has generated (or loaded) the chunk at <paramref name="chunkPos"/>,
+        /// including all-air chunks that are never published to <see cref="WorldBase.LoadedChunks"/>. Used by the
+        /// portal transfer to know the destination column is ready before building into it.</summary>
+        public bool IsChunkGenerated(Vector3i chunkPos) => _populatedChunks.ContainsKey(chunkPos);
 
         public override void SetBlock(int x, int y, int z, Block block, bool update, bool lowPriority)
         {

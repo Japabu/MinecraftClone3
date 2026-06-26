@@ -27,7 +27,8 @@ namespace MinecraftClone3API.Networking
         OpenContainer,
         CloseContainer,
         ContainerState,
-        ContainerSlot
+        ContainerSlot,
+        DimensionChange
     }
 
     /// <summary>
@@ -59,7 +60,8 @@ namespace MinecraftClone3API.Networking
             {PacketId.OpenContainer, () => new OpenContainerPacket()},
             {PacketId.CloseContainer, () => new CloseContainerPacket()},
             {PacketId.ContainerState, () => new ContainerStatePacket()},
-            {PacketId.ContainerSlot, () => new ContainerSlotPacket()}
+            {PacketId.ContainerSlot, () => new ContainerSlotPacket()},
+            {PacketId.DimensionChange, () => new DimensionChangePacket()}
         };
 
         public abstract PacketId Id { get; }

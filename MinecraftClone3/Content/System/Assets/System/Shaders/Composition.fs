@@ -55,6 +55,11 @@ uniform float uDebugShadow;
 // black (bring a torch). Driven by the Brightness graphics option (GraphicsSettings.Brightness); 0 = pure black.
 uniform vec3 uMinLight;
 
+// Per-dimension minimum light flooded everywhere regardless of sky exposure (0 in the Overworld; a small glow
+// in a sunless dimension so unlit ground isn't pitch black). Distinct from uMinLight, which is the user
+// Brightness option.
+uniform vec3 uAmbientFloor;
+
 // Water shading (Tier B): a face flagged with normal.w ~ 0.75 (baked by the mesher) gets animated sine-wave
 // normals + a Fresnel reflection of the sky (the same SkyColor that paints the background) + a sun specular
 // glint, all here in the deferred pass (no extra render pass). uCameraPos reconstructs the view vector,
@@ -283,7 +288,7 @@ vec4 GetColor(vec3 worldPos, float viewDepth)
 	// plus ambient sky fill / moonlight (unshadowed) -- both gated by the baked sky factor, so sky-occluded
 	// caves get neither. Block light (torches) is separate and reaches caves; whichever is brighter wins.
 	vec3 skyLight = lightSample.a*(litShadow*uSunColor*uSunFade + uSkyAmbient);
-	vec3 light = max(lightSample.rgb, skyLight);
+	vec3 light = max(max(lightSample.rgb, skyLight), uAmbientFloor);
 
 	vec3 baseColor = diffuse.rgb * max(light, uMinLight);
 

@@ -11,6 +11,7 @@ using MinecraftClone3API.Entities;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
+using MinecraftClone3API.WorldGen;
 using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Networking
@@ -54,9 +55,22 @@ namespace MinecraftClone3API.Networking
         private Vector3 _spawnPoint;
         private bool _spawnResolved;
 
+        // The primary (Overworld) world plus every sibling dimension spun up on demand (the Nether the first
+        // time a player steps through a portal). Each is its own WorldServer over its own directory; the tick
+        // thread is the sole mutator of _worlds (GetOrCreateWorld during Pump), so the snapshot list it ticks is
+        // race-free. Keyed by dimension key.
         private readonly WorldServer _world;
+        private readonly Dictionary<string, WorldServer> _worlds = new Dictionary<string, WorldServer>();
+        private readonly List<WorldServer> _worldList = new List<WorldServer>();
+        private readonly long _seed;
+        private readonly string _worldDir;
+
         private readonly List<ClientSession> _sessions = new List<ClientSession>();
         private readonly ConcurrentQueue<IConnection> _pending = new ConcurrentQueue<IConnection>();
+
+        // Ticks a player must stand in a portal before transferring (matches the brief MC "soak" so brushing a
+        // portal doesn't fling you instantly).
+        private const int PortalSoakTicks = 16;
 
         private TcpListener _listener;
         private Thread _acceptThread;
@@ -93,6 +107,49 @@ namespace MinecraftClone3API.Networking
         public ServerNetwork(WorldServer world)
         {
             _world = world;
+            _seed = world.Seed;
+            _worldDir = world.WorldDir;
+            _worlds[world.DimensionKey] = world;
+            _worldList.Add(world);
+        }
+
+        /// <summary>The world for a dimension key, creating (and starting) its <see cref="WorldServer"/> the
+        /// first time it's needed. Sibling dimensions live in a <c>DIM_*</c> subfolder of the primary world dir;
+        /// they inherit the primary's runtime view radius. Tick-thread only.</summary>
+        private WorldServer GetOrCreateWorld(string dimensionKey)
+        {
+            if (_worlds.TryGetValue(dimensionKey, out var existing)) return existing;
+
+            var dir = System.IO.Path.Combine(_worldDir, "DIM_" + dimensionKey.Replace(':', '_'));
+            var world = new WorldServer(_seed, dir, dimensionKey) {TerrainRadius = _world.TerrainRadius};
+            _worlds[dimensionKey] = world;
+            _worldList.Add(world);
+            Logger.Info($"Dimension \"{dimensionKey}\" started");
+            return world;
+        }
+
+        /// <summary>Ticks every live dimension world once (replaces a single <c>WorldServer.Update()</c>).
+        /// Called by the host each server tick before <see cref="Pump"/>.</summary>
+        public void TickWorlds()
+        {
+            for (var i = 0; i < _worldList.Count; i++) _worldList[i].Update();
+        }
+
+        /// <summary>Saves + stops every dimension world on shutdown.</summary>
+        public void UnloadWorlds()
+        {
+            for (var i = 0; i < _worldList.Count; i++) _worldList[i].Unload();
+        }
+
+        /// <summary>Sends a packet to every logged-in session currently in <paramref name="world"/> (optionally
+        /// skipping one) — the dimension-scoped form of <see cref="Broadcast"/>.</summary>
+        private void BroadcastTo(WorldServer world, Packet packet, ClientSession except)
+        {
+            foreach (var session in _sessions)
+            {
+                if (session == except || !session.LoggedIn || session.World != world) continue;
+                session.Connection.Send(packet);
+            }
         }
 
         public Vector3 SpawnPosition
@@ -155,6 +212,9 @@ namespace MinecraftClone3API.Networking
 
             RemoveDisconnected();
 
+            UpdatePortals();
+            ProcessPendingTransfers();
+
             _pumpTimer.Restart();
             StreamChunks();
             LastStreamMs = _pumpTimer.Elapsed.TotalMilliseconds;
@@ -180,7 +240,9 @@ namespace MinecraftClone3API.Networking
         {
             if (_world.TickCount - _lastTimeSync < TimeSyncTicks) return;
             _lastTimeSync = _world.TickCount;
-            Broadcast(new WorldTimePacket {WorldSeconds = _world.WorldTimeSeconds}, null);
+            foreach (var session in _sessions)
+                if (session.LoggedIn)
+                    session.Connection.Send(new WorldTimePacket {WorldSeconds = session.World.WorldTimeSeconds});
         }
 
         // Pickup reach (squared): a player within this distance of a pickup-ready dropped item collects it.
@@ -190,18 +252,22 @@ namespace MinecraftClone3API.Networking
         /// dropped items, and relays every live world entity's position to all clients each tick.</summary>
         private void SyncEntities()
         {
-            while (_world.PendingSpawns.Count > 0)
-                Broadcast(SpawnPacketFor(_world.PendingSpawns.Dequeue()), null);
+            foreach (var world in _worldList)
+            {
+                while (world.PendingSpawns.Count > 0)
+                    BroadcastTo(world, SpawnPacketFor(world.PendingSpawns.Dequeue()), null);
 
-            while (_world.PendingDespawns.Count > 0)
-                Broadcast(new EntityDespawnPacket {EntityId = _world.PendingDespawns.Dequeue()}, null);
+                while (world.PendingDespawns.Count > 0)
+                    BroadcastTo(world, new EntityDespawnPacket {EntityId = world.PendingDespawns.Dequeue()}, null);
+            }
 
             CollectItems();
 
-            foreach (var entity in _world.Entities)
+            foreach (var world in _worldList)
+            foreach (var entity in world.Entities)
             {
                 if (entity.Dead) continue;
-                Broadcast(new EntityMovePacket
+                BroadcastTo(world, new EntityMovePacket
                 {
                     EntityId = entity.EntityId,
                     Position = entity.Position,
@@ -215,13 +281,14 @@ namespace MinecraftClone3API.Networking
         /// flags the emptied item entity dead (the world despawns it next tick).</summary>
         private void CollectItems()
         {
-            foreach (var entity in _world.Entities)
+            foreach (var world in _worldList)
+            foreach (var entity in world.Entities)
             {
                 if (!(entity is EntityItem item) || item.Dead || !item.CanPickup) continue;
 
                 foreach (var session in _sessions)
                 {
-                    if (!session.LoggedIn) continue;
+                    if (!session.LoggedIn || session.World != world) continue;
                     if ((session.Player.Position - item.Position).LengthSquared > PickupRangeSq) continue;
 
                     var stack = item.Stack;
@@ -248,12 +315,12 @@ namespace MinecraftClone3API.Networking
         // transport-agnostic: the same packet drives the loading screen over loopback and TCP.
         private void SendReadySignals()
         {
-            var spawnChunk = WorldBase.ChunkInWorld(SpawnPosition.ToVector3i());
-            var belowChunk = spawnChunk - new Vector3i(0, 1, 0);
-
             foreach (var session in _sessions)
             {
-                if (!session.LoggedIn || session.ReadySent) continue;
+                if (!session.LoggedIn || session.ReadySent || !session.ReadyGate.HasValue) continue;
+
+                var spawnChunk = WorldBase.ChunkInWorld(session.ReadyGate.Value.ToVector3i());
+                var belowChunk = spawnChunk - new Vector3i(0, 1, 0);
                 if (!session.SentChunks.Contains(spawnChunk) || !session.SentChunks.Contains(belowChunk)) continue;
 
                 session.Connection.Send(new PlayerReadyPacket());
@@ -276,11 +343,11 @@ namespace MinecraftClone3API.Networking
                     session.Inventory.SelectedHotbar =
                         Math.Clamp(held.SelectedHotbar, 0, Inventory.HotbarSize - 1);
                     break;
-                case EntityMovePacket move when session.LoggedIn:
+                case EntityMovePacket move when session.LoggedIn && session.PendingPortalWorld == null:
                     session.Player.Position = move.Position;
                     session.Player.Pitch = move.Pitch;
                     session.Player.Yaw = move.Yaw;
-                    Broadcast(new EntityMovePacket
+                    BroadcastTo(session.World, new EntityMovePacket
                     {
                         EntityId = session.EntityId,
                         Position = move.Position,
@@ -308,10 +375,10 @@ namespace MinecraftClone3API.Networking
                     session.OpenContainer = null;
                     break;
                 case ContainerSlotPacket slot when session.LoggedIn:
-                    if (_world.GetBlockData(slot.Position) is ContainerBlockData container)
+                    if (session.World.GetBlockData(slot.Position) is ContainerBlockData container)
                     {
                         container.SetSlot(slot.Slot, slot.Stack);
-                        _world.TouchBlockDataForSave(slot.Position);
+                        session.World.TouchBlockDataForSave(slot.Position);
                     }
                     break;
             }
@@ -328,7 +395,7 @@ namespace MinecraftClone3API.Networking
 
         private void SendContainerState(ClientSession session, Vector3i pos)
         {
-            if (_world.GetBlockData(pos) is ContainerBlockData container)
+            if (session.World.GetBlockData(pos) is ContainerBlockData container)
                 session.Connection.Send(new ContainerStatePacket
                 {
                     Position = pos,
@@ -343,8 +410,10 @@ namespace MinecraftClone3API.Networking
 
             session.EntityId = _world.NextEntityId();
             session.PlayerName = name ?? "";
+            session.World = _world;
             session.Player = new EntityPlayer {Position = SpawnPosition, EntityId = session.EntityId};
             session.LoggedIn = true;
+            session.ReadyGate = SpawnPosition;
             _world.AddPlayer(session.Player);
 
             if (!PlayerSerializer.Load(_world.WorldDir, session.PlayerName, session.Inventory))
@@ -354,10 +423,26 @@ namespace MinecraftClone3API.Networking
             session.Connection.Send(new WorldTimePacket {WorldSeconds = _world.WorldTimeSeconds});
             session.Connection.Send(new InventoryStatePacket {Inventory = session.Inventory});
 
-            //Tell the new client about everyone already present, and everyone else about the newcomer.
+            SendPresentEntities(session);
+
+            BroadcastTo(session.World, new EntitySpawnPacket
+            {
+                EntityId = session.EntityId,
+                Position = session.Player.Position,
+                Pitch = session.Player.Pitch,
+                Yaw = session.Player.Yaw
+            }, session);
+
+            Logger.Info($"Player {session.EntityId} logged in");
+        }
+
+        /// <summary>Tells <paramref name="session"/> about every other player and world entity currently in its
+        /// dimension (used on login and after a portal transfer, once the client's world has been reset).</summary>
+        private void SendPresentEntities(ClientSession session)
+        {
             foreach (var other in _sessions)
             {
-                if (other == session || !other.LoggedIn) continue;
+                if (other == session || !other.LoggedIn || other.World != session.World) continue;
 
                 session.Connection.Send(new EntitySpawnPacket
                 {
@@ -368,19 +453,8 @@ namespace MinecraftClone3API.Networking
                 });
             }
 
-            // Tell the new client about every world entity (mobs/animals/dropped items) already alive.
-            foreach (var entity in _world.Entities)
+            foreach (var entity in session.World.Entities)
                 session.Connection.Send(SpawnPacketFor(entity));
-
-            Broadcast(new EntitySpawnPacket
-            {
-                EntityId = session.EntityId,
-                Position = session.Player.Position,
-                Pitch = session.Player.Pitch,
-                Yaw = session.Player.Yaw
-            }, session);
-
-            Logger.Info($"Player {session.EntityId} logged in");
         }
 
         /// <summary>Fresh players get the spawn eggs followed by the first placeable block items on the hotbar
@@ -405,18 +479,19 @@ namespace MinecraftClone3API.Networking
 
         private void ApplyPlaceRequest(ClientSession session, PlaceBlockRequestPacket place)
         {
+            var world = session.World;
             var block = GameRegistry.GetBlock(place.BlockId);
             if (block.Id == 0)
             {
                 // Breaking: drop the removed block's item form (air/already-empty drops nothing).
-                var broken = _world.GetBlock(place.Position);
+                var broken = world.GetBlock(place.Position);
                 if (broken.Id != 0 && GameRegistry.TryGetItem(broken.RegistryKey, out var dropped))
-                    _world.DropItem(new ItemStack(dropped.Id, 1),
+                    world.DropItem(new ItemStack(dropped.Id, 1),
                         place.Position.ToVector3() + new Vector3(0.5f, 0.25f, 0.5f));
-                _world.SetBlock(place.Position, BlockRegistry.BlockAir);
+                world.SetBlock(place.Position, BlockRegistry.BlockAir);
             }
             else
-                _world.PlaceBlock(session.Player, place.Position, block, place.Metadata);
+                world.PlaceBlock(session.Player, place.Position, block, place.Metadata);
         }
 
         /// <summary>Runs the held item's server-side use (e.g. a spawn egg spawning its mob). The held item
@@ -425,7 +500,7 @@ namespace MinecraftClone3API.Networking
         {
             var item = session.Inventory.SelectedItem.Item;
             if (item == null || !item.IsUsable) return;
-            item.OnUseServer(_world, session.Player, use.Position.ToVector3() + new Vector3(0.5f, 0f, 0.5f));
+            item.OnUseServer(session.World, session.Player, use.Position.ToVector3() + new Vector3(0.5f, 0f, 0.5f));
         }
 
         /// <summary>Drops the player's held hotbar item (one, or the whole stack on Ctrl+Q): decrements the
@@ -448,7 +523,7 @@ namespace MinecraftClone3API.Networking
                 (float) Math.Sin(pitch),
                 (float) (Math.Cos(yaw) * Math.Cos(pitch)));
 
-            var entity = _world.DropItem(held.WithCount(count),
+            var entity = session.World.DropItem(held.WithCount(count),
                 session.Player.Position + new Vector3(0f, 1.4f, 0f) + forward * 0.3f);
             if (entity != null)
             {
@@ -469,8 +544,8 @@ namespace MinecraftClone3API.Networking
                 if (session.LoggedIn)
                 {
                     PlayerSerializer.Save(_world.WorldDir, session.PlayerName, session.Inventory);
-                    _world.RemovePlayer(session.Player);
-                    Broadcast(new EntityDespawnPacket {EntityId = session.EntityId}, session);
+                    session.World.RemovePlayer(session.Player);
+                    BroadcastTo(session.World, new EntityDespawnPacket {EntityId = session.EntityId}, session);
                     Logger.Info($"Player {session.EntityId} disconnected");
                 }
 
@@ -480,13 +555,14 @@ namespace MinecraftClone3API.Networking
 
         private void StreamChunks()
         {
-            var loadedCount = _world.LoadedChunks.Count;
             LastChunksStreamed = 0;
 
             foreach (var session in _sessions)
             {
                 if (!session.LoggedIn) continue;
 
+                var world = session.World;
+                var loadedCount = world.LoadedChunks.Count;
                 var playerPos = session.Player.Position;
 
                 // Skip the O(loaded) interest scan when nothing relevant changed since the last fully-drained
@@ -498,7 +574,7 @@ namespace MinecraftClone3API.Networking
                     continue;
 
                 _newChunksScratch.Clear();
-                foreach (var entry in _world.LoadedChunks)
+                foreach (var entry in world.LoadedChunks)
                 {
                     var center = (entry.Key * Chunk.Size + new Vector3i(Chunk.Size / 2)).ToVector3();
                     if ((center - playerPos).LengthSquared > _viewDistanceSq) continue;
@@ -514,7 +590,7 @@ namespace MinecraftClone3API.Networking
                 foreach (var pos in _newChunksScratch)
                 {
                     if (sent >= MaxChunksPerTick) break;
-                    if (!_world.LoadedChunks.TryGetValue(pos, out var chunk)) continue;
+                    if (!world.LoadedChunks.TryGetValue(pos, out var chunk)) continue;
 
                     session.Connection.Send(ChunkDataPacket.From(chunk));
                     ChunkTracer.Streamed(pos);
@@ -546,13 +622,13 @@ namespace MinecraftClone3API.Networking
         /// (empty store + LodRadius == ViewDistance ⇒ nothing to send).</summary>
         private void StreamLodRegions()
         {
-            var lodStore = _world.LodStore;
-            var regionCount = lodStore.RegionCount;
             LastLodStreamed = 0;
 
             foreach (var session in _sessions)
             {
                 if (!session.LoggedIn) continue;
+                var lodStore = session.World.LodStore;
+                var regionCount = lodStore.RegionCount;
                 var playerPos = session.Player.Position;
                 var playerChunk = WorldBase.ChunkInWorld(playerPos.ToVector3i());
                 if (playerChunk == session.LodScanChunk && regionCount == session.LodScanRegionCount)
@@ -607,57 +683,183 @@ namespace MinecraftClone3API.Networking
         {
             LastChangesDrained = 0;
             LastChangesPackets = 0;
-            if (_world.BlockChanges.IsEmpty) return;
 
-            _changesByChunk.Clear();
-            // Enumerating + TryRemove drains the snapshot of entries present now; changes the worker
-            // threads add during the drain stay for the next tick (enumeration terminates, so a busy
-            // light thread can't trap this loop). Last-write-wins dedup already happened at enqueue.
-            foreach (var kvp in _world.BlockChanges)
+            foreach (var world in _worldList)
             {
-                if (!_world.BlockChanges.TryRemove(kvp.Key, out var change)) continue;
+                if (world.BlockChanges.IsEmpty) continue;
 
-                if (!_changesByChunk.TryGetValue(change.ChunkPos, out var list))
+                _changesByChunk.Clear();
+                // Enumerating + TryRemove drains the snapshot of entries present now; changes the worker
+                // threads add during the drain stay for the next tick (enumeration terminates, so a busy
+                // light thread can't trap this loop). Last-write-wins dedup already happened at enqueue.
+                foreach (var kvp in world.BlockChanges)
                 {
-                    list = new List<BlockChange>();
-                    _changesByChunk[change.ChunkPos] = list;
+                    if (!world.BlockChanges.TryRemove(kvp.Key, out var change)) continue;
+
+                    if (!_changesByChunk.TryGetValue(change.ChunkPos, out var list))
+                    {
+                        list = new List<BlockChange>();
+                        _changesByChunk[change.ChunkPos] = list;
+                    }
+
+                    list.Add(change);
+                    LastChangesDrained++;
                 }
 
-                list.Add(change);
-                LastChangesDrained++;
-            }
-
-            foreach (var entry in _changesByChunk)
-            {
-                BlockChangesPacket packet = null;
-                foreach (var session in _sessions)
+                foreach (var entry in _changesByChunk)
                 {
-                    if (!session.LoggedIn || !session.SentChunks.Contains(entry.Key)) continue;
-                    if (packet == null) packet = new BlockChangesPacket {ChunkPos = entry.Key, Changes = entry.Value};
-                    session.Connection.Send(packet);
-                    LastChangesPackets++;
+                    BlockChangesPacket packet = null;
+                    foreach (var session in _sessions)
+                    {
+                        if (!session.LoggedIn || session.World != world || !session.SentChunks.Contains(entry.Key))
+                            continue;
+                        if (packet == null) packet = new BlockChangesPacket {ChunkPos = entry.Key, Changes = entry.Value};
+                        session.Connection.Send(packet);
+                        LastChangesPackets++;
+                    }
                 }
             }
         }
 
         private void ResendDirtyChunks()
         {
-            if (_world.DirtyChunks.IsEmpty) return;
-
-            var dirty = _world.DirtyChunks.Keys.ToList();
-            foreach (var pos in dirty)
+            foreach (var world in _worldList)
             {
-                _world.DirtyChunks.TryRemove(pos, out _);
+                if (world.DirtyChunks.IsEmpty) continue;
 
-                if (!_world.LoadedChunks.TryGetValue(pos, out var chunk)) continue;
-
-                foreach (var session in _sessions)
+                var dirty = world.DirtyChunks.Keys.ToList();
+                foreach (var pos in dirty)
                 {
-                    if (!session.SentChunks.Contains(pos)) continue;
-                    session.Connection.Send(ChunkDataPacket.From(chunk));
+                    world.DirtyChunks.TryRemove(pos, out _);
+
+                    if (!world.LoadedChunks.TryGetValue(pos, out var chunk)) continue;
+
+                    foreach (var session in _sessions)
+                    {
+                        if (session.World != world || !session.SentChunks.Contains(pos)) continue;
+                        session.Connection.Send(ChunkDataPacket.From(chunk));
+                    }
                 }
             }
         }
+
+        /// <summary>Detects players standing in a portal block and, after a short soak, kicks off a transfer to
+        /// the linked dimension. A freshly-arrived player is immune until they step off the portal so they don't
+        /// bounce straight back. No-op when no content registered portal rules.</summary>
+        private void UpdatePortals()
+        {
+            var portals = GameRegistry.Portals;
+            if (portals == null) return;
+
+            foreach (var session in _sessions)
+            {
+                if (!session.LoggedIn || session.PendingPortalWorld != null) continue;
+
+                var feet = BlockPos(session.Player.Position);
+                if (!portals.IsPortalBlock(session.World.GetBlock(feet.X, feet.Y, feet.Z)))
+                {
+                    session.PortalTimer = 0;
+                    session.PortalImmune = false;
+                    continue;
+                }
+
+                if (session.PortalImmune) continue;
+                if (++session.PortalTimer < PortalSoakTicks) continue;
+
+                BeginTransfer(session, feet, portals);
+            }
+        }
+
+        /// <summary>Moves the player into the linked dimension at the scaled coordinates, tells the client to drop
+        /// its world and switch render mode, and arms the pending-portal build. The destination portal itself is
+        /// built (and the join handshake replayed) by <see cref="ProcessPendingTransfers"/> once that column has
+        /// streamed in server-side.</summary>
+        private void BeginTransfer(ClientSession session, Vector3i feet, IDimensionPortals portals)
+        {
+            var fromKey = session.World.DimensionKey;
+            var toKey = portals.TargetDimension(fromKey);
+            if (toKey == null) return;
+
+            var toWorld = GetOrCreateWorld(toKey);
+            var approx = portals.ScaleToTarget(fromKey, toKey, feet);
+
+            session.World.RemovePlayer(session.Player);
+            BroadcastTo(session.World, new EntityDespawnPacket {EntityId = session.EntityId}, session);
+
+            session.World = toWorld;
+            session.Player.Position = approx.ToVector3() + new Vector3(0.5f, 0f, 0.5f);
+            session.Player.Velocity = Vector3.Zero;
+            toWorld.AddPlayer(session.Player);
+
+            session.SentChunks.Clear();
+            session.SentLodRegions.Clear();
+            session.StreamScanChunk = new Vector3i(int.MinValue);
+            session.StreamScanLoadedCount = -1;
+            session.LodScanChunk = new Vector3i(int.MinValue);
+            session.LodScanRegionCount = -1;
+            session.ReadyGate = null;
+            session.ReadySent = false;
+            session.PortalImmune = true;
+            session.PortalTimer = 0;
+            session.PendingPortalWorld = toWorld;
+            session.PendingPortalApprox = approx;
+
+            // Ship the destination dimension's generic visuals (sky/fog/ambient) so the client renders it without
+            // the engine knowing anything dimension-specific. Defaults (open sky) if the dimension is unregistered.
+            var dim = new DimensionChangePacket();
+            if (GameRegistry.TryGetDimension(toWorld.DimensionKey, out var def))
+            {
+                dim.HasSky = def.HasSky;
+                dim.FogColor = def.FogColor;
+                dim.AmbientLight = def.AmbientLight;
+            }
+            session.Connection.Send(dim);
+        }
+
+        /// <summary>For each in-flight transfer, waits until the destination column has streamed into the target
+        /// world, then builds/links the portal and replays the join handshake (LoginAccept + entity sync) so the
+        /// client finishes loading at the destination portal.</summary>
+        private void ProcessPendingTransfers()
+        {
+            var portals = GameRegistry.Portals;
+            if (portals == null) return;
+
+            foreach (var session in _sessions)
+            {
+                var world = session.PendingPortalWorld;
+                if (world == null) continue;
+
+                // Wait until the destination column has generated (IsChunkGenerated covers all-air chunks the
+                // open Overworld sky produces, which never reach LoadedChunks); the portal build's SetBlock
+                // creates any cells it spills into.
+                var chunk = WorldBase.ChunkInWorld(session.PendingPortalApprox);
+                if (!world.IsChunkGenerated(chunk)) continue;
+
+                var stand = portals.EnsureDestinationPortal(world, session.PendingPortalApprox);
+                session.Player.Position = stand;
+                session.Player.Velocity = Vector3.Zero;
+                session.PendingPortalWorld = null;
+
+                session.ReadyGate = stand;
+                session.ReadySent = false;
+                session.Connection.Send(new LoginAcceptPacket {EntityId = session.EntityId, Spawn = stand});
+                session.Connection.Send(new WorldTimePacket {WorldSeconds = world.WorldTimeSeconds});
+                SendPresentEntities(session);
+
+                BroadcastTo(world, new EntitySpawnPacket
+                {
+                    EntityId = session.EntityId,
+                    Position = stand,
+                    Pitch = session.Player.Pitch,
+                    Yaw = session.Player.Yaw
+                }, session);
+
+                Logger.Info($"Player {session.EntityId} entered \"{world.DimensionKey}\"");
+            }
+        }
+
+        private static Vector3i BlockPos(Vector3 p)
+            => new Vector3i((int) MathF.Floor(p.X), (int) MathF.Floor(p.Y), (int) MathF.Floor(p.Z));
 
         private void Broadcast(Packet packet, ClientSession except)
         {

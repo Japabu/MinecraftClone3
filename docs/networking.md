@@ -39,7 +39,26 @@ tolerates the server mutating the source chunk concurrently (a torn entry self-c
   C→S  OpenContainer/CloseContainer   client opened/closed a container block (furnace) screen
   S→C  ContainerState        open container's item slots + progress fields, streamed each tick to its viewers
   C→S  ContainerSlot         client edited one of a container block's own slots (input/fuel/output)
+  S→C  DimensionChange       drop the cached world + re-enter loading; carries generic visuals (HasSky, fog, ambient)
 ```
+
+**Dimensions & portals.** Each dimension is a separate `WorldServer` (see [architecture.md](architecture.md));
+every `ClientSession` carries the `World` it is in, and all streaming/relay/flush loops in `ServerNetwork` are
+scoped to it (`BroadcastTo(world, …)`, `session.World.LoadedChunks`, etc.). The engine owns no portal or
+dimension specifics: a plugin registers an **`IDimensionPortals`** (`WorldGen/IDimensionPortals.cs`,
+`GameRegistry.Portals`) defining which block is a portal, which dimension links to which, the coordinate scale,
+and how to find-or-build the destination portal. Vanilla's implementation is the obsidian frame lit with flint
+& steel and the 8:1 Overworld↔Nether scale.
+
+Transfer flow (all in `ServerNetwork.Pump`): `UpdatePortals` detects a player soaking in a portal block →
+`BeginTransfer` moves the player entity into the linked `WorldServer` at the scaled coords, clears the
+session's `SentChunks`, and sends `DimensionChange` (the destination `Dimension`'s generic visuals). The client
+parks its apply thread, drops every cached chunk/LOD/entity, switches render mode, and re-enters the loading
+screen. `ProcessPendingTransfers` waits until the destination column has **generated** (`IsChunkGenerated` —
+covers all-air chunks the open sky produces), then `EnsureDestinationPortal` builds/links the portal and the
+server **replays the join handshake** (`LoginAccept` with the new spawn, `WorldTime`, entity sync,
+`PlayerReady`) so the client finishes loading at the portal. A short post-transfer immunity (cleared when the
+player steps off a portal) stops an arrival from bouncing straight back.
 
 **Inventory is server-authoritative** (see [inventory.md](inventory.md)). The server owns each
 `ClientSession.Inventory`, persists it per player, and pushes the whole thing once via `InventoryState` on

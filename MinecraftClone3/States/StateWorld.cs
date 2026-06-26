@@ -241,8 +241,18 @@ namespace MinecraftClone3.States
             var c = GC.GetAllocatedBytesForCurrentThread();
             _phaseTimer.Restart();
             _world.Update();
-            Profiler.AddClientTime(_phaseTimer.Elapsed.TotalMilliseconds);
             Profiler.AddClientAlloc(GC.GetAllocatedBytesForCurrentThread() - c);
+            Profiler.AddClientTime(_phaseTimer.Elapsed.TotalMilliseconds);
+
+            // A portal transfer cleared the cached world and the new spawn is streaming: drop back into the
+            // loading screen until the destination chunks arrive (same gate as the initial join).
+            if (_world.ConsumeDimensionChange())
+            {
+                _loading = true;
+                _spawnApplied = false;
+                _loadProgress = 0f;
+                _loadingTimer.Restart();
+            }
         }
 
         /// <summary>One fixed 20 tps simulation step: the player physics (only when <paramref name="stepPlayer"/>,
@@ -254,7 +264,7 @@ namespace MinecraftClone3.States
 
             var a = GC.GetAllocatedBytesForCurrentThread();
             _phaseTimer.Restart();
-            _integratedServer?.Update();
+            _network?.TickWorlds();
             Profiler.AddServerTime(_phaseTimer.Elapsed.TotalMilliseconds);
             Profiler.AddServerAlloc(GC.GetAllocatedBytesForCurrentThread() - a);
 
@@ -278,7 +288,7 @@ namespace MinecraftClone3.States
         /// timeout is only an anti-hang safety against a dropped signal.</summary>
         private void UpdateLoading()
         {
-            _integratedServer?.Update();
+            _network?.TickWorlds();
             _network?.Pump();
             _world.Update();
 
@@ -485,7 +495,7 @@ namespace MinecraftClone3.States
             Profiler.Server = null;
             _world?.Disconnect();
             _network?.Stop();
-            _integratedServer?.Unload();
+            _network?.UnloadWorlds();
         }
     }
 }

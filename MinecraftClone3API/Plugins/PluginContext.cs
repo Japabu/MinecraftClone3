@@ -36,5 +36,8 @@ namespace MinecraftClone3API.Plugins
         public void Register(Feature feature) => GameRegistry.FeatureRegistry.Register(PluginAttribute.Id, feature);
         public void Register(Dimension dimension) => GameRegistry.DimensionRegistry.Register(PluginAttribute.Id, dimension);
         public void Register(EntityType entityType) => GameRegistry.EntityRegistry.Register(PluginAttribute.Id, entityType);
+
+        /// <summary>Registers the content's portal/dimension-travel rules (one per game; last writer wins).</summary>
+        public void RegisterPortals(IDimensionPortals portals) => GameRegistry.Portals = portals;
     }
 }

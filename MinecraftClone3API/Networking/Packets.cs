@@ -358,6 +358,34 @@ namespace MinecraftClone3API.Networking
         }
     }
 
+    /// <summary>Server → client: the player is being transferred to another dimension. The client drops its
+    /// entire cached world (chunks, entities, containers) and re-enters the loading flow, applying the generic
+    /// per-dimension visuals carried here (sky on/off, fog colour, ambient floor — the engine knows no specific
+    /// dimension). The new spawn position arrives afterwards in a <see cref="LoginAcceptPacket"/> once the
+    /// destination portal has been built, reusing the join handshake.</summary>
+    public class DimensionChangePacket : Packet
+    {
+        public bool HasSky = true;
+        public Vector3 FogColor;
+        public Vector3 AmbientLight;
+
+        public override PacketId Id => PacketId.DimensionChange;
+
+        public override void Write(BinaryWriter writer)
+        {
+            writer.Write(HasSky);
+            WriteVector3(writer, FogColor);
+            WriteVector3(writer, AmbientLight);
+        }
+
+        public override void Read(BinaryReader reader)
+        {
+            HasSky = reader.ReadBoolean();
+            FogColor = ReadVector3(reader);
+            AmbientLight = ReadVector3(reader);
+        }
+    }
+
     /// <summary>Client opened the container block at <see cref="Position"/> (e.g. a furnace); the server then
     /// streams that block's <see cref="ContainerStatePacket"/> to this client while it stays open.</summary>
     public class OpenContainerPacket : Packet

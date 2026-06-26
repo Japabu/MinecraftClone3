@@ -21,6 +21,10 @@ namespace MinecraftClone3API.Util
         internal static readonly Registry<Dimension> DimensionRegistry = new Registry<Dimension>();
         internal static readonly EntityRegistry EntityRegistry = new EntityRegistry();
 
+        /// <summary>The content-provided portal/dimension-travel rules (see <see cref="WorldGen.IDimensionPortals"/>),
+        /// or null if no plugin registered any (then standing in a block never transfers dimensions).</summary>
+        public static WorldGen.IDimensionPortals Portals;
+
         public static List<string> GetMissingBlocks() => BlockRegistry.GetMissingBlocks();
 
         public static Block GetBlock(ushort id) => BlockRegistry[id];

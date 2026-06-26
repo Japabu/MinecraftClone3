@@ -48,6 +48,13 @@ namespace VanillaPlugin
             context.Register(new BlockCraftingTable());
             context.Register(new BlockFurnace());
             context.Register(new BlockGlowstone());
+
+            // Nether content.
+            context.Register(new BlockBasic("Netherrack", "minecraft:block/netherrack", true));
+            context.Register(new BlockBasic("SoulSand", "minecraft:block/soul_sand", true));
+            context.Register(new BlockBasic("NetherQuartzOre", "minecraft:block/nether_quartz_ore", true));
+            context.Register(new BlockLava());
+            context.Register(new BlockNetherPortal());
             // BlockGlass stays disabled: this resource pack's block/glass.json stores textures.all as an
             // object, which BlockModel.Parse can't read (the reason it was never enabled).
             //context.Register(new BlockGlass());
@@ -66,6 +73,12 @@ namespace VanillaPlugin
 
             VanillaWorldGen.Register(context);
             context.Register(new OverworldDimension());
+            context.Register(new NetherDimension());
+
+            // Obsidian-portal Overworld↔Nether travel, and the flint &amp; steel that lights a frame.
+            var portals = new VanillaPortals();
+            context.RegisterPortals(portals);
+            context.Register(new ItemFlintAndSteel(portals));
 
             RegisterEntities(context);
         }
