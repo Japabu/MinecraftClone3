@@ -4,11 +4,8 @@ using MinecraftClone3API.Client.Graphics;
 using MinecraftClone3API.Client.GUI;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.Util;
-using OpenTK.Graphics.OpenGL4;
-using OpenTK.Mathematics;
-using OpenTK.Windowing.Common;
-using OpenTK.Windowing.Desktop;
-using OpenTK.Windowing.GraphicsLibraryFramework;
+using Silk.NET.Maths;
+using Silk.NET.Input;
 
 namespace MinecraftClone3.States
 {
@@ -26,14 +23,12 @@ namespace MinecraftClone3.States
         private const int TitleY = 24;
         private const string Title = "Controls";
 
-        private readonly GameWindow _window;
         private readonly GuiButton[] _buttons;
         private int _listening = -1;
 
-        public GuiControls(GameWindow window)
+        public GuiControls()
         {
-            _window = window;
-            _window.CursorState = CursorState.Normal;
+            ClientResources.Input.CursorMode = CursorMode.Normal;
 
             var actions = Keybinds.All;
             _buttons = new GuiButton[actions.Count];
@@ -76,52 +71,43 @@ namespace MinecraftClone3.States
             return Keybinds.DisplayName(action) + ": " + Keybinds.Get(action);
         }
 
-        public override void Update(bool focused)
+        public override void OnKeyDown(Key key)
         {
-            if (!focused) return;
-
-            var ks = _window.KeyboardState;
-
             if (_listening >= 0)
             {
-                if (ks.IsKeyPressed(Keys.Escape))
+                if (key == Key.Escape)
                 {
                     _buttons[_listening].Label = RowLabel(_listening);
                     _listening = -1;
                     return;
                 }
 
-                foreach (Keys key in Enum.GetValues(typeof(Keys)))
-                {
-                    if (key == Keys.Unknown || !ks.IsKeyPressed(key)) continue;
-                    Keybinds.Set(Keybinds.All[_listening], key);
-                    _buttons[_listening].Label = RowLabel(_listening);
-                    _listening = -1;
-                    return;
-                }
-
-                return; // swallow clicks while waiting for a key
+                if (key == Key.Unknown) return;
+                Keybinds.Set(Keybinds.All[_listening], key);
+                _buttons[_listening].Label = RowLabel(_listening);
+                _listening = -1;
+                return;
             }
 
-            base.Update(focused);
-            if (ks.IsKeyPressed(Keys.Escape)) IsDead = true;
+            if (key == Key.Escape) IsDead = true;
+            else base.OnKeyDown(key);
+        }
+
+        public override void OnMouseDown(MouseButton button, Vector2D<float> guiPos)
+        {
+            if (_listening >= 0) return; // swallow clicks while waiting for a key
+            base.OnMouseDown(button, guiPos);
         }
 
         public override void Render()
         {
-            RenderState.Set(new GlState
-            {
-                Blend = true,
-                BlendFunc = (BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha)
-            });
-
-            var screen = _window.FramebufferSize;
+            var screen = new Vector2D<int>(ClientResources.Width, ClientResources.Height);
             GuiRenderer.DrawTexture(ClientResources.WhitePixel, new Rectangle(0, 0, screen.X, screen.Y), null,
-                new Color4(0f, 0f, 0f, 0.7f), false);
+                new Vector4D<float>(0f, 0f, 0f, 0.7f), false);
 
             var width = (int) ScaledResolution.GuiResolution.X;
             var titleX = (width - Font.MeasureWidth(Title, TitleScale)) / 2;
-            Font.DrawString(Title, titleX, TitleY, TitleScale, Color4.White);
+            Font.DrawString(Title, titleX, TitleY, TitleScale, new Vector4D<float>(1f,1f,1f,1f));
 
             base.Render();
         }

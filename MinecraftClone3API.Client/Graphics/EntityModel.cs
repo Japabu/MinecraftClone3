@@ -1,10 +1,9 @@
 using System.Collections.Generic;
-using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Graphics
 {
     /// <summary>
-    /// GL-free description of a boxy entity model in the Minecraft mob-model style: a flat list of
+    /// GPU-free description of a boxy entity model in the Minecraft mob-model style: a flat list of
     /// <see cref="ModelPart"/>s (head, body, legs, …), each a group of texture-mapped boxes that pivots
     /// independently for animation. Coordinates are authored in <b>blocks, Y-up, with the feet at y=0 and the
     /// model facing +Z</b> (the renderer yaws it to face its heading). Box texture UVs use the classic

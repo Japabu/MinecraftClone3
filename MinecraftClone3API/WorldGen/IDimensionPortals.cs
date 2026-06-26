@@ -1,5 +1,5 @@
 using MinecraftClone3API.Blocks;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.WorldGen
 {
@@ -21,12 +21,12 @@ namespace MinecraftClone3API.WorldGen
 
         /// <summary>Maps a portal block position in the source dimension to the approximate destination block in
         /// the target dimension (the per-dimension coordinate scale, e.g. 8:1 for Overworld↔Nether).</summary>
-        Vector3i ScaleToTarget(string fromKey, string toKey, Vector3i fromBlock);
+        Vector3D<int> ScaleToTarget(string fromKey, string toKey, Vector3D<int> fromBlock);
 
         /// <summary>Server-side: ensure a usable portal exists in <paramref name="world"/> near
         /// <paramref name="approx"/> — reusing a nearby existing one or building a fresh obsidian frame — and
         /// return the feet position where the arriving player should stand. Called once the destination column
         /// has streamed in, so it may read and write blocks freely.</summary>
-        Vector3 EnsureDestinationPortal(WorldServer world, Vector3i approx);
+        Vector3D<float> EnsureDestinationPortal(WorldServer world, Vector3D<int> approx);
     }
 }

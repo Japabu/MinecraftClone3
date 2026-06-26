@@ -1,5 +1,5 @@
 using System.IO;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Blocks
 {
@@ -25,7 +25,7 @@ namespace MinecraftClone3API.Blocks
         private const int RegionMask = RegionBlocks - 1;
 
         /// <summary>Region key: (regionX, 0, regionZ), regionX = wx &gt;&gt; 7. Y is always 0 (Y-agnostic).</summary>
-        public Vector3i Position;
+        public Vector3D<int> Position;
 
         /// <summary>Length <see cref="ColumnCount"/>, indexed by <see cref="CellIndex"/>; a 0 entry = empty
         /// column (no surface — block id 0 = air).</summary>
@@ -33,7 +33,7 @@ namespace MinecraftClone3API.Blocks
 
         public LodColumn() { }
 
-        public LodColumn(Vector3i position, long[] columns)
+        public LodColumn(Vector3D<int> position, long[] columns)
         {
             Position = position;
             Columns = columns;
@@ -47,7 +47,7 @@ namespace MinecraftClone3API.Blocks
         }
 
         /// <summary>Deserialize ctor — the TCP apply path. No decompression here (the packet owns GZip).</summary>
-        public LodColumn(BinaryReader reader, Vector3i position)
+        public LodColumn(BinaryReader reader, Vector3D<int> position)
         {
             Position = position;
             Columns = new long[ColumnCount];
@@ -59,15 +59,15 @@ namespace MinecraftClone3API.Blocks
             for (var i = 0; i < ColumnCount; i++) writer.Write(Columns[i]);
         }
 
-        public static Vector3i RegionKey(int wx, int wz) => new Vector3i(wx >> RegionShift, 0, wz >> RegionShift);
+        public static Vector3D<int> RegionKey(int wx, int wz) => new Vector3D<int>(wx >> RegionShift, 0, wz >> RegionShift);
 
         /// <summary>Index of the stride cell containing world (wx,wz) within its region's <see cref="Columns"/>.</summary>
         public static int CellIndex(int wx, int wz)
             => ((wx & RegionMask) >> CellShift) * CellsPerAxis + ((wz & RegionMask) >> CellShift);
 
         /// <summary>World X of a region+cell column's representative corner (the cell's min block).</summary>
-        public static int CellWorldX(Vector3i region, int cx) => (region.X << RegionShift) + cx * Stride;
-        public static int CellWorldZ(Vector3i region, int cz) => (region.Z << RegionShift) + cz * Stride;
+        public static int CellWorldX(Vector3D<int> region, int cx) => (region.X << RegionShift) + cx * Stride;
+        public static int CellWorldZ(Vector3D<int> region, int cz) => (region.Z << RegionShift) + cz * Stride;
 
         public static long Pack(ushort blockId, int surfaceY, int sky)
             => (uint) blockId

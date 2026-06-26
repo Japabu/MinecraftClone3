@@ -8,7 +8,7 @@ using MinecraftClone3API.Client.StateSystem;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 using VanillaPlugin.BlockDatas;
 
 namespace VanillaPlugin.Blocks
@@ -34,7 +34,7 @@ namespace VanillaPlugin.Blocks
 
         public override bool NeedsServerTick => true;
 
-        public override LightLevel GetLightLevel(WorldBase world, Vector3i blockPos) =>
+        public override LightLevel GetLightLevel(WorldBase world, Vector3D<int> blockPos) =>
             Data(world, blockPos)?.IsBurning == true ? new LightLevel(13, 11, 8) : LightLevel.Zero;
 
         // East: with no stored facing (the item-icon render, IconWorld) point the front (the model's north
@@ -42,7 +42,7 @@ namespace VanillaPlugin.Blocks
         // vanilla does, instead of a plain side. A placed furnace always has its own facing in block data.
         private const byte IconFacing = 1;
 
-        public override IReadOnlyDictionary<string, string> GetBlockState(WorldBase world, Vector3i blockPos)
+        public override IReadOnlyDictionary<string, string> GetBlockState(WorldBase world, Vector3D<int> blockPos)
         {
             var data = Data(world, blockPos);
             var facing = data != null ? data.Facing : IconFacing;
@@ -65,17 +65,17 @@ namespace VanillaPlugin.Blocks
             return (look + 2) % 4;
         }
 
-        public override void OnPlaced(WorldBase world, Vector3i blockPos, EntityPlayer player, int metadata)
+        public override void OnPlaced(WorldBase world, Vector3D<int> blockPos, EntityPlayer player, int metadata)
             => world.SetBlockData(blockPos, new BlockDataFurnace((byte) (metadata & 0x3)));
 
-        public override bool OnActivated(WorldBase world, Vector3i blockPos, EntityPlayer player)
+        public override bool OnActivated(WorldBase world, Vector3D<int> blockPos, EntityPlayer player)
         {
             if (!(world is WorldClient client)) return false;
-            StateEngine.AddOverlay(new GuiFurnace(ClientResources.Window, client, blockPos));
+            StateEngine.AddOverlay(new GuiFurnace(client, blockPos));
             return true;
         }
 
-        public override void OnServerTick(WorldServer world, Vector3i blockPos)
+        public override void OnServerTick(WorldServer world, Vector3D<int> blockPos)
         {
             var data = Data(world, blockPos);
             if (data == null) return;
@@ -146,7 +146,7 @@ namespace VanillaPlugin.Blocks
         private static ItemStack Decrement(ItemStack stack)
             => stack.Count <= 1 ? ItemStack.Empty : stack.WithCount(stack.Count - 1);
 
-        private static BlockDataFurnace Data(WorldBase world, Vector3i blockPos)
+        private static BlockDataFurnace Data(WorldBase world, Vector3D<int> blockPos)
             => world.GetBlockData(blockPos) as BlockDataFurnace;
     }
 }

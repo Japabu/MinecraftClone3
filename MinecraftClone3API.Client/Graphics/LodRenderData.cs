@@ -2,7 +2,6 @@ using System;
 using System.Threading;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Graphics
 {
@@ -11,7 +10,7 @@ namespace MinecraftClone3API.Graphics
     /// are dumped into the same opaque buffer with the water flag (no per-region transparent sort) — and meshed
     /// straight from the streamed <see cref="LodColumnStore"/> run-list, never from real blocks. Mirrors
     /// <see cref="ChunkRenderData"/>'s thread contract: <see cref="Update"/> is CPU-only (mesh thread, holds the
-    /// buffer lock for the whole remesh), <see cref="TryUpload"/> is non-blocking (main-thread GL), the arena
+    /// buffer lock for the whole remesh), <see cref="TryUpload"/> is non-blocking (main-thread GPU), the arena
     /// range + render-list index are main-thread only.
     /// </summary>
     public class LodRenderData : IDisposable
@@ -38,6 +37,10 @@ namespace MinecraftClone3API.Graphics
 
         public ChunkMeshArena.Allocation OpaqueAlloc;
 
+        /// <summary>World-space minimum corner of the cull AABB (the bounding sphere's cube), published to the
+        /// arena's <see cref="ChunkMeta"/>. The LOD cull dispatch passes <c>2*Radius</c> as the cube extent.</summary>
+        public readonly Vector3 MinCorner;
+
         private readonly MeshBuffer _opaque = new MeshBuffer();
 
         public LodRenderData(Vector3i regionKey)
@@ -50,6 +53,7 @@ namespace MinecraftClone3API.Graphics
             var cz = (regionKey.Z << 7) + LodColumn.RegionBlocks / 2;
             Middle = new Vector3(cx, 24f, cz);
             Radius = 140f;
+            MinCorner = new Vector3(Middle.X - Radius, Middle.Y - Radius, Middle.Z - Radius);
         }
 
         public void Update(LodColumnStore store)
@@ -66,14 +70,14 @@ namespace MinecraftClone3API.Graphics
 
         /// <summary>Non-blocking upload of the pending mesh into the LOD arena; false (retry next frame) when the
         /// mesh thread holds the buffer mid-remesh. Gated on <see cref="Updated"/> so a redundant upload is a
-        /// no-op (it would otherwise blank the region). Main-thread GL.</summary>
+        /// no-op (it would otherwise blank the region). Main-thread GPU.</summary>
         public bool TryUpload(ChunkMeshArena arena)
         {
             if (!Monitor.TryEnter(_opaque)) return false;
             try
             {
                 if (!Updated) return true;
-                OpaqueAlloc = arena.Upload(OpaqueAlloc, _opaque);
+                OpaqueAlloc = arena.Upload(OpaqueAlloc, _opaque, MinCorner);
                 _opaque.Clear();
                 Updated = false;
             }

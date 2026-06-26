@@ -49,7 +49,7 @@ namespace MinecraftClone3Server
         }
 
         /// <summary>
-        /// Loads plugins exactly like the client's resource-loading screen but without any GL calls
+        /// Loads plugins exactly like the client's resource-loading screen but without any GPU calls
         /// (no client resources, no texture upload) — the server only needs the block registry.
         /// </summary>
         private static void LoadPlugins()

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.IO;
 using MinecraftClone3API.Util;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Blocks
 {
@@ -13,7 +14,7 @@ namespace MinecraftClone3API.Blocks
     public class CachedChunk
     {
         public readonly WorldBase World;
-        public readonly Vector3i Position;
+        public readonly Vector3D<int> Position;
 
         // Reassigned by Set when a new value enters the palette; this is a single-owner builder (no
         // concurrent readers until it is adopted into a Chunk), so the copy-on-grow swaps are local.
@@ -29,19 +30,19 @@ namespace MinecraftClone3API.Blocks
 
         public bool IsEmpty => Min.X == Chunk.Size;
 
-        public Vector3i Min = new Vector3i(Chunk.Size);
-        public Vector3i Max = new Vector3i(-1);
+        public Vector3D<int> Min = new Vector3D<int>(Chunk.Size);
+        public Vector3D<int> Max = new Vector3D<int>(-1);
 
-        public CachedChunk(WorldBase world, Vector3i position)
+        public CachedChunk(WorldBase world, Vector3D<int> position)
         {
             World = world;
             Position = position;
         }
 
-        public CachedChunk(WorldBase world, Vector3i position, BinaryReader reader) : this(world, position)
+        public CachedChunk(WorldBase world, Vector3D<int> position, BinaryReader reader) : this(world, position)
         {
-            Min = new Vector3i(reader.ReadInt32(), reader.ReadInt32(), reader.ReadInt32());
-            Max = new Vector3i(reader.ReadInt32(), reader.ReadInt32(), reader.ReadInt32());
+            Min = new Vector3D<int>(reader.ReadInt32(), reader.ReadInt32(), reader.ReadInt32());
+            Max = new Vector3D<int>(reader.ReadInt32(), reader.ReadInt32(), reader.ReadInt32());
 
             // Block palette is stored by registry name; resolve each back to a runtime id, minting an inert
             // placeholder for any name whose plugin is absent so the cell survives losslessly. Light/sky are raw.

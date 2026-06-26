@@ -1,7 +1,7 @@
 using System;
+using Silk.NET.Maths;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Entities
 {
@@ -50,7 +50,7 @@ namespace MinecraftClone3API.Entities
 
             // The cell whose bottom edge sits where the entity came to rest (a resting block at by leaves the
             // feet at by + 0.5, so the occupied cell is by + 1).
-            var cell = new Vector3i(
+            var cell = new Vector3D<int>(
                 (int) MathF.Round(Position.X),
                 (int) MathF.Round(Position.Y + 0.5f),
                 (int) MathF.Round(Position.Z));

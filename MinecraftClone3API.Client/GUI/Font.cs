@@ -5,7 +5,7 @@ using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
 using Newtonsoft.Json;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Client.GUI
 {
@@ -140,17 +140,17 @@ namespace MinecraftClone3API.Client.GUI
             return width;
         }
 
-        public static void DrawString(string text, int x, int y, int scale = 2, Color4? color = null, bool shadow = true)
+        public static void DrawString(string text, int x, int y, int scale = 2, Vector4D<float>? color = null, bool shadow = true)
         {
             if (!_loaded || string.IsNullOrEmpty(text)) return;
 
-            var tint = color ?? Color4.White;
+            var tint = color ?? new Vector4D<float>(1f,1f,1f,1f);
             if (shadow)
-                DrawRun(text, x + scale, y + scale, scale, new Color4(0.25f, 0.25f, 0.25f, tint.A));
+                DrawRun(text, x + scale, y + scale, scale, new Vector4D<float>(0.25f, 0.25f, 0.25f, tint.W));
             DrawRun(text, x, y, scale, tint);
         }
 
-        private static void DrawRun(string text, int x, int y, int scale, Color4 color)
+        private static void DrawRun(string text, int x, int y, int scale, Vector4D<float> color)
         {
             var pen = x;
             for (var i = 0; i < text.Length; i++)

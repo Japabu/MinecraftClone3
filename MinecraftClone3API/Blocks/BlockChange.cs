@@ -1,4 +1,4 @@
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Blocks
 {
@@ -7,13 +7,13 @@ namespace MinecraftClone3API.Blocks
     /// is the packed <see cref="Util.LightLevel.Binary"/>; <see cref="Sky"/> is the 0..15 sky-light level.</summary>
     public struct BlockChange
     {
-        public readonly Vector3i ChunkPos;
+        public readonly Vector3D<int> ChunkPos;
         public readonly ushort LocalIndex;
         public readonly ushort BlockId;
         public readonly ushort Light;
         public readonly ushort Sky;
 
-        public BlockChange(Vector3i chunkPos, ushort localIndex, ushort blockId, ushort light, ushort sky)
+        public BlockChange(Vector3D<int> chunkPos, ushort localIndex, ushort blockId, ushort light, ushort sky)
         {
             ChunkPos = chunkPos;
             LocalIndex = localIndex;

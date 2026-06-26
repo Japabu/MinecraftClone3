@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
 using Newtonsoft.Json.Linq;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Graphics
 {
@@ -12,7 +12,7 @@ namespace MinecraftClone3API.Graphics
     public sealed class BlockStateVariant
     {
         public BlockModel Model;
-        public Matrix4 Rotation;
+        public Matrix4X4<float> Rotation;
     }
 
     /// <summary>
@@ -113,8 +113,8 @@ namespace MinecraftClone3API.Graphics
         // engine centres elements (-0.5..0.5) before the orient transform, so these are plain centre rotations.
         // The signs are negated to match the engine's axes (+X east, +Z south): e.g. the furnace's north-facing
         // model with y=90 then points east, as the pack intends.
-        private static Matrix4 RotationFor(int x, int y) =>
-            Matrix4.CreateRotationX(-MathHelper.DegreesToRadians(x)) *
-            Matrix4.CreateRotationY(-MathHelper.DegreesToRadians(y));
+        private static Matrix4X4<float> RotationFor(int x, int y) =>
+            Matrix4X4.CreateRotationX(-(x * (MathF.PI / 180f))) *
+            Matrix4X4.CreateRotationY(-(y * (MathF.PI / 180f)));
     }
 }

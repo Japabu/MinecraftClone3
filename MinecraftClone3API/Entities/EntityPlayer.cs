@@ -1,6 +1,7 @@
+using System;
+using Silk.NET.Maths;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Entities
 {
@@ -14,8 +15,8 @@ namespace MinecraftClone3API.Entities
         /// survival can read worn armor for damage reduction. Null on the client.</summary>
         public Inventory Inventory;
 
-        public static readonly Matrix4 DefaultProjection =
-            Matrix4.CreatePerspectiveFieldOfView(MathHelper.DegreesToRadians(60), 16f / 9f, 0.01f, 512);
+        public static readonly Matrix4X4<float> DefaultProjection =
+            Matrix4X4.CreatePerspectiveFieldOfView(60 * (MathF.PI / 180f), 16f / 9f, 0.01f, 512);
 
         public bool Flying;
 
@@ -33,20 +34,20 @@ namespace MinecraftClone3API.Entities
         public int FoodTimer;
         public int DrownTimer;
         public int VoidTimer;
-        public Vector3 LastTickPosition;
+        public Vector3D<float> LastTickPosition;
 
-        public Vector3 PrevPosition;
-        public Vector3 InterpolatedPosition;
+        public Vector3D<float> PrevPosition;
+        public Vector3D<float> InterpolatedPosition;
 
-        public override Vector3 EyeOffset => new Vector3(0, EyeHeight, 0);
-        public override Vector3 RenderPosition => InterpolatedPosition;
+        public override Vector3D<float> EyeOffset => new Vector3D<float>(0, EyeHeight, 0);
+        public override Vector3D<float> RenderPosition => InterpolatedPosition;
 
         public EntityPlayer()
         {
         }
 
-        public AxisAlignedBoundingBox Box(Vector3 feet) => new AxisAlignedBoundingBox(
-            new Vector3(feet.X - Width / 2, feet.Y, feet.Z - Width / 2),
-            new Vector3(feet.X + Width / 2, feet.Y + Height, feet.Z + Width / 2));
+        public AxisAlignedBoundingBox Box(Vector3D<float> feet) => new AxisAlignedBoundingBox(
+            new Vector3D<float>(feet.X - Width / 2, feet.Y, feet.Z - Width / 2),
+            new Vector3D<float>(feet.X + Width / 2, feet.Y + Height, feet.Z + Width / 2));
     }
 }

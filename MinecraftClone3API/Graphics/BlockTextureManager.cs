@@ -33,8 +33,8 @@ namespace MinecraftClone3API.Graphics
         }
 
         /// <summary>The accumulated CPU texture data for size bucket <paramref name="sizeIndex"/>, in upload
-        /// order. The GL uploader (<c>GlTextureUploader</c>, client-only) reads this to fill the texture
-        /// arrays; Core itself never touches GL.</summary>
+        /// order. The GPU uploader (<c>GlTextureUploader</c>, client-only) reads this to fill the texture
+        /// arrays; Core itself never touches the GPU.</summary>
         public static IReadOnlyList<TextureData> DatasFor(int sizeIndex) => TextureDatas[sizeIndex];
 
         internal static BlockTexture LoadTexture(TextureData data)

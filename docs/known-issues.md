@@ -3,6 +3,36 @@
 This list is for *open* work only — when an item is resolved, delete it or move its rationale into the
 relevant permanent doc. Not a changelog.
 
+- **WebGPU renderer — runs on Metal and draws the world; a few corners are still unconfirmed.** The
+  GL→WebGPU (Silk.NET.WebGPU) migration is code-complete and verified by a benchmark fly-through on Apple
+  M4 Pro: zero validation errors, correct reverse-Z depth ordering, procedural sky, lit terrain, and the
+  rewritten water (animated wave normals + Fresnel sky reflection + sun/moon specular). The camera uses an
+  **infinite-far** reverse-Z projection (`Projection.ReverseZPerspective`); there is no far clip, so the
+  composition detects background by the exact reverse-Z far clear (`depth == 0`) and reconstructs the sky
+  ray from a finite depth (the far point is at infinity → undefined). What still needs eyes-on confirmation:
+  - **`Frustum.Set` uses the GL `[-1,1]` near-plane formula** (`col3 + col2`) while WebGPU clip-z is `[0,1]`
+    (near plane should be `col2` alone). The 4 side planes — which do the real chunk culling — are correct;
+    the near/far planes are approximate, and under the infinite-far projection the far plane is a no-op
+    (distance is bounded by the cull compute's `maxDistance`). Harmless for chunk culling; tighten if a
+    near-camera clipping artifact ever shows.
+  - **Reverse-Z depth-bias sign for the shadow pass.** The shadow pass uses a `Projection.ReverseZOrtho`
+    light projection with `depthBias(2)/slopeScale(4)`; watch for shadow acne / peter-panning at low sun
+    angles and adjust the bias if needed (midday captures looked clean).
+  - **Item-icon orientation.** `ItemStackRenderer` no longer V-flips the icon (WebGPU's framebuffer origin is
+    top-left, unlike GL's bottom-left), so the 3-D block icons should already be upright — confirm they are
+    and aren't mirrored vertically.
+  - **The two overlay pipelines render into the live G-buffer.** Block-selection outline + chunk-border
+    (`OutlineRenderer`, LineList, depth `Greater` no-write, light attachment masked) and the block-break
+    crack (`BlockBreakRenderer`, alpha-blended diffuse only, normal+light masked, depth `GreaterEqual`) —
+    not exercised by the benchmark; confirm they appear and depth-test against terrain.
+  - **Off-thread chunk upload is NOT done (migration level-up 3, deferred).** `ChunkRenderData` creation +
+    `GpuBuffer` upload still run on the main thread (the threading model is unchanged from the GL era); the
+    WebGPU queue is thread-safe, so moving meshing→upload fully onto the mesh pool is the remaining
+    performance level-up. `docs/threading.md` Invariants 1 & 2 still describe the main-thread model.
+  - **Deliberate, not defects** (don't "fix"): the `Gpu` static facade (global device access, single-threaded
+    init) and the split where Core uses literal Silk types while Client/exe keep readability aliases
+    (`Vector3`, `Matrix4`, …) — both documented in-code.
+
 - **Nether is the "core, one-biome" slice.** Implemented: the dimension + generator (netherrack/lava/soul-sand/
   glowstone/quartz-ore), obsidian portals lit with flint & steel (`VanillaPortals`), 8:1 Overworld↔Nether
   travel with find-or-build destination portals, the multi-dimension server, and the sunless red-fog render
@@ -103,10 +133,10 @@ relevant permanent doc. Not a changelog.
   (soft shadows, `ShadowMapSize` 1024). Raising `ShadowMapSize` (sharper) or `ShadowDistance` (more coverage,
   coarser texels) trades one for the other; a much larger distance would want a warped map or cascades to keep
   near detail, but CSM was deliberately removed and isn't coming back. Bias is a scene/driver-dependent
-  tradeoff (`NormalBias`/`DepthBias` in `ShadowResolve.fs`,
-  `ShadowStrength`/`ShadowSoftness`/`ShadowCasterExtent`/`GL.PolygonOffset` in `WorldRenderer`) — may need a
-  pass on Mesa. **`ShadowMapSize` (C#) and the `ShadowTexel` constant (`ShadowResolve.fs`) must change
-  together.**
+  tradeoff (`NormalBias`/`DepthBias` in `ShadowResolve.wgsl`,
+  `ShadowStrength`/`ShadowSoftness`/`ShadowCasterExtent` and the shadow-pipeline `depthBias`/`slopeScale` in
+  `WorldRenderer`) — may need a pass per backend. **`ShadowMapSize` (C#) and the `ShadowTexel` constant
+  (`ShadowResolve.wgsl`) must change together.**
 - **The shadow depth pass is a fixed per-frame cost, except it's now skipped in caves.** It redraws all
   in-range opaque geometry from the sun's POV every frame regardless of window size, so it hits hardest at
   *low* framerate headroom, not specifically at fullscreen. **Gated on `_anyShadowReceiver`** (a visible

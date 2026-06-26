@@ -6,11 +6,8 @@ using MinecraftClone3API.Entities;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
-using OpenTK.Graphics.OpenGL4;
-using OpenTK.Mathematics;
-using OpenTK.Windowing.Common;
-using OpenTK.Windowing.Desktop;
-using OpenTK.Windowing.GraphicsLibraryFramework;
+using Silk.NET.Input;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Client.GUI
 {
@@ -23,15 +20,11 @@ namespace MinecraftClone3API.Client.GUI
     /// </summary>
     public abstract class ContainerScreen : GuiBase
     {
-        protected readonly GameWindow Window;
-
         /// <summary>The size a slot icon (and the cursor) is drawn at, GUI pixels. Default matches a 16px slot
         /// at the standard 2× GUI scale.</summary>
         protected int IconSize = 32;
 
         protected ItemStack Cursor = ItemStack.Empty;
-
-        private bool _leftDown, _rightDown;
 
         private MouseButton _activeButton;
         private bool _hasActive;
@@ -45,10 +38,9 @@ namespace MinecraftClone3API.Client.GUI
         private double _lastLeftClickMs = double.NegativeInfinity;
         private Slot _lastClickSlot;
 
-        protected ContainerScreen(GameWindow window)
+        protected ContainerScreen()
         {
-            Window = window;
-            Window.CursorState = CursorState.Normal;
+            ClientResources.Input.CursorMode = CursorMode.Normal;
         }
 
         /// <summary>The screen's slots, in a stable order (built once by the subclass). Accessors may read
@@ -60,9 +52,6 @@ namespace MinecraftClone3API.Client.GUI
         /// <summary>Called when the screen closes (return scratch items to the inventory, etc.).</summary>
         protected virtual void OnClosed() { }
 
-        /// <summary>Mouse-wheel hook (creative inventory scrolling); default ignores it.</summary>
-        protected virtual void OnScroll(float delta) { }
-
         /// <summary>Shift-click quick-move; default no-op. Subclasses route between regions via
         /// <see cref="MergeInto"/> + <see cref="SlotsInGroup"/>.</summary>
         protected virtual void OnShiftClick(Slot slot) { }
@@ -70,37 +59,30 @@ namespace MinecraftClone3API.Client.GUI
         public override void Update(bool focused)
         {
             base.Update(focused);
-            if (!focused) return;
-
-            var ks = Window.KeyboardState;
-            if (ks.IsKeyPressed(Keys.Escape) || Keybinds.IsPressed(ks, GameAction.Inventory))
-            {
-                Close();
-                return;
-            }
-
-            var scroll = Window.MouseState.ScrollDelta.Y;
-            if (scroll != 0) OnScroll(scroll);
-
-            var shift = ks.IsKeyDown(Keys.LeftShift) || ks.IsKeyDown(Keys.RightShift);
-            var pos = ScaledResolution.ToGuiCoords(Window.MouseState.Position);
-
-            var left = Window.MouseState.IsButtonDown(MouseButton.Left);
-            var right = Window.MouseState.IsButtonDown(MouseButton.Right);
-
-            if (left && !_leftDown) Press(MouseButton.Left, pos, shift);
-            if (right && !_rightDown) Press(MouseButton.Right, pos, shift);
-
-            if (_hasActive) AddDragSlot(pos);
-
-            if (!left && _leftDown && _hasActive && _activeButton == MouseButton.Left) Release(pos);
-            if (!right && _rightDown && _hasActive && _activeButton == MouseButton.Right) Release(pos);
-
-            _leftDown = left;
-            _rightDown = right;
+            // The press/release edges arrive via the event handlers below; while a click-drag gesture is in
+            // progress, keep collecting the slots the cursor paints over as it moves.
+            if (focused && _hasActive)
+                AddDragSlot(ScaledResolution.ToGuiCoords(ClientResources.Input.MousePosition));
         }
 
-        private void Press(MouseButton button, Vector2 pos, bool shift)
+        public override void OnMouseDown(MouseButton button, Vector2D<float> guiPos)
+        {
+            if (button != MouseButton.Left && button != MouseButton.Right) return;
+            var shift = ClientResources.Input.IsKeyDown(Key.ShiftLeft) || ClientResources.Input.IsKeyDown(Key.ShiftRight);
+            Press(button, guiPos, shift);
+        }
+
+        public override void OnMouseUp(MouseButton button, Vector2D<float> guiPos)
+        {
+            if (_hasActive && _activeButton == button) Release(guiPos);
+        }
+
+        public override void OnKeyDown(Key key)
+        {
+            if (key == Key.Escape || Keybinds.Matches(GameAction.Inventory, key)) Close();
+        }
+
+        private void Press(MouseButton button, Vector2D<float> pos, bool shift)
         {
             if (_hasActive) return; // ignore the other button while one gesture is in progress
 
@@ -114,7 +96,7 @@ namespace MinecraftClone3API.Client.GUI
             if (_dragActive) _dragSlots.Add(_pressSlot);
         }
 
-        private void AddDragSlot(Vector2 pos)
+        private void AddDragSlot(Vector2D<float> pos)
         {
             if (!_dragActive) return;
             var slot = SlotAt(pos);
@@ -122,7 +104,7 @@ namespace MinecraftClone3API.Client.GUI
             _dragSlots.Add(slot);
         }
 
-        private void Release(Vector2 pos)
+        private void Release(Vector2D<float> pos)
         {
             if (_dragActive && _dragSlots.Count >= 2)
                 PerformDrag();
@@ -344,7 +326,7 @@ namespace MinecraftClone3API.Client.GUI
             return s.IsEmpty || (s.SameItem(Cursor) && s.Count < MaxStack(s));
         }
 
-        private Slot SlotAt(Vector2 pos)
+        private Slot SlotAt(Vector2D<float> pos)
         {
             var slots = Slots;
             for (var i = 0; i < slots.Count; i++)
@@ -403,15 +385,13 @@ namespace MinecraftClone3API.Client.GUI
 
         public override void Render()
         {
-            SetBlend();
-
-            var screen = Window.FramebufferSize;
-            GuiRenderer.DrawTexture(ClientResources.WhitePixel, new Rectangle(0, 0, screen.X, screen.Y), null,
-                new Color4(0f, 0f, 0f, 0.4f), false);
+            GuiRenderer.DrawTexture(ClientResources.WhitePixel,
+                new Rectangle(0, 0, (int) ScaledResolution.GuiResolution.X, (int) ScaledResolution.GuiResolution.Y),
+                null, new Vector4D<float>(0f, 0f, 0f, 0.4f), false);
 
             DrawBackground();
 
-            var mouse = ScaledResolution.ToGuiCoords(Window.MouseState.Position);
+            var mouse = ScaledResolution.ToGuiCoords(ClientResources.Input.MousePosition);
 
             // While painting, mirror what a release would deposit into each slot so the items appear in place
             // and the cursor shows only the remainder.
@@ -462,18 +442,12 @@ namespace MinecraftClone3API.Client.GUI
         /// <summary>The vanilla translucent-white slot hover/paint overlay (<c>0x80FFFFFF</c>).</summary>
         private static void DrawSlotHighlight(Rectangle bounds) =>
             GuiRenderer.DrawTexture(ClientResources.WhitePixel, bounds, null,
-                new Color4(1f, 1f, 1f, 0.5f));
-
-        protected static void SetBlend() => RenderState.Set(new GlState
-        {
-            Blend = true,
-            BlendFunc = (BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha)
-        });
+                new Vector4D<float>(1f, 1f, 1f, 0.5f));
 
         protected void Close()
         {
             OnClosed();
-            Window.CursorState = CursorState.Grabbed;
+            ClientResources.Input.CursorMode = CursorMode.Raw;
             PlayerController.ResetMouse();
             IsDead = true;
         }

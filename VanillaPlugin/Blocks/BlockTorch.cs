@@ -1,5 +1,6 @@
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Util;
+using Silk.NET.Maths;
 
 namespace VanillaPlugin.Blocks
 {
@@ -11,11 +12,11 @@ namespace VanillaPlugin.Blocks
             ModelPath = "minecraft:block/torch";
         }
 
-        public override bool IsFullBlock(WorldBase world, Vector3i blockPos) => false;
-        public override bool CanPassThrough(WorldBase world, Vector3i blockPos) => true;
+        public override bool IsFullBlock(WorldBase world, Vector3D<int> blockPos) => false;
+        public override bool CanPassThrough(WorldBase world, Vector3D<int> blockPos) => true;
 
         /// <summary>Light is computed by the authoritative (possibly headless) server, so it must not
         /// depend on client state such as the keyboard.</summary>
-        public override LightLevel GetLightLevel(WorldBase world, Vector3i blockPos) => new LightLevel(15, 11, 11);
+        public override LightLevel GetLightLevel(WorldBase world, Vector3D<int> blockPos) => new LightLevel(15, 11, 11);
     }
 }

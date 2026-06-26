@@ -2,14 +2,26 @@ using System;
 using System.IO;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
+using MinecraftClone3API.Client.Graphics;
+using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
-using OpenTK.Windowing.Common;
+using Silk.NET.Windowing;
 
 namespace MinecraftClone3API.Client
 {
+    /// <summary>Swapchain present mode. Off = Immediate (no sync, tear), On = Fifo (sync to refresh),
+    /// Adaptive = Mailbox (sync, newest-frame, no tear) where supported. Engine-owned; mapped to a wgpu
+    /// present mode when the surface is configured.</summary>
+    public enum VSyncMode
+    {
+        Off = 0,
+        On = 1,
+        Adaptive = 2
+    }
+
     /// <summary>Sun-shadow quality preset. Drives the shadow map resolution + coverage distance; Off skips
-    /// the shadow passes entirely (replaces the old on/off toggle).</summary>
+    /// the shadow passes entirely.</summary>
     public enum ShadowQuality
     {
         Off = 0,
@@ -20,7 +32,7 @@ namespace MinecraftClone3API.Client
 
     /// <summary>
     /// Persistent, user-tunable graphics options. <see cref="Load"/> reads the saved values at startup (no
-    /// GL required), and each setter writes the file back. Some options push window-level state onto the live
+    /// GPU required), and each setter writes the file back. Some options push window-level state onto the live
     /// <see cref="ClientResources.Window"/> (VSync/Fullscreen); the rest are read directly each frame by
     /// <see cref="Graphics.WorldRenderer"/> / the player controller / the world state, so a change takes
     /// effect without an apply step. Numeric setters clamp to their valid range.
@@ -159,10 +171,9 @@ namespace MinecraftClone3API.Client
             }
         }
 
-        private static void ApplyVSync()
-        {
-            if (ClientResources.Window != null) ClientResources.Window.VSync = _data.VSync;
-        }
+        /// <summary>Push the saved vsync preference onto the renderer's surface present mode. Called once at
+        /// startup (after the surface exists) and by the <see cref="VSync"/> setter on a runtime change.</summary>
+        public static void ApplyVSync() => Renderer.SetVSync(_data.VSync);
 
         private static void ApplyFullscreen()
         {

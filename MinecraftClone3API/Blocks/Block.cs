@@ -4,7 +4,7 @@ using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Blocks
 {
@@ -36,7 +36,7 @@ namespace MinecraftClone3API.Blocks
     public class Block : RegistryEntry
     {
         public static readonly AxisAlignedBoundingBox DefaultAlignedBoundingBox =
-            new AxisAlignedBoundingBox(new Vector3(-0.5f), new Vector3(0.5f));
+            new AxisAlignedBoundingBox(new Vector3D<float>(-0.5f), new Vector3D<float>(0.5f));
         
         public BlockModel Model = CommonResources.MissingModel;
 
@@ -57,17 +57,17 @@ namespace MinecraftClone3API.Blocks
         /// it explicitly. Null for blocks with no Minecraft equivalent.</summary>
         public string MinecraftId;
 
-        public virtual bool IsVisible(WorldBase world, Vector3i blockPos) => true;
-        public virtual bool IsFullBlock(WorldBase world, Vector3i blockPos) => true;
-        public virtual TransparencyType IsTransparent(WorldBase world, Vector3i blockPos) => TransparencyType.None;
+        public virtual bool IsVisible(WorldBase world, Vector3D<int> blockPos) => true;
+        public virtual bool IsFullBlock(WorldBase world, Vector3D<int> blockPos) => true;
+        public virtual TransparencyType IsTransparent(WorldBase world, Vector3D<int> blockPos) => TransparencyType.None;
 
-        public virtual RenderMaterial GetRenderMaterial(WorldBase world, Vector3i blockPos) => RenderMaterial.Solid;
+        public virtual RenderMaterial GetRenderMaterial(WorldBase world, Vector3D<int> blockPos) => RenderMaterial.Solid;
 
-        public virtual ConnectionType ConnectsToBlock(WorldBase world, Vector3i blockPos, Vector3i otherBlockPos,
+        public virtual ConnectionType ConnectsToBlock(WorldBase world, Vector3D<int> blockPos, Vector3D<int> otherBlockPos,
             Block otherBlock) => ConnectionType.Undefined;
 
-        public virtual bool CanPassThrough(WorldBase world, Vector3i blockPos) => false;
-        public virtual bool CanTarget(WorldBase world, Vector3i vector3I) => true;
+        public virtual bool CanPassThrough(WorldBase world, Vector3D<int> blockPos) => false;
+        public virtual bool CanTarget(WorldBase world, Vector3D<int> vector3I) => true;
         public virtual bool IsLiquid => false;
 
         /// <summary>Minecraft block hardness, driving how long the block takes to mine in survival
@@ -89,14 +89,14 @@ namespace MinecraftClone3API.Blocks
         /// harvest level: stone ore 1, gold/diamond ore 2, obsidian 3). Ignored when no tool is required.</summary>
         public virtual int RequiredToolTier => 0;
 
-        public virtual AxisAlignedBoundingBox GetBoundingBox(WorldBase world, Vector3i blockPos)
+        public virtual AxisAlignedBoundingBox GetBoundingBox(WorldBase world, Vector3D<int> blockPos)
             => DefaultAlignedBoundingBox;
 
         /// <summary>The solid collision boxes (block-local, centred -0.5..0.5) the player sweeps against.
         /// Default is the single <see cref="GetBoundingBox"/> cube; non-cube blocks (stairs) override to
         /// return several boxes. Pass-through blocks contribute none. Kept separate from
         /// <see cref="GetBoundingBox"/> so targeting/raytrace can stay a single simple cube.</summary>
-        public virtual void GetCollisionBoxes(WorldBase world, Vector3i blockPos, List<AxisAlignedBoundingBox> boxes)
+        public virtual void GetCollisionBoxes(WorldBase world, Vector3D<int> blockPos, List<AxisAlignedBoundingBox> boxes)
         {
             if (CanPassThrough(world, blockPos)) return;
             var bb = GetBoundingBox(world, blockPos);
@@ -107,7 +107,7 @@ namespace MinecraftClone3API.Blocks
         /// so it rotates about the block centre). Default identity. The engine parses no blockstate files,
         /// so orientation that vanilla keeps in the blockstate (e.g. a stair's facing) lives here, driven by
         /// the block's stored metadata.</summary>
-        public virtual Matrix4 GetModelTransform(WorldBase world, Vector3i blockPos) => Matrix4.Identity;
+        public virtual Matrix4X4<float> GetModelTransform(WorldBase world, Vector3D<int> blockPos) => Matrix4X4<float>.Identity;
 
         /// <summary>The block's parsed blockstate definition (from the pack's <c>blockstates/&lt;name&gt;.json</c>),
         /// or null if it has none. When set, the mesher selects the model + rotation for the block's current
@@ -122,13 +122,13 @@ namespace MinecraftClone3API.Blocks
         /// <summary>This block's current blockstate property values (e.g. <c>facing=east, lit=true</c>) derived
         /// from its stored block data, used to pick a variant from <see cref="StateDefinition"/>. Null/empty for
         /// stateless blocks (matches the unconditional <c>""</c> variant).</summary>
-        public virtual IReadOnlyDictionary<string, string> GetBlockState(WorldBase world, Vector3i blockPos) => null;
+        public virtual IReadOnlyDictionary<string, string> GetBlockState(WorldBase world, Vector3D<int> blockPos) => null;
 
         /// <summary>The model and orientation the mesher should emit for this block at this position. When the
         /// block has a <see cref="StateDefinition"/>, both come from the variant matching <see cref="GetBlockState"/>
         /// (so a furnace's facing/lit appearance is driven straight from the pack's blockstate file); otherwise
         /// the single <see cref="Model"/> with <see cref="GetModelTransform"/>.</summary>
-        public virtual (BlockModel Model, Matrix4 Orient) GetRenderModel(WorldBase world, Vector3i blockPos)
+        public virtual (BlockModel Model, Matrix4X4<float> Orient) GetRenderModel(WorldBase world, Vector3D<int> blockPos)
         {
             if (StateDefinition != null)
             {
@@ -154,19 +154,19 @@ namespace MinecraftClone3API.Blocks
 
         /// <summary>Server-authoritative per-tick update for a <see cref="NeedsServerTick"/> block (never called
         /// on the client). Reads/writes the block's stored <see cref="BlockData"/>.</summary>
-        public virtual void OnServerTick(WorldServer world, Vector3i blockPos) { }
+        public virtual void OnServerTick(WorldServer world, Vector3D<int> blockPos) { }
 
         /// <summary>Server-side: a block in one of the six face-adjacent positions changed (placed, broken, or
         /// fell). Default no-op. Overriders must stay light — only schedule a tick
         /// (<see cref="WorldServer.ScheduleBlockTick"/>) or touch their own block data; do not call back into
         /// <c>SetBlock</c>, which would recurse through this notification. Falling blocks use it to start falling
         /// when the block beneath them is removed.</summary>
-        public virtual void OnNeighborChanged(WorldServer world, Vector3i blockPos, Vector3i changedPos) { }
+        public virtual void OnNeighborChanged(WorldServer world, Vector3D<int> blockPos, Vector3D<int> changedPos) { }
 
-        public virtual Color4 GetTintColor(WorldBase world, Vector3i blockPos, int tintId) => Color4.White;
-        public virtual LightLevel GetLightLevel(WorldBase world, Vector3i blockPos) => LightLevel.Zero;
+        public virtual Vector4D<float> GetTintColor(WorldBase world, Vector3D<int> blockPos, int tintId) => new Vector4D<float>(1f, 1f, 1f, 1f);
+        public virtual LightLevel GetLightLevel(WorldBase world, Vector3D<int> blockPos) => LightLevel.Zero;
 
-        public virtual void OnPlaced(WorldBase world, Vector3i blockPos, EntityPlayer player, int metadata)
+        public virtual void OnPlaced(WorldBase world, Vector3D<int> blockPos, EntityPlayer player, int metadata)
         {
         }
 
@@ -180,19 +180,19 @@ namespace MinecraftClone3API.Blocks
         /// only on the client (the headless server never calls it), so it may touch window/GUI state via the
         /// client globals (<c>ClientResources.Window</c>, <c>StateEngine</c>) — not passed in, so Core's
         /// signature stays free of windowing types.</summary>
-        public virtual bool OnActivated(WorldBase world, Vector3i blockPos, EntityPlayer player) => false;
+        public virtual bool OnActivated(WorldBase world, Vector3D<int> blockPos, EntityPlayer player) => false;
 
-        public virtual int OnLightPassThrough(WorldBase world, Vector3i blockPos, int lightLevel, int color)
+        public virtual int OnLightPassThrough(WorldBase world, Vector3D<int> blockPos, int lightLevel, int color)
             => lightLevel - 1;
 
-        public virtual string GetUnlocalizedName(WorldBase world, Vector3i blockPos) =>
+        public virtual string GetUnlocalizedName(WorldBase world, Vector3D<int> blockPos) =>
             MinecraftId != null
                 ? Identifier.TranslationKey("block", MinecraftId)
                 : I18N.UnlocalizedName(RegistryKey, "blocks");
 
-        public virtual string GetName(WorldBase world, Vector3i blockPos) => I18N.Get(GetUnlocalizedName(world, blockPos));
+        public virtual string GetName(WorldBase world, Vector3D<int> blockPos) => I18N.Get(GetUnlocalizedName(world, blockPos));
 
-        public bool IsOpaqueFullBlock(WorldBase world, Vector3i blockPos) =>
+        public bool IsOpaqueFullBlock(WorldBase world, Vector3D<int> blockPos) =>
             IsVisible(world, blockPos) && IsFullBlock(world, blockPos) &&
             IsTransparent(world, blockPos) == TransparencyType.None;
     }

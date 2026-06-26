@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Entities;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Util
 {
@@ -32,7 +33,7 @@ namespace MinecraftClone3API.Util
             chunk.NeedsSaving = false;
         }
 
-        public CachedChunk LoadChunk(WorldBase world, Vector3i chunkPos)
+        public CachedChunk LoadChunk(WorldBase world, Vector3D<int> chunkPos)
         {
             var chunkData = _chunks.Load(chunkPos);
             if (chunkData == null) return null;
@@ -53,7 +54,7 @@ namespace MinecraftClone3API.Util
 
         /// <summary>Persists a chunk's entities (an empty list clears any stored blob), so they reload when the
         /// chunk does. Entities are addressed by their owning chunk; see <see cref="WorldServer"/>.</summary>
-        public void SaveChunkEntities(Vector3i chunkPos, List<Entity> entities)
+        public void SaveChunkEntities(Vector3D<int> chunkPos, List<Entity> entities)
         {
             if (entities.Count == 0)
             {
@@ -70,6 +71,6 @@ namespace MinecraftClone3API.Util
         }
 
         /// <summary>The raw entity blob saved for a chunk (deserialized + spawned on the tick thread), or null.</summary>
-        public byte[] LoadChunkEntities(Vector3i chunkPos) => _entities.Load(chunkPos);
+        public byte[] LoadChunkEntities(Vector3D<int> chunkPos) => _entities.Load(chunkPos);
     }
 }

@@ -1,8 +1,8 @@
 using System;
 using MinecraftClone3API.Client.Graphics;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
-using OpenTK.Windowing.GraphicsLibraryFramework;
+using Silk.NET.Input;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Client.GUI
 {
@@ -20,11 +20,11 @@ namespace MinecraftClone3API.Client.GUI
         private const int BorderThickness = 2;
         private const int HandleWidth = 10;
 
-        private static readonly Color4 Track = new Color4(0.3f, 0.3f, 0.3f, 1f);
-        private static readonly Color4 Fill = new Color4(0.45f, 0.55f, 0.7f, 1f);
-        private static readonly Color4 HandleNormal = new Color4(0.7f, 0.7f, 0.7f, 1f);
-        private static readonly Color4 HandleActive = new Color4(0.9f, 0.9f, 0.9f, 1f);
-        private static readonly Color4 Border = new Color4(0.8f, 0.8f, 0.8f, 1f);
+        private static readonly Vector4D<float> Track = new Vector4D<float>(0.3f, 0.3f, 0.3f, 1f);
+        private static readonly Vector4D<float> Fill = new Vector4D<float>(0.45f, 0.55f, 0.7f, 1f);
+        private static readonly Vector4D<float> HandleNormal = new Vector4D<float>(0.7f, 0.7f, 0.7f, 1f);
+        private static readonly Vector4D<float> HandleActive = new Vector4D<float>(0.9f, 0.9f, 0.9f, 1f);
+        private static readonly Vector4D<float> Border = new Vector4D<float>(0.8f, 0.8f, 0.8f, 1f);
 
         public Rectangle Bounds;
         public string Label;
@@ -53,31 +53,33 @@ namespace MinecraftClone3API.Client.GUI
 
         public override void Update(bool focused)
         {
-            if (!focused || !Enabled)
-            {
-                _dragging = false;
-                return;
-            }
+            // While the button is held the drag follows the live cursor, even past the track edges, so a fast
+            // drag doesn't drop the grab. Position is read level (the press/release are the OnMouse* edges).
+            if (!focused || !Enabled) { _dragging = false; return; }
+            if (_dragging) ApplyFromPosition(ScaledResolution.ToGuiCoords(ClientResources.Input.MousePosition));
+        }
 
-            var mouse = ClientResources.Window.MouseState;
-            var position = ScaledResolution.ToGuiCoords(mouse.Position);
-            var inside = position.X >= Bounds.MinX && position.X <= Bounds.MaxX &&
-                         position.Y >= Bounds.MinY && position.Y <= Bounds.MaxY;
+        public override void OnMouseDown(MouseButton button, Vector2D<float> guiPos)
+        {
+            if (!Enabled || button != MouseButton.Left) return;
+            var inside = guiPos.X >= Bounds.MinX && guiPos.X <= Bounds.MaxX &&
+                         guiPos.Y >= Bounds.MinY && guiPos.Y <= Bounds.MaxY;
+            if (!inside) return;
+            _dragging = true;
+            ApplyFromPosition(guiPos);
+        }
 
-            // Begin dragging only on a press that lands inside the track; keep dragging while the button is
-            // held even if the cursor leaves the track vertically, so a fast drag doesn't drop the grab.
-            if (mouse.IsButtonDown(MouseButton.Left) && !mouse.WasButtonDown(MouseButton.Left) && inside)
-                _dragging = true;
-            if (!mouse.IsButtonDown(MouseButton.Left))
-                _dragging = false;
+        public override void OnMouseUp(MouseButton button, Vector2D<float> guiPos)
+        {
+            if (button == MouseButton.Left) _dragging = false;
+        }
 
-            if (!_dragging) return;
+        private void ApplyFromPosition(Vector2D<float> position)
+        {
             if (Bounds.Width <= HandleWidth || _max <= _min) return;
-
             // Map over the same effective range Render draws the handle across (Width - HandleWidth) and offset
             // by half the handle, so the handle centre sits under the cursor instead of trailing it.
-            var t = MathHelper.Clamp((position.X - Bounds.MinX - HandleWidth / 2f) / (Bounds.Width - HandleWidth),
-                0f, 1f);
+            var t = Math.Clamp((position.X - Bounds.MinX - HandleWidth / 2f) / (Bounds.Width - HandleWidth), 0f, 1f);
             var snapped = Snap(_min + t * (_max - _min));
             if (snapped != _value)
             {
@@ -90,7 +92,7 @@ namespace MinecraftClone3API.Client.GUI
         {
             GuiRenderer.DrawTexture(ClientResources.WhitePixel, Bounds, null, Track);
 
-            var t = (_max - _min) <= 0 ? 0f : MathHelper.Clamp((_value - _min) / (_max - _min), 0f, 1f);
+            var t = (_max - _min) <= 0 ? 0f : Math.Clamp((_value - _min) / (_max - _min), 0f, 1f);
             var handleX = Bounds.MinX + (int) (t * (Bounds.Width - HandleWidth));
 
             if (handleX > Bounds.MinX)
@@ -106,18 +108,18 @@ namespace MinecraftClone3API.Client.GUI
             var text = Label + ": " + _format(_value);
             var textX = Bounds.MinX + (Bounds.Width - Font.MeasureWidth(text, TextScale)) / 2;
             var textY = Bounds.MinY + (Bounds.Height - Font.LineHeight(TextScale)) / 2;
-            Font.DrawString(text, textX, textY, TextScale, Color4.White);
+            Font.DrawString(text, textX, textY, TextScale, new Vector4D<float>(1f,1f,1f,1f));
         }
 
         private float Snap(float value)
         {
-            value = MathHelper.Clamp(value, _min, _max);
+            value = Math.Clamp(value, _min, _max);
             if (_step <= 0) return value;
             var steps = (float) Math.Round((value - _min) / _step);
-            return MathHelper.Clamp(_min + steps * _step, _min, _max);
+            return Math.Clamp(_min + steps * _step, _min, _max);
         }
 
-        private void DrawBorder(Color4 color)
+        private void DrawBorder(Vector4D<float> color)
         {
             GuiRenderer.DrawTexture(ClientResources.WhitePixel,
                 new Rectangle(Bounds.MinX, Bounds.MinY, Bounds.MaxX, Bounds.MinY + BorderThickness), null, color);

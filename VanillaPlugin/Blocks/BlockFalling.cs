@@ -2,7 +2,7 @@ using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace VanillaPlugin.Blocks
 {
@@ -15,7 +15,7 @@ namespace VanillaPlugin.Blocks
     /// </summary>
     public class BlockFalling : BlockBasic
     {
-        private static readonly Vector3i Down = new Vector3i(0, -1, 0);
+        private static readonly Vector3D<int> Down = new Vector3D<int>(0, -1, 0);
 
         public BlockFalling(string name, string modelPath, float hardness = 1.5f,
             ToolType tool = ToolType.None, int toolTier = 0, bool requiresTool = false)
@@ -25,12 +25,12 @@ namespace VanillaPlugin.Blocks
 
         public override bool NeedsServerTick => true;
 
-        public override void OnNeighborChanged(WorldServer world, Vector3i blockPos, Vector3i changedPos)
+        public override void OnNeighborChanged(WorldServer world, Vector3D<int> blockPos, Vector3D<int> changedPos)
         {
             if (changedPos == blockPos + Down) world.ScheduleBlockTick(blockPos);
         }
 
-        public override void OnServerTick(WorldServer world, Vector3i blockPos)
+        public override void OnServerTick(WorldServer world, Vector3D<int> blockPos)
         {
             var below = blockPos + Down;
 

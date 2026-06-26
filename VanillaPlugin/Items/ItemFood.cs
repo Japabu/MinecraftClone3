@@ -2,7 +2,7 @@ using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace VanillaPlugin.Items
 {
@@ -33,7 +33,7 @@ namespace VanillaPlugin.Items
         public override bool CanUseServer(EntityPlayer player)
             => player.GameMode == GameMode.Survival && player.Hunger < PlayerSurvival.MaxHunger;
 
-        public override void OnUseServer(WorldServer world, EntityPlayer player, Vector3 position)
+        public override void OnUseServer(WorldServer world, EntityPlayer player, Vector3D<float> position)
             => PlayerSurvival.Eat(player, _nutrition, _saturationModifier);
     }
 }

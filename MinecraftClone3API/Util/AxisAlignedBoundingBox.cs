@@ -1,17 +1,17 @@
 ﻿using MinecraftClone3API.Blocks;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Util
 {
     public class AxisAlignedBoundingBox
     {
-        public Vector3 Min;
-        public Vector3 Max;
+        public Vector3D<float> Min;
+        public Vector3D<float> Max;
 
-        public Vector3 Translation => Min + (Max - Min) * 0.5f;
-        public Vector3 Scale => Max - Min;
+        public Vector3D<float> Translation => Min + (Max - Min) * 0.5f;
+        public Vector3D<float> Scale => Max - Min;
 
-        public AxisAlignedBoundingBox(Vector3 min, Vector3 max)
+        public AxisAlignedBoundingBox(Vector3D<float> min, Vector3D<float> max)
         {
             Min = min;
             Max = max;
@@ -43,10 +43,13 @@ namespace MinecraftClone3API.Util
             return true;
         }
 
-        public AxisAlignedBoundingBox Transform(Matrix4 transform)
+        public AxisAlignedBoundingBox Transform(Matrix4X4<float> transform)
         {
-            var scale = transform.ExtractScale();
-            var translation = transform.ExtractTranslation();
+            var scale = new Vector3D<float>(
+                new Vector3D<float>(transform.Row1.X, transform.Row1.Y, transform.Row1.Z).Length,
+                new Vector3D<float>(transform.Row2.X, transform.Row2.Y, transform.Row2.Z).Length,
+                new Vector3D<float>(transform.Row3.X, transform.Row3.Y, transform.Row3.Z).Length);
+            var translation = new Vector3D<float>(transform.Row4.X, transform.Row4.Y, transform.Row4.Z);
             return new AxisAlignedBoundingBox(Min * scale + translation, Max * scale + translation);
         }
     }

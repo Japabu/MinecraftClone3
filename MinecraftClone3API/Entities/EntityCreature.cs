@@ -1,6 +1,6 @@
 using System;
+using Silk.NET.Maths;
 using MinecraftClone3API.Blocks;
-using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Entities
 {
@@ -45,7 +45,7 @@ namespace MinecraftClone3API.Entities
             if (_walking)
             {
                 Yaw = _heading;
-                var dir = new Vector3(MathF.Sin(_heading), 0, MathF.Cos(_heading));
+                var dir = new Vector3D<float>(MathF.Sin(_heading), 0, MathF.Cos(_heading));
                 Velocity.X = dir.X * Type.MoveSpeed;
                 Velocity.Z = dir.Z * Type.MoveSpeed;
             }
@@ -101,7 +101,7 @@ namespace MinecraftClone3API.Entities
             // Re-roll the goal roughly every 1.5–4.5 s: usually stroll, sometimes stand still.
             _wanderTicks = 30 + _rng.Next(60);
             _walking = _rng.NextDouble() < 0.7;
-            if (_walking) _heading = (float) (_rng.NextDouble() * MathHelper.TwoPi);
+            if (_walking) _heading = (float) (_rng.NextDouble() * (MathF.PI * 2f));
         }
 
         internal override void SerializeState(System.IO.BinaryWriter writer)

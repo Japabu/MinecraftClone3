@@ -1,7 +1,7 @@
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Items;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 using VanillaPlugin.WorldGen;
 
 namespace VanillaPlugin.Items
@@ -22,9 +22,9 @@ namespace VanillaPlugin.Items
         public override string TexturePath => "minecraft/textures/item/flint_and_steel.png";
         public override bool IsUsable => true;
 
-        public override void OnUseServer(WorldServer world, EntityPlayer player, Vector3 position)
+        public override void OnUseServer(WorldServer world, EntityPlayer player, Vector3D<float> position)
         {
-            var cell = new Vector3i(
+            var cell = new Vector3D<int>(
                 (int) System.MathF.Floor(position.X),
                 (int) System.MathF.Floor(position.Y),
                 (int) System.MathF.Floor(position.Z));

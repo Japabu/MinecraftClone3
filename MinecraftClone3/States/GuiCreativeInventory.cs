@@ -5,8 +5,7 @@ using MinecraftClone3API.Client.GUI;
 using MinecraftClone3API.Client.Graphics;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
-using OpenTK.Windowing.Desktop;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3.States
 {
@@ -48,7 +47,7 @@ namespace MinecraftClone3.States
 
         private int _scrollRow;
 
-        public GuiCreativeInventory(GameWindow window, WorldClient world) : base(window)
+        public GuiCreativeInventory(WorldClient world) : base()
         {
             _world = world;
 
@@ -117,7 +116,7 @@ namespace MinecraftClone3.States
             }
         }
 
-        protected override void OnScroll(float delta)
+        public override void OnScroll(float delta)
         {
             if (delta > 0) _scrollRow = System.Math.Max(0, _scrollRow - 1);
             else if (delta < 0) _scrollRow = System.Math.Min(MaxScrollRow, _scrollRow + 1);
@@ -133,7 +132,7 @@ namespace MinecraftClone3.States
             else
                 GuiRenderer.DrawTexture(ClientResources.WhitePixel,
                     Rectangle.FromSize(_bgX, _bgY, BgWidth * Scale, BgHeight * Scale), null,
-                    new Color4(0.15f, 0.15f, 0.15f, 0.95f));
+                    new Vector4D<float>(0.15f, 0.15f, 0.15f, 0.95f));
 
             DrawScrollKnob();
         }

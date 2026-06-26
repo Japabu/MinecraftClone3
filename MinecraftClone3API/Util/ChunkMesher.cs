@@ -1,7 +1,7 @@
 ﻿using System;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Graphics;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Util
 {
@@ -19,40 +19,40 @@ namespace MinecraftClone3API.Util
         private const float LodSideShadeEW = 0.6f;   // east/west (Right/Left) skirts
 
 
-        private static readonly Vector3[] FacePositions = {
+        private static readonly Vector3D<float>[] FacePositions = {
             //left
-            new Vector3(-0.5f, +0.5f, -0.5f), new Vector3(-0.5f, +0.5f, +0.5f),
-            new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(-0.5f, -0.5f, +0.5f),
+            new Vector3D<float>(-0.5f, +0.5f, -0.5f), new Vector3D<float>(-0.5f, +0.5f, +0.5f),
+            new Vector3D<float>(-0.5f, -0.5f, -0.5f), new Vector3D<float>(-0.5f, -0.5f, +0.5f),
             //right
-            new Vector3(+0.5f, +0.5f, +0.5f), new Vector3(+0.5f, +0.5f, -0.5f),
-            new Vector3(+0.5f, -0.5f, +0.5f), new Vector3(+0.5f, -0.5f, -0.5f),
+            new Vector3D<float>(+0.5f, +0.5f, +0.5f), new Vector3D<float>(+0.5f, +0.5f, -0.5f),
+            new Vector3D<float>(+0.5f, -0.5f, +0.5f), new Vector3D<float>(+0.5f, -0.5f, -0.5f),
             //bottom
-            new Vector3(-0.5f, -0.5f, +0.5f), new Vector3(+0.5f, -0.5f, +0.5f),
-            new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(+0.5f, -0.5f, -0.5f),
+            new Vector3D<float>(-0.5f, -0.5f, +0.5f), new Vector3D<float>(+0.5f, -0.5f, +0.5f),
+            new Vector3D<float>(-0.5f, -0.5f, -0.5f), new Vector3D<float>(+0.5f, -0.5f, -0.5f),
             //top
-            new Vector3(-0.5f, +0.5f, -0.5f), new Vector3(+0.5f, +0.5f, -0.5f),
-            new Vector3(-0.5f, +0.5f, +0.5f), new Vector3(+0.5f, +0.5f, +0.5f),
+            new Vector3D<float>(-0.5f, +0.5f, -0.5f), new Vector3D<float>(+0.5f, +0.5f, -0.5f),
+            new Vector3D<float>(-0.5f, +0.5f, +0.5f), new Vector3D<float>(+0.5f, +0.5f, +0.5f),
             //back
-            new Vector3(+0.5f, +0.5f, -0.5f), new Vector3(-0.5f, +0.5f, -0.5f),
-            new Vector3(+0.5f, -0.5f, -0.5f), new Vector3(-0.5f, -0.5f, -0.5f),
+            new Vector3D<float>(+0.5f, +0.5f, -0.5f), new Vector3D<float>(-0.5f, +0.5f, -0.5f),
+            new Vector3D<float>(+0.5f, -0.5f, -0.5f), new Vector3D<float>(-0.5f, -0.5f, -0.5f),
             //front
-            new Vector3(-0.5f, +0.5f, +0.5f), new Vector3(+0.5f, +0.5f, +0.5f),
-            new Vector3(-0.5f, -0.5f, +0.5f), new Vector3(+0.5f, -0.5f, +0.5f)
+            new Vector3D<float>(-0.5f, +0.5f, +0.5f), new Vector3D<float>(+0.5f, +0.5f, +0.5f),
+            new Vector3D<float>(-0.5f, -0.5f, +0.5f), new Vector3D<float>(+0.5f, -0.5f, +0.5f)
         };
 
-        private static void EmitSkirt(WorldBase world, MeshBuffer vao, Block block, Vector3i pos, int sy, float yTop,
-            Vector4 light, BlockFace face, Vector3 t0, Vector3 t1, int neighbourY, int scanBottom)
+        private static void EmitSkirt(WorldBase world, MeshBuffer vao, Block block, Vector3D<int> pos, int sy, float yTop,
+            Vector4D<float> light, BlockFace face, Vector3D<float> t0, Vector3D<float> t1, int neighbourY, int scanBottom)
         {
             if (neighbourY != int.MinValue && neighbourY >= sy) return;            // neighbour covers the gap
             var yBot = (neighbourY == int.MinValue ? scanBottom : neighbourY) + 0.5f;
             if (yBot >= yTop || !TryGetFace(block, face, out var sideFace)) return;
             var shade = face == BlockFace.Right || face == BlockFace.Left ? LodSideShadeEW : LodSideShadeNS;
-            EmitLodQuad(vao, sideFace, new Vector4(face.GetNormal(), 0), Tint(world, block, pos, sideFace),
-                t0, t1, new Vector3(t0.X, yBot, t0.Z), new Vector3(t1.X, yBot, t1.Z), light * shade);
+            EmitLodQuad(vao, sideFace, new Vector4D<float>(face.GetNormal(), 0), Tint(world, block, pos, sideFace),
+                t0, t1, new Vector3D<float>(t0.X, yBot, t0.Z), new Vector3D<float>(t1.X, yBot, t1.Z), light * shade);
         }
 
-        private static void EmitLodQuad(MeshBuffer vao, BlockModel.FaceData face, Vector4 normal, Vector3 tint,
-            Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3, Vector4 light)
+        private static void EmitLodQuad(MeshBuffer vao, BlockModel.FaceData face, Vector4D<float> normal, Vector3D<float> tint,
+            Vector3D<float> v0, Vector3D<float> v1, Vector3D<float> v2, Vector3D<float> v3, Vector4D<float> light)
         {
             var tex = face.LoadedTexture;
             var uv = face.GetTexCoords();
@@ -61,11 +61,15 @@ namespace MinecraftClone3API.Util
             vao.Add(v1, TexCoord(tex, uv[1]), normal, tint, light);
             vao.Add(v2, TexCoord(tex, uv[2]), normal, tint, light);
             vao.Add(v3, TexCoord(tex, uv[3]), normal, tint, light);
-            vao.AddFace(baseVertex, false, Vector3.Zero);
+            vao.AddFace(baseVertex, false, Vector3D<float>.Zero);
         }
 
-        private static Vector3 Tint(WorldBase world, Block block, Vector3i pos, BlockModel.FaceData face)
-            => face.TintIndex == -1 ? new Vector3(1) : block.GetTintColor(world, pos, face.TintIndex).ToVector4().Xyz;
+        private static Vector3D<float> Tint(WorldBase world, Block block, Vector3D<int> pos, BlockModel.FaceData face)
+        {
+            if (face.TintIndex == -1) return new Vector3D<float>(1);
+            var c = block.GetTintColor(world, pos, face.TintIndex);
+            return new Vector3D<float>(c.X, c.Y, c.Z);
+        }
 
         private static bool TryGetFace(Block block, BlockFace face, out BlockModel.FaceData data)
         {
@@ -82,8 +86,8 @@ namespace MinecraftClone3API.Util
             return false;
         }
 
-        private static Vector4 TexCoord(BlockTexture tex, Vector2 uv)
-            => tex == null ? new Vector4(-1) : new Vector4(uv) {Z = tex.TextureId, W = tex.ArrayId};
+        private static Vector4D<float> TexCoord(BlockTexture tex, Vector2D<float> uv)
+            => tex == null ? new Vector4D<float>(-1) : new Vector4D<float>(uv.X, uv.Y, 0f, 0f) {Z = tex.TextureId, W = tex.ArrayId};
 
         // Floor a Phase-2 region skirt drops to when its neighbour column is unknown (region not streamed):
         // below bedrock, so the wall is hidden underground / behind the horizon fog. The over-long wall is
@@ -99,7 +103,7 @@ namespace MinecraftClone3API.Util
         /// heights for skirts read across into the adjacent regions (so region borders don't crack); an unknown
         /// neighbour skirts to <see cref="LodFloorY"/>.
         /// </summary>
-        public static void AddLodColumnRegionToVao(LodColumnStore store, Vector3i regionKey, MeshBuffer vao, int meshStep)
+        public static void AddLodColumnRegionToVao(LodColumnStore store, Vector3D<int> regionKey, MeshBuffer vao, int meshStep)
         {
             if (!store.TryGetRegion(regionKey, out var region)) return;
             var cols = region.Columns;
@@ -108,10 +112,10 @@ namespace MinecraftClone3API.Util
             var baseX = regionKey.X << 7;
             var baseZ = regionKey.Z << 7;
 
-            store.TryGetRegion(regionKey + new Vector3i(1, 0, 0), out var rPosX);
-            store.TryGetRegion(regionKey + new Vector3i(-1, 0, 0), out var rNegX);
-            store.TryGetRegion(regionKey + new Vector3i(0, 0, 1), out var rPosZ);
-            store.TryGetRegion(regionKey + new Vector3i(0, 0, -1), out var rNegZ);
+            store.TryGetRegion(regionKey + new Vector3D<int>(1, 0, 0), out var rPosX);
+            store.TryGetRegion(regionKey + new Vector3D<int>(-1, 0, 0), out var rNegX);
+            store.TryGetRegion(regionKey + new Vector3D<int>(0, 0, 1), out var rPosZ);
+            store.TryGetRegion(regionKey + new Vector3D<int>(0, 0, -1), out var rNegZ);
 
             // Downsample the stride-4 store to the super-grid by MAX surface (keeps trees/peaks from sinking when
             // coarsening — a super-cell shows its tallest member, so forests stay as canopy plateaus). meshStep 1
@@ -149,18 +153,18 @@ namespace MinecraftClone3API.Util
                     used[(scx + i) * superN + scz + k] = true;
 
                 var sy = LodColumn.SurfaceY(packed);
-                var pos = new Vector3i(baseX + scx * cellSize, sy, baseZ + scz * cellSize);
+                var pos = new Vector3D<int>(baseX + scx * cellSize, sy, baseZ + scz * cellSize);
                 var isWater = block.GetRenderMaterial(null, pos) == RenderMaterial.Water;
-                var light = new Vector4(0, 0, 0, CustomLightLevelToBrightness(LodColumn.Sky(packed)));
+                var light = new Vector4D<float>(0, 0, 0, CustomLightLevelToBrightness(LodColumn.Sky(packed)));
                 var x0 = baseX + scx * cellSize - 0.5f;
                 var x1 = baseX + (scx + h) * cellSize - 0.5f;
                 var z0 = baseZ + scz * cellSize - 0.5f;
                 var z1 = baseZ + (scz + w) * cellSize - 0.5f;
                 var yTop = sy + 0.5f;
-                EmitLodQuad(vao, topFace, new Vector4(0, 1, 0, isWater ? WaterNormalW : 0f),
+                EmitLodQuad(vao, topFace, new Vector4D<float>(0, 1, 0, isWater ? WaterNormalW : 0f),
                     Tint(null, block, pos, topFace),
-                    new Vector3(x0, yTop, z0), new Vector3(x1, yTop, z0),
-                    new Vector3(x0, yTop, z1), new Vector3(x1, yTop, z1), light);
+                    new Vector3D<float>(x0, yTop, z0), new Vector3D<float>(x1, yTop, z0),
+                    new Vector3D<float>(x0, yTop, z1), new Vector3D<float>(x1, yTop, z1), light);
             }
 
             for (var scx = 0; scx < superN; scx++)
@@ -172,8 +176,8 @@ namespace MinecraftClone3API.Util
                 if (block == BlockRegistry.BlockAir || block.Model == null) continue;
 
                 var sy = LodColumn.SurfaceY(packed);
-                var pos = new Vector3i(baseX + scx * cellSize, sy, baseZ + scz * cellSize);
-                var light = new Vector4(0, 0, 0, CustomLightLevelToBrightness(LodColumn.Sky(packed)));
+                var pos = new Vector3D<int>(baseX + scx * cellSize, sy, baseZ + scz * cellSize);
+                var light = new Vector4D<float>(0, 0, 0, CustomLightLevelToBrightness(LodColumn.Sky(packed)));
                 var x0 = baseX + scx * cellSize - 0.5f;
                 var x1 = baseX + (scx + 1) * cellSize - 0.5f;
                 var z0 = baseZ + scz * cellSize - 0.5f;
@@ -181,16 +185,16 @@ namespace MinecraftClone3API.Util
                 var yTop = sy + 0.5f;
 
                 EmitSkirt(null, vao, block, pos, sy, yTop, light, BlockFace.Right,
-                    new Vector3(x1, yTop, z1), new Vector3(x1, yTop, z0),
+                    new Vector3D<float>(x1, yTop, z1), new Vector3D<float>(x1, yTop, z0),
                     SuperNeighbourY(grid, superN, rPosX, scx + 1, scz, meshStep), LodFloorY);
                 EmitSkirt(null, vao, block, pos, sy, yTop, light, BlockFace.Left,
-                    new Vector3(x0, yTop, z0), new Vector3(x0, yTop, z1),
+                    new Vector3D<float>(x0, yTop, z0), new Vector3D<float>(x0, yTop, z1),
                     SuperNeighbourY(grid, superN, rNegX, scx - 1, scz, meshStep), LodFloorY);
                 EmitSkirt(null, vao, block, pos, sy, yTop, light, BlockFace.Front,
-                    new Vector3(x0, yTop, z1), new Vector3(x1, yTop, z1),
+                    new Vector3D<float>(x0, yTop, z1), new Vector3D<float>(x1, yTop, z1),
                     SuperNeighbourY(grid, superN, rPosZ, scx, scz + 1, meshStep), LodFloorY);
                 EmitSkirt(null, vao, block, pos, sy, yTop, light, BlockFace.Back,
-                    new Vector3(x1, yTop, z0), new Vector3(x0, yTop, z0),
+                    new Vector3D<float>(x1, yTop, z0), new Vector3D<float>(x0, yTop, z0),
                     SuperNeighbourY(grid, superN, rNegZ, scx, scz - 1, meshStep), LodFloorY);
             }
         }
@@ -229,7 +233,7 @@ namespace MinecraftClone3API.Util
             return LodColumn.IsEmpty(packed) ? int.MinValue : LodColumn.SurfaceY(packed);
         }
 
-        public static void AddBlockToVao(WorldBase world, Vector3i blockPos, int x, int y, int z, Block block,
+        public static void AddBlockToVao(WorldBase world, Vector3D<int> blockPos, int x, int y, int z, Block block,
             MeshBuffer vao, MeshBuffer transparentVao)
         {
             //If block is invisible or does not have a model for some reason ignore it
@@ -242,9 +246,9 @@ namespace MinecraftClone3API.Util
 
             foreach (var element in model.Elements)
             {
-                var transform = Matrix4.CreateScale((element.To - element.From) / 16) *
-                                Matrix4.CreateTranslation((element.To - element.From) / 32 + element.From / 16) *
-                                Matrix4.CreateTranslation(new Vector3(-0.5f)) *
+                var transform = Matrix4X4.CreateScale((element.To - element.From) / 16) *
+                                Matrix4X4.CreateTranslation((element.To - element.From) / 32 + element.From / 16) *
+                                Matrix4X4.CreateTranslation(new Vector3D<float>(-0.5f)) *
                                 orient;
 
                 foreach (var entry in element.Faces)
@@ -275,37 +279,38 @@ namespace MinecraftClone3API.Util
             }
         }
 
-        public static void AddFaceToVao(WorldBase world, Vector3i blockPos, int x, int y, int z, Block block, BlockFace face, BlockModel.FaceData data, MeshBuffer vao, Matrix4 transform, Vector4? lodLight = null)
+        public static void AddFaceToVao(WorldBase world, Vector3D<int> blockPos, int x, int y, int z, Block block, BlockFace face, BlockModel.FaceData data, MeshBuffer vao, Matrix4X4<float> transform, Vector4D<float>? lodLight = null)
         {
             var faceId = (int) face - 1;
             var baseVertex = vao.VertexCount;
 
             var texture = data.LoadedTexture;
             var texCoords = data.GetTexCoords();
-            var color = data.TintIndex == -1 ? new Vector4(1) : block.GetTintColor(world, blockPos, data.TintIndex).ToVector4();
-            var normal = new Vector4(face.GetNormal());
+            var color = data.TintIndex == -1 ? new Vector4D<float>(1) : block.GetTintColor(world, blockPos, data.TintIndex);
+            var fn = face.GetNormal(); var normal = new Vector4D<float>(fn.X, fn.Y, fn.Z, 0f);
             if (block.GetRenderMaterial(world, blockPos) == RenderMaterial.Water) normal.W = WaterNormalW;
-            var colorXyz = color.Xyz;
+            var colorXyz = new Vector3D<float>(color.X, color.Y, color.Z);
 
             if (texCoords.Length != 4) throw new Exception($"\"{block}\" invalid texture coords array length!");
 
             var sorted = vao.Sorted;
-            var faceMiddle = Vector3.Zero;
+            var faceMiddle = Vector3D<float>.Zero;
 
             //per vertex light value interpolation (smooth lighting + free ambient occlusion); the four
             //corner brightnesses are kept to flip the quad for AO anisotropy. xyz = block light, w = sky.
             //https://0fps.net/2013/07/03/ambient-occlusion-for-minecraft-like-worlds/
-            Vector4 b0 = default, b1 = default, b2 = default, b3 = default;
+            Vector4D<float> b0 = default, b1 = default, b2 = default, b3 = default;
 
             for (var j = 0; j < 4; j++)
             {
                 var vertexPosition = FacePositions[faceId * 4 + j];
                 // Bake WORLD-space position (chunk origin folded in) so the renderer needs no per-chunk model
                 // matrix — that's what lets every chunk's opaque mesh share one buffer + one batched multidraw.
-                var position = (new Vector4(vertexPosition, 1) * transform).Xyz + blockPos.ToVector3();
+                var transformed = new Vector4D<float>(vertexPosition, 1) * transform;
+                var position = new Vector3D<float>(transformed.X, transformed.Y, transformed.Z) + blockPos.ToVector3();
 
                 //tex coords are -1 if texture is null; texCoord z = texId, w = textureArrayId
-                var texCoord = texture == null ? new Vector4(-1) : new Vector4(texCoords[j]) {Z = texture.TextureId, W = texture.ArrayId};
+                var texCoord = texture == null ? new Vector4D<float>(-1) : new Vector4D<float>(texCoords[j].X, texCoords[j].Y, 0f, 0f) {Z = texture.TextureId, W = texture.ArrayId};
 
                 // LOD faces light flat from the exposed air super-block (per-vertex AO sampling would read the
                 // immediate neighbour, which is inside the solid super-block region → black faces).
@@ -334,14 +339,14 @@ namespace MinecraftClone3API.Util
 
         // xyz = block-light brightness (per channel), w = sky-light brightness. Block and sky are sampled
         // together at each position so the (expensive) neighbour smooth-lighting walk happens once.
-        private static Vector4 SampleBrightness(WorldBase world, Vector3i pos)
+        private static Vector4D<float> SampleBrightness(WorldBase world, Vector3D<int> pos)
         {
             var rgb = LightLevelToBrightness(world.GetBlockLightLevel(pos).Vector3);
             var sky = CustomLightLevelToBrightness(world.GetSkyLight(pos));
-            return new Vector4(rgb, sky);
+            return new Vector4D<float>(rgb, sky);
         }
 
-        private static Vector4 CalculateBrightness(WorldBase world, Block block, Vector3i blockPos, BlockFace face, Vector3 vertexPosition)
+        private static Vector4D<float> CalculateBrightness(WorldBase world, Block block, Vector3D<int> blockPos, BlockFace face, Vector3D<float> vertexPosition)
         {
             //if its not a full opaque block return brightness of itself
             if (!block.IsOpaqueFullBlock(world, blockPos) || !block.Model.AmbientOcclusion)
@@ -367,24 +372,24 @@ namespace MinecraftClone3API.Util
 
             if (normal.X != 0)
             {
-                return GetSmoothLightValue(world, pos, pos + new Vector3i(0, offset.Y, 0),
-                    pos + new Vector3i(0, 0, offset.Z), pos + new Vector3i(0, offset.Y, offset.Z));
+                return GetSmoothLightValue(world, pos, pos + new Vector3D<int>(0, offset.Y, 0),
+                    pos + new Vector3D<int>(0, 0, offset.Z), pos + new Vector3D<int>(0, offset.Y, offset.Z));
             }
             if (normal.Y != 0)
             {
-                return GetSmoothLightValue(world, pos, pos + new Vector3i(offset.X, 0, 0),
-                    pos + new Vector3i(0, 0, offset.Z), pos + new Vector3i(offset.X, 0, offset.Z));
+                return GetSmoothLightValue(world, pos, pos + new Vector3D<int>(offset.X, 0, 0),
+                    pos + new Vector3D<int>(0, 0, offset.Z), pos + new Vector3D<int>(offset.X, 0, offset.Z));
             }
             if (normal.Z != 0)
             {
-                return GetSmoothLightValue(world, pos, pos + new Vector3i(offset.X, 0, 0),
-                    pos + new Vector3i(0, offset.Y, 0), pos + new Vector3i(offset.X, offset.Y, 0));
+                return GetSmoothLightValue(world, pos, pos + new Vector3D<int>(offset.X, 0, 0),
+                    pos + new Vector3D<int>(0, offset.Y, 0), pos + new Vector3D<int>(offset.X, offset.Y, 0));
             }
 
             throw new Exception("Something is really broken if you can read this :S");
         }
 
-        private static Vector4 GetSmoothLightValue(WorldBase world, Vector3i p0, Vector3i p1, Vector3i p2, Vector3i p3)
+        private static Vector4D<float> GetSmoothLightValue(WorldBase world, Vector3D<int> p0, Vector3D<int> p1, Vector3D<int> p2, Vector3D<int> p3)
         {
             var lightValue = SampleBrightness(world, p0);
 
@@ -404,10 +409,11 @@ namespace MinecraftClone3API.Util
         private const float Base = 0.8f;
         //private const float CustomBase = 0.897499991f;
 
-        private static Vector3 LightLevelToBrightness(Vector3 lightLevel)
+        private static Vector3D<float> LightLevelToBrightness(Vector3D<float> lightLevel)
         {
-            for (var i = 0; i < 3; i++)
-                lightLevel[i] = CustomLightLevelToBrightness(lightLevel[i]);
+            lightLevel.X = CustomLightLevelToBrightness(lightLevel.X);
+            lightLevel.Y = CustomLightLevelToBrightness(lightLevel.Y);
+            lightLevel.Z = CustomLightLevelToBrightness(lightLevel.Z);
 
             return lightLevel;
         }

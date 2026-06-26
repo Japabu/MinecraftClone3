@@ -15,7 +15,7 @@ namespace MinecraftClone3API.Entities
     public abstract class EntityData
     {
         /// <summary>Whether the entity type's optional overlay render layer (the sheep's wool) is shown. Lets
-        /// the GL-free data drive the renderer without the API knowing the concrete subclass.</summary>
+        /// the GPU-free data drive the renderer without the API knowing the concrete subclass.</summary>
         public virtual bool OverlayVisible => true;
 
         public abstract void Serialize(BinaryWriter writer);

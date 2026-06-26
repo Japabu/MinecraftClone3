@@ -4,12 +4,11 @@ using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Client;
 using MinecraftClone3API.Client.Blocks;
 using MinecraftClone3API.Graphics;
+using MinecraftClone3API.Graphics.Rhi;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
-using OpenTK.Windowing.Desktop;
-using OpenTK.Windowing.GraphicsLibraryFramework;
+using Silk.NET.Input;
 
 namespace MinecraftClone3API.Entities
 {
@@ -53,6 +52,10 @@ namespace MinecraftClone3API.Entities
         private static bool _attacking;
         private static readonly Stopwatch _frameTimer = Stopwatch.StartNew();
 
+        // The world being driven, cached each frame so the discrete input-event handlers
+        // (OnKeyDown/OnMouseDown/OnScroll, routed from StateWorld) act without it being threaded through.
+        private static WorldBase _world;
+
         public static void SetEntity(EntityPlayer playerEntity)
         {
             PlayerEntity = playerEntity;
@@ -62,17 +65,17 @@ namespace MinecraftClone3API.Entities
         /// <summary>Per-display-frame: look, the fly toggle, hotbar, debug keys, break/place, and the camera.
         /// Movement is a fixed 20 tps step in <see cref="Tick"/>; this runs every frame for responsiveness
         /// and reads the interpolated position (set by <see cref="ApplyInterpolation"/> before it is called).</summary>
-        public static void UpdateFrame(GameWindow window, WorldBase world)
+        public static void UpdateFrame(WorldBase world, bool focused)
         {
+            _world = world;
             _blockRaytrace = world.BlockRaytrace(PlayerEntity.RenderPosition + PlayerEntity.EyeOffset,
                 PlayerEntity.Forward, 8);
 
-            if (!window.IsFocused) return;
+            if (!focused) return;
 
-            var ks = window.KeyboardState;
-            var ms = window.MouseState;
-
-            var delta = ms.Delta;
+            // Mouse-look from the accumulated frame delta (Silk MouseMove); discrete actions arrive via the
+            // OnKeyDown/OnMouseDown/OnScroll handlers below, routed from StateWorld when it is the foreground.
+            var delta = ClientResources.Input.ConsumeMouseDelta();
             if (_skipMouseDelta)
             {
                 delta = Vector2.Zero;
@@ -81,7 +84,25 @@ namespace MinecraftClone3API.Entities
             var sensitivity = GraphicsSettings.MouseSensitivity;
             PlayerEntity.Rotate(-delta.Y * sensitivity, -delta.X * sensitivity);
 
-            if (PlayerEntity.GameMode == GameMode.Creative && Keybinds.IsPressed(ks, GameAction.Jump))
+            HandleMiningHold(world);
+            UpdateCamera(world);
+        }
+
+        /// <summary>Discrete key press (routed from <c>StateWorld.OnKeyDown</c> when gameplay is the foreground
+        /// layer): debug toggles, the creative fly double-tap, drop, and hotbar number keys.</summary>
+        public static void OnKeyDown(Key key)
+        {
+            if (key == Key.F1) RenderDebug.ShowControls = !RenderDebug.ShowControls;
+            else if (key == Key.F3) RenderDebug.ShowDiagnostics = !RenderDebug.ShowDiagnostics;
+            else if (key == Key.F4) ChunkBorderRenderer.Enabled = !ChunkBorderRenderer.Enabled;
+            else if (key == Key.F7) RenderDebug.ShadowFactor = !RenderDebug.ShadowFactor;
+            else if (key == Key.F10) Profiler.Toggle();
+            else if (key == Key.F2) WorldRenderer.FixedTimeOfDay = WorldRenderer.FixedTimeOfDay == null ? 220.0 : 0;
+            else if (key == Key.F5) Perspective = (CameraPerspective) (((int) Perspective + 1) % 3);
+
+            if (PlayerEntity == null) return;
+
+            if (PlayerEntity.GameMode == GameMode.Creative && Keybinds.Matches(GameAction.Jump, key))
             {
                 if (_spaceTapTimer.Elapsed.TotalSeconds < DoubleTapSeconds)
                 {
@@ -91,26 +112,41 @@ namespace MinecraftClone3API.Entities
                 _spaceTapTimer.Restart();
             }
 
-            if (world is WorldClient client)
+            if (_world is WorldClient client)
             {
-                UpdateHotbarSelection(client, ks, ms);
-                if (Keybinds.IsPressed(ks, GameAction.Drop))
-                    client.SendDropItem(ks.IsKeyDown(Keys.LeftControl) || ks.IsKeyDown(Keys.RightControl));
+                if (Keybinds.Matches(GameAction.Drop, key))
+                    client.SendDropItem(ClientResources.Input.IsKeyDown(Key.ControlLeft) ||
+                                        ClientResources.Input.IsKeyDown(Key.ControlRight));
+                if (key >= Key.Number1 && key <= Key.Number9)
+                    SetHotbar(client, key - Key.Number1);
             }
+        }
 
-            if (ks.IsKeyPressed(Keys.F1)) RenderDebug.ShowControls = !RenderDebug.ShowControls;
-            if (ks.IsKeyPressed(Keys.F3)) RenderDebug.ShowDiagnostics = !RenderDebug.ShowDiagnostics;
-            if (ks.IsKeyPressed(Keys.F4)) ChunkBorderRenderer.Enabled = !ChunkBorderRenderer.Enabled;
-            if (ks.IsKeyPressed(Keys.F7)) RenderDebug.ShadowFactor = !RenderDebug.ShadowFactor;
-            if (ks.IsKeyPressed(Keys.F10)) Profiler.Toggle();
-            if (ks.IsKeyPressed(Keys.F2)) WorldRenderer.FixedTimeOfDay = WorldRenderer.FixedTimeOfDay == null ? 220.0 : 0;
-            if (ks.IsKeyPressed(Keys.F5)) Perspective = (CameraPerspective) (((int) Perspective + 1) % 3);
+        /// <summary>Discrete mouse press: left = attack-or-break (creative breaks instantly; survival starts a
+        /// mining hold), right = activate-or-place.</summary>
+        public static void OnMouseDown(MouseButton button)
+        {
+            if (_world == null) return;
+            if (button == MouseButton.Left) AttackOrBreak(_world);
+            else if (button == MouseButton.Right && !TryActivateBlock(_world)) PlaceBlock(_world);
+        }
 
-            HandleBreaking(world, ms);
-            if (ms.IsButtonDown(MouseButton.Right) && !ms.WasButtonDown(MouseButton.Right) && !TryActivateBlock(world))
-                PlaceBlock(world);
+        public static void OnMouseUp(MouseButton button)
+        {
+            if (button != MouseButton.Left) return;
+            _attacking = false;
+            _miningTarget = null;
+            _miningProgress = 0f;
+        }
 
-            UpdateCamera(world);
+        /// <summary>Hotbar scroll-wheel step (routed from <c>StateWorld.OnScroll</c>).</summary>
+        public static void OnScroll(float delta)
+        {
+            if (!(_world is WorldClient client)) return;
+            var selected = client.Inventory.SelectedHotbar;
+            if (delta > 0) selected = (selected + Inventory.HotbarSize - 1) % Inventory.HotbarSize;
+            else if (delta < 0) selected = (selected + 1) % Inventory.HotbarSize;
+            SetHotbar(client, selected);
         }
 
         /// <summary>Drives the camera from the player each frame. First-person follows the eye directly; the
@@ -120,7 +156,8 @@ namespace MinecraftClone3API.Entities
         {
             var walkDt = (float) _walkTimer.Elapsed.TotalSeconds;
             _walkTimer.Restart();
-            var speed = (PlayerEntity.Position.Xz - PlayerEntity.PrevPosition.Xz).Length / PlayerPhysics.TickSeconds;
+            var moved = PlayerEntity.Position - PlayerEntity.PrevPosition;
+            var speed = new Vector2(moved.X, moved.Z).Length / PlayerPhysics.TickSeconds;
             PlayerEntity.AdvanceWalkCycle(speed, walkDt);
 
             if (Perspective == CameraPerspective.FirstPerson)
@@ -139,15 +176,15 @@ namespace MinecraftClone3API.Entities
 
         /// <summary>One fixed 20 tps simulation step (one walk physics step, or one fly move). Records
         /// PrevPosition so <see cref="ApplyInterpolation"/> can smooth the 20 tps motion to the frame rate.</summary>
-        public static void Tick(GameWindow window, WorldBase world)
+        public static void Tick(WorldBase world, bool focused)
         {
-            if (!window.IsFocused) return;
+            _world = world;
+            if (!focused) return;
 
-            var ks = window.KeyboardState;
             PlayerEntity.PrevPosition = PlayerEntity.Position;
 
-            if (PlayerEntity.Flying) TickFlying(ks);
-            else TickWalking(ks, world);
+            if (PlayerEntity.Flying) TickFlying();
+            else TickWalking(world);
 
             TrackFall(world);
         }
@@ -177,41 +214,42 @@ namespace MinecraftClone3API.Entities
         public static void ApplyInterpolation(float alpha)
         {
             PlayerEntity.InterpolatedPosition =
-                Vector3.Lerp(PlayerEntity.PrevPosition, PlayerEntity.Position, alpha);
+                Vector3D.Lerp(PlayerEntity.PrevPosition, PlayerEntity.Position, alpha);
         }
 
-        private static void TickFlying(KeyboardState ks)
+        private static void TickFlying()
         {
             var a = Vector3.Zero;
-            if (Keybinds.IsDown(ks, GameAction.Left)) a.X -= 1;
-            if (Keybinds.IsDown(ks, GameAction.Right)) a.X += 1;
-            if (Keybinds.IsDown(ks, GameAction.Sneak)) a.Y -= 1;
-            if (Keybinds.IsDown(ks, GameAction.Jump)) a.Y += 1;
-            if (Keybinds.IsDown(ks, GameAction.Back)) a.Z -= 1;
-            if (Keybinds.IsDown(ks, GameAction.Forward)) a.Z += 1;
+            if (Keybinds.IsDown(GameAction.Left)) a.X -= 1;
+            if (Keybinds.IsDown(GameAction.Right)) a.X += 1;
+            if (Keybinds.IsDown(GameAction.Sneak)) a.Y -= 1;
+            if (Keybinds.IsDown(GameAction.Jump)) a.Y += 1;
+            if (Keybinds.IsDown(GameAction.Back)) a.Z -= 1;
+            if (Keybinds.IsDown(GameAction.Forward)) a.Z += 1;
             if (Math.Abs(a.LengthSquared) > 0.0001f)
             {
                 var speed = FlySpeed;
-                if (Keybinds.IsDown(ks, GameAction.Sprint)) speed *= SprintMultiplier;
-                PlayerEntity.Move(a.Normalized() * speed * PlayerPhysics.TickSeconds);
+                if (Keybinds.IsDown(GameAction.Sprint)) speed *= SprintMultiplier;
+                PlayerEntity.Move(Vector3D.Normalize(a) * speed * PlayerPhysics.TickSeconds);
             }
         }
 
-        private static void TickWalking(KeyboardState ks, WorldBase world)
+        private static void TickWalking(WorldBase world)
         {
             var inputX = 0f;
             var inputZ = 0f;
-            if (Keybinds.IsDown(ks, GameAction.Left)) inputX -= 1;
-            if (Keybinds.IsDown(ks, GameAction.Right)) inputX += 1;
-            if (Keybinds.IsDown(ks, GameAction.Back)) inputZ -= 1;
-            if (Keybinds.IsDown(ks, GameAction.Forward)) inputZ += 1;
+            if (Keybinds.IsDown(GameAction.Left)) inputX -= 1;
+            if (Keybinds.IsDown(GameAction.Right)) inputX += 1;
+            if (Keybinds.IsDown(GameAction.Back)) inputZ -= 1;
+            if (Keybinds.IsDown(GameAction.Forward)) inputZ += 1;
 
             var forward = new Vector2((float)Math.Sin(PlayerEntity.Yaw), (float)Math.Cos(PlayerEntity.Yaw));
-            var wish = PlayerEntity.Right.Xz * inputX + forward * inputZ;
-            if (wish.LengthSquared > 1f) wish = wish.Normalized();
+            var right = PlayerEntity.Right;
+            var wish = new Vector2(right.X, right.Z) * inputX + forward * inputZ;
+            if (wish.LengthSquared > 1f) wish = Vector2D.Normalize(wish);
 
-            var jump = Keybinds.IsDown(ks, GameAction.Jump);
-            var sprint = Keybinds.IsDown(ks, GameAction.Sprint) && inputZ > 0;
+            var jump = Keybinds.IsDown(GameAction.Jump);
+            var sprint = Keybinds.IsDown(GameAction.Sprint) && inputZ > 0;
 
             PlayerPhysics.Tick(world, PlayerEntity, wish, jump, sprint);
         }
@@ -222,41 +260,36 @@ namespace MinecraftClone3API.Entities
             world.SetBlock(_blockRaytrace.BlockPos, BlockRegistry.BlockAir);
         }
 
-        /// <summary>Creative breaks instantly on click; survival holds left-click to mine, accruing progress on
-        /// the targeted block at the Minecraft mining rate (tool match and tier vs. block hardness) and breaking
-        /// it when full. Progress resets if the target changes or the button is released.</summary>
-        private static void HandleBreaking(WorldBase world, MouseState ms)
+        /// <summary>A fresh left-press: a melee attack on a creature in reach (swallows the rest of the hold),
+        /// else a creative instant-break. Survival mining accrues per-frame in <see cref="HandleMiningHold"/>
+        /// while the button stays held.</summary>
+        private static void AttackOrBreak(WorldBase world)
         {
-            var dt = (float) _frameTimer.Elapsed.TotalSeconds;
-            _frameTimer.Restart();
-            // Cap the step so a long stall (alt-tab, an open menu) can't dump a full break into one frame.
-            if (dt > 0.25f) dt = 0.25f;
-
-            var leftDown = ms.IsButtonDown(MouseButton.Left);
-
-            // A fresh left-press on a creature (nearer than any block) is a melee attack; swallow the rest of
-            // this hold so it doesn't also break/mine. PickEntity already clamps to be nearer than the block.
-            if (leftDown && !ms.WasButtonDown(MouseButton.Left) && world is WorldClient attackClient)
+            if (world is WorldClient attackClient)
             {
                 var entity = PickEntity(attackClient);
                 if (entity != null && entity.Type != null && entity.Type.Kind == EntityKind.Creature)
                 {
                     attackClient.SendAttackEntity(entity.EntityId);
                     _attacking = true;
+                    return;
                 }
             }
-            if (!leftDown) _attacking = false;
-            if (_attacking) { _miningTarget = null; _miningProgress = 0f; return; }
+            if (PlayerEntity.GameMode == GameMode.Creative) BreakBlock(world);
+        }
 
-            if (PlayerEntity.GameMode == GameMode.Creative)
-            {
-                if (leftDown && !ms.WasButtonDown(MouseButton.Left)) BreakBlock(world);
-                _miningTarget = null;
-                _miningProgress = 0f;
-                return;
-            }
+        /// <summary>Survival mining while left-click is held: accrues progress on the targeted block at the
+        /// Minecraft mining rate (tool match and tier vs. block hardness) and breaks it when full. Progress
+        /// resets if the target changes, the button is released, or the hold was claimed by an attack.</summary>
+        private static void HandleMiningHold(WorldBase world)
+        {
+            var dt = (float) _frameTimer.Elapsed.TotalSeconds;
+            _frameTimer.Restart();
+            // Cap the step so a long stall (alt-tab, an open menu) can't dump a full break into one frame.
+            if (dt > 0.25f) dt = 0.25f;
 
-            if (!leftDown || _blockRaytrace == null)
+            var leftDown = ClientResources.Input.IsMouseDown(MouseButton.Left);
+            if (!leftDown || _attacking || PlayerEntity.GameMode == GameMode.Creative || _blockRaytrace == null)
             {
                 _miningTarget = null;
                 _miningProgress = 0f;
@@ -405,39 +438,30 @@ namespace MinecraftClone3API.Entities
             return tmin <= tmax;
         }
 
-        /// <summary>Hotbar slot selection: number keys 1-9 jump to a slot, the scroll wheel steps through
-        /// them (wrapping). A change is mirrored to the server so the held item stays authoritative.</summary>
-        private static void UpdateHotbarSelection(WorldClient client, KeyboardState ks, MouseState ms)
+        /// <summary>Select a hotbar slot (a number key or a scroll step), wrapping into range and mirroring the
+        /// change to the server so the held item stays authoritative.</summary>
+        private static void SetHotbar(WorldClient client, int slot)
         {
-            var selected = client.Inventory.SelectedHotbar;
-
-            for (var i = 0; i < Inventory.HotbarSize; i++)
-                if (ks.IsKeyPressed(Keys.D1 + i)) selected = i;
-
-            var scroll = ms.ScrollDelta.Y;
-            if (scroll > 0) selected = (selected + Inventory.HotbarSize - 1) % Inventory.HotbarSize;
-            else if (scroll < 0) selected = (selected + 1) % Inventory.HotbarSize;
-
-            if (selected == client.Inventory.SelectedHotbar) return;
-            client.Inventory.SelectedHotbar = selected;
-            client.SendHeldSlot(selected);
+            slot = ((slot % Inventory.HotbarSize) + Inventory.HotbarSize) % Inventory.HotbarSize;
+            if (slot == client.Inventory.SelectedHotbar) return;
+            client.Inventory.SelectedHotbar = slot;
+            client.SendHeldSlot(slot);
         }
 
         /// <summary>Discards the next mouse delta so re-grabbing the cursor (window refocus,
         /// closing a menu) doesn't snap the camera.</summary>
         public static void ResetMouse() => _skipMouseDelta = true;
 
-        public static void Render(Camera camera, Matrix4 projection)
+        public static void Render(RenderPass pass, Camera camera)
         {
             if (_blockRaytrace == null) return;
 
-            BoundingBoxRenderer.Render(_blockRaytrace.BoundingBox, _blockRaytrace.BlockPos.ToVector3(), 1.01f, camera,
-                projection);
+            BoundingBoxRenderer.Render(pass, _blockRaytrace.BoundingBox, _blockRaytrace.BlockPos.ToVector3(), 1.01f);
 
             // The breaking crack overlay, while mining the targeted block in survival.
             if (_miningProgress > 0f && _miningTarget == _blockRaytrace.BlockPos)
-                BlockBreakRenderer.Render(_blockRaytrace.BoundingBox, _blockRaytrace.BlockPos.ToVector3(),
-                    _miningProgress, camera, projection);
+                BlockBreakRenderer.Render(pass, _blockRaytrace.BoundingBox, _blockRaytrace.BlockPos.ToVector3(),
+                    _miningProgress);
         }
     }
 }

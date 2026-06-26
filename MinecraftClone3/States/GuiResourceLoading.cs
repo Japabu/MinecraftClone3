@@ -7,8 +7,6 @@ using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Plugins;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
-using OpenTK.Windowing.Desktop;
 
 namespace MinecraftClone3.States
 {
@@ -22,16 +20,18 @@ namespace MinecraftClone3.States
         private int _progress;
         private string _text;
 
-        private readonly GameWindow _window;
-
-        public GuiResourceLoading(GameWindow window)
+        public GuiResourceLoading(bool reload)
         {
-            _window = window;
+            if (reload)
+            {
+                Start(true);
+                return;
+            }
 
             CommonResources.Load();
             PluginManager.AddPlugin(new FileSystemRaw(new DirectoryInfo(Path.Combine(GamePaths.PluginsDir, "System"))));
             ResourceReader.ClearCache();
-            ClientResources.Load(window);
+            ClientResources.Load(ClientResources.Window, ClientResources.Input);
             BoundingBoxRenderer.Load();
             BlockBreakRenderer.Load();
             EntityRenderer.Load();
@@ -44,18 +44,13 @@ namespace MinecraftClone3.States
             Start(false);
         }
 
-        public GuiResourceLoading()
-        {
-            Start(true);
-        }
-
         public override void Update(bool focused)
         {
             if (!_done) return;
             if (Benchmark.Enabled || Inspect.Enabled)
-                StateEngine.ReplaceState(new StateWorld(_window, Benchmark.CreateWorldInfo(), benchmark: true));
+                StateEngine.ReplaceState(new StateWorld(Benchmark.CreateWorldInfo(), benchmark: true));
             else
-                StateEngine.ReplaceState(new GuiMainMenu(_window));
+                StateEngine.ReplaceState(new GuiMainMenu());
         }
 
         public override void Render()
@@ -69,10 +64,7 @@ namespace MinecraftClone3.States
 
         private void Start(bool reload)
         {
-            // The OpenTK 2 build loaded resources on a second thread with its own shared GL
-            // context. macOS/NSGL does not support creating a second shared context this way
-            // (GLFW also requires windows on the main thread), so resources are uploaded
-            // synchronously on the main thread, which already owns the GL context.
+            // Resources load synchronously on the main thread, which owns the GPU context.
             Work(reload);
             _done = true;
         }
@@ -130,7 +122,7 @@ namespace MinecraftClone3.States
             // the same arrays, so they must be indexed before BlockTextureManager.Upload bakes them to the GPU.
             EntityRenderer.LoadModels();
 
-            GlTextureUploader.Upload();
+            BlockTextureUploader.Upload();
 
             // The font comes from the Minecraft resource pack (minecraft/font/default.json), which is only
             // indexed by AddResourcePacks above — so the font must load here, after the pack, not in the

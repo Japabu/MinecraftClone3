@@ -10,21 +10,21 @@ using MinecraftClone3API.Graphics;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Networking;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Client.Blocks
 {
     /// <summary>
     /// Client-side replica of the world. Chunk decode (the singleplayer clone / the multiplayer
     /// decompress + deserialize) and all chunk-content mutation run on a background <b>apply thread</b>,
-    /// so the render thread never copies chunk storage. The main thread only pumps packets, does the GL
+    /// so the render thread never copies chunk storage. The main thread only pumps packets, does the GPU
     /// work (creating <see cref="ChunkRenderData"/>, uploading meshes) and reads; a separate mesh thread
     /// builds vertex lists. It never generates terrain, touches disk, or runs lighting — the server is
     /// authoritative.
     /// </summary>
     public class WorldClient : WorldBase
     {
-        // Per-frame GL upload time budget. Uploads are cheap (~0.15 ms each — a glBufferData/SubData orphan),
+        // Per-frame GPU upload time budget. Uploads are cheap (~0.15 ms each — a GPU buffer write),
         // so a few ms drains tens of chunks per frame, comfortably above the mesh pool's output, while bounding
         // the upload's contribution to frame time. Replaces a fixed count-per-frame (8) that throttled the
         // world-fill below the pool's throughput (an F10 chunk-trace showed the upload queue ballooning to
@@ -37,8 +37,8 @@ namespace MinecraftClone3API.Client.Blocks
         // play but bounds a pathological burst to one frame's worth instead of stalling the render thread.
         private const int MaxPacketsPerTick = 64;
 
-        // Cap on chunks given GL render data (and queued for meshing) per frame. The apply thread can
-        // publish a burst; bounding the per-frame GL/VAO creation keeps a burst from stalling the frame.
+        // Cap on chunks given GPU render data (and queued for meshing) per frame. The apply thread can
+        // publish a burst; bounding the per-frame GPU vertex-buffer creation keeps a burst from stalling the frame.
         private const int MaxRenderReadyPerTick = 256;
 
         // Distance (blocks, chunk-centre to player) past which the client drops a cached chunk and tells the
@@ -58,19 +58,19 @@ namespace MinecraftClone3API.Client.Blocks
                 _cacheDistanceSq = value * value;
                 // Force the next eviction scan (normally gated on a chunk-border crossing) so a *decrease*
                 // evicts the now-too-far chunks immediately instead of waiting for the player to move.
-                _lastEvictChunk = new Vector3i(int.MinValue);
+                _lastEvictChunk = new Vector3D<int>(int.MinValue);
             }
         }
 
-        private static readonly Vector3i[] NeighbourOffsets =
+        private static readonly Vector3D<int>[] NeighbourOffsets =
         {
-            new Vector3i(-1, 0, 0), new Vector3i(+1, 0, 0),
-            new Vector3i(0, -1, 0), new Vector3i(0, +1, 0),
-            new Vector3i(0, 0, -1), new Vector3i(0, 0, +1)
+            new Vector3D<int>(-1, 0, 0), new Vector3D<int>(+1, 0, 0),
+            new Vector3D<int>(0, -1, 0), new Vector3D<int>(0, +1, 0),
+            new Vector3D<int>(0, 0, -1), new Vector3D<int>(0, 0, +1)
         };
 
-        public readonly ConcurrentDictionary<Vector3i, ChunkRenderData> RenderData =
-            new ConcurrentDictionary<Vector3i, ChunkRenderData>();
+        public readonly ConcurrentDictionary<Vector3D<int>, ChunkRenderData> RenderData =
+            new ConcurrentDictionary<Vector3D<int>, ChunkRenderData>();
 
         // Shared vertex/index arena holding every chunk's OPAQUE mesh, drawn with one batched multidraw per
         // pass (see ChunkMeshArena). Created/uploaded/freed/disposed on the main thread only.
@@ -92,7 +92,7 @@ namespace MinecraftClone3API.Client.Blocks
 
         /// <summary>Local replicas of open container blocks (furnaces), keyed by block position. Updated from
         /// <see cref="ContainerStatePacket"/>s and read by the container screens (see <see cref="ContainerView"/>).</summary>
-        public readonly Dictionary<Vector3i, ContainerView> Containers = new Dictionary<Vector3i, ContainerView>();
+        public readonly Dictionary<Vector3D<int>, ContainerView> Containers = new Dictionary<Vector3D<int>, ContainerView>();
 
         public int LocalEntityId = -1;
 
@@ -106,7 +106,7 @@ namespace MinecraftClone3API.Client.Blocks
         public bool PlayerDead;
         public bool StatsReceived;
 
-        public Vector3 SpawnPosition;
+        public Vector3D<float> SpawnPosition;
         public bool SpawnReceived;
         public bool Ready;
 
@@ -117,9 +117,9 @@ namespace MinecraftClone3API.Client.Blocks
         private readonly Stopwatch _timeSyncClock = Stopwatch.StartNew();
         public double WorldTimeSeconds => _serverTimeSeconds + _timeSyncClock.Elapsed.TotalSeconds;
 
-        // Per-Update phase timings + GL upload volume, surfaced to the profiler so a frame spike can be
-        // split into packet-handling / render-data creation / GL upload / eviction — isolating whether the
-        // cost is the update path or the GPU upload (the re-BufferData of edited chunks).
+        // Per-Update phase timings + GPU upload volume, surfaced to the profiler so a frame spike can be
+        // split into packet-handling / render-data creation / GPU upload / eviction — isolating whether the
+        // cost is the update path or the GPU upload (the buffer rewrite of edited chunks).
         public double LastPacketMs, LastDrainMs, LastUploadMs, LastEvictMs;
         public int LastUploadChunks, LastUploadIndices;
 
@@ -137,7 +137,7 @@ namespace MinecraftClone3API.Client.Blocks
         // The concurrent-queue backlogs upstream of meshing, mirrored as Interlocked-maintained counters
         // (incremented at the producing enqueue, decremented at the consuming dequeue) so the profiler
         // reads them lock-free instead of calling ConcurrentQueue.Count each frame. These are the decode
-        // backlog, the decoded→GL backlog, and the GL-dispose backlog respectively.
+        // backlog, the decoded→GPU backlog, and the GPU-dispose backlog respectively.
         private int _applyQueueDepth;
         private int _renderReadyDepth;
         private int _disposeQueueDepth;
@@ -153,18 +153,18 @@ namespace MinecraftClone3API.Client.Blocks
 
         // Decodes streamed chunks and applies block-change deltas off the render thread, in packet order
         // (the single writer of chunk contents). It publishes finished chunks to LoadedChunks and hands
-        // their positions to the main thread via _renderReady for the GL-only ChunkRenderData step.
+        // their positions to the main thread via _renderReady for the GPU-only ChunkRenderData step.
         private readonly Thread _applyThread;
         private readonly ConcurrentQueue<Packet> _applyQueue = new ConcurrentQueue<Packet>();
         private readonly AutoResetEvent _applySignal = new AutoResetEvent(false);
-        private readonly ConcurrentQueue<(Vector3i Position, bool HighPriority)> _renderReady =
-            new ConcurrentQueue<(Vector3i, bool)>();
+        private readonly ConcurrentQueue<(Vector3D<int> Position, bool HighPriority)> _renderReady =
+            new ConcurrentQueue<(Vector3D<int>, bool)>();
 
         // Phase-2 LOD horizon (mirrors the chunk pipeline). The apply thread is the SOLE client writer of
         // LodStore (decoding LodColumnData on the same ordered _applyQueue); decoded regions are handed to the
-        // main thread via _lodRenderReady for GL render-data creation + meshing (Stage 7).
+        // main thread via _lodRenderReady for GPU render-data creation + meshing (Stage 7).
         public readonly LodColumnStore LodStore = new LodColumnStore();
-        private readonly ConcurrentQueue<Vector3i> _lodRenderReady = new ConcurrentQueue<Vector3i>();
+        private readonly ConcurrentQueue<Vector3D<int>> _lodRenderReady = new ConcurrentQueue<Vector3D<int>>();
         private int _lodRenderReadyDepth;
         public int LodRenderReadyQueueDepth => _lodRenderReadyDepth;
 
@@ -172,17 +172,17 @@ namespace MinecraftClone3API.Client.Blocks
         // lookup; LodRenderList mirrors its values for the renderer to iterate. Meshing + uploading reuse the
         // chunk mesh pool + upload loop as a lowest-priority branch (separate queues under the same locks).
         public ChunkMeshArena LodArena;
-        public readonly ConcurrentDictionary<Vector3i, LodRenderData> LodRegions =
-            new ConcurrentDictionary<Vector3i, LodRenderData>();
+        public readonly ConcurrentDictionary<Vector3D<int>, LodRenderData> LodRegions =
+            new ConcurrentDictionary<Vector3D<int>, LodRenderData>();
         public readonly List<LodRenderData> LodRenderList = new List<LodRenderData>();
-        private readonly Queue<Vector3i> _lodMeshQueue = new Queue<Vector3i>();
-        private readonly HashSet<Vector3i> _lodMeshPending = new HashSet<Vector3i>();
-        private readonly Queue<Vector3i> _lodUploadQueue = new Queue<Vector3i>();
-        private readonly HashSet<Vector3i> _lodUploadPending = new HashSet<Vector3i>();
-        private readonly List<Vector3i> _lodUploadRequeueScratch = new List<Vector3i>(64);
+        private readonly Queue<Vector3D<int>> _lodMeshQueue = new Queue<Vector3D<int>>();
+        private readonly HashSet<Vector3D<int>> _lodMeshPending = new HashSet<Vector3D<int>>();
+        private readonly Queue<Vector3D<int>> _lodUploadQueue = new Queue<Vector3D<int>>();
+        private readonly HashSet<Vector3D<int>> _lodUploadPending = new HashSet<Vector3D<int>>();
+        private readonly List<Vector3D<int>> _lodUploadRequeueScratch = new List<Vector3D<int>>(64);
         private readonly ConcurrentQueue<LodRenderData> _lodDisposeQueue = new ConcurrentQueue<LodRenderData>();
-        private readonly List<Vector3i> _lodEvictScratch = new List<Vector3i>();
-        private Vector3i _lastLodEvictChunk = new Vector3i(int.MinValue);
+        private readonly List<Vector3D<int>> _lodEvictScratch = new List<Vector3D<int>>();
+        private Vector3D<int> _lastLodEvictChunk = new Vector3D<int>(int.MinValue);
 
         // Block radius for the LOD draw cull + cache eviction. Set by StateWorld from the render-distance config
         // (= server LodRadius in blocks); 0 by default ⇒ LOD dormant. CacheDistance kept a region past the draw
@@ -195,25 +195,25 @@ namespace MinecraftClone3API.Client.Blocks
         private readonly object _meshLock = new object();
         // High priority = edits/light resends (re-applies of already-rendered chunks) so interactive
         // changes mesh promptly instead of waiting behind the initial first-load chunk flood.
-        private readonly Queue<Vector3i> _meshQueueHigh = new Queue<Vector3i>();
-        private readonly Queue<Vector3i> _meshQueueLow = new Queue<Vector3i>();
-        private readonly HashSet<Vector3i> _meshPending = new HashSet<Vector3i>();
+        private readonly Queue<Vector3D<int>> _meshQueueHigh = new Queue<Vector3D<int>>();
+        private readonly Queue<Vector3D<int>> _meshQueueLow = new Queue<Vector3D<int>>();
+        private readonly HashSet<Vector3D<int>> _meshPending = new HashSet<Vector3D<int>>();
 
         private readonly object _uploadLock = new object();
-        private readonly Queue<Vector3i> _uploadQueue = new Queue<Vector3i>();
-        private readonly HashSet<Vector3i> _uploadPending = new HashSet<Vector3i>();
+        private readonly Queue<Vector3D<int>> _uploadQueue = new Queue<Vector3D<int>>();
+        private readonly HashSet<Vector3D<int>> _uploadPending = new HashSet<Vector3D<int>>();
 
         private readonly ConcurrentQueue<ChunkRenderData> _disposeQueue = new ConcurrentQueue<ChunkRenderData>();
 
         // Last position reported via SendMove; drives client-owned chunk eviction. Reused scratch list
         // collects the chunks to evict so the per-frame scan allocates nothing steady-state.
-        private Vector3 _playerPosition;
+        private Vector3D<float> _playerPosition;
         // Player chunk at the last eviction scan; eviction only matters when the player moves, since chunks
         // only ever stream in within ViewDistance (< CacheDistance), so nothing goes out of cache range while
         // stationary. Gating on chunk-border crossings skips the per-frame O(loaded) scan when standing still.
-        private Vector3i _lastEvictChunk = new Vector3i(int.MinValue);
-        private readonly List<Vector3i> _evictScratch = new List<Vector3i>();
-        private readonly List<Vector3i> _uploadRequeueScratch = new List<Vector3i>(64);
+        private Vector3D<int> _lastEvictChunk = new Vector3D<int>(int.MinValue);
+        private readonly List<Vector3D<int>> _evictScratch = new List<Vector3D<int>>();
+        private readonly List<Vector3D<int>> _uploadRequeueScratch = new List<Vector3D<int>>(64);
 
         private volatile bool _stopped;
 
@@ -222,8 +222,8 @@ namespace MinecraftClone3API.Client.Blocks
         /// for the sky/fog, and <see cref="AmbientLight"/> is a minimum light floor. Set by a
         /// <see cref="DimensionChangePacket"/>; defaults to the open-sky Overworld.</summary>
         public bool HasSky = true;
-        public Vector3 FogColor;
-        public Vector3 AmbientLight;
+        public Vector3D<float> FogColor;
+        public Vector3D<float> AmbientLight;
 
         // Dimension-change barrier. _resetting parks the apply thread (sole writer of LoadedChunks/LodStore) so
         // the main thread can drop the whole cached world race-free in ResetForDimensionChange; _applyParked is
@@ -237,7 +237,7 @@ namespace MinecraftClone3API.Client.Blocks
         {
             _connection = connection;
 
-            // GL: constructed on the main thread (StateWorld ctor runs in the state update with a live context).
+            // GPU: constructed on the main thread (StateWorld ctor runs in the state update with a live context).
             OpaqueArena = new ChunkMeshArena();
             LodArena = new ChunkMeshArena();
 
@@ -249,7 +249,7 @@ namespace MinecraftClone3API.Client.Blocks
             // embarrassingly parallel: workers mesh distinct chunks (the _meshPending claim under _meshLock
             // guarantees no two take the same one), read chunk storage without writing (copy-on-grow
             // tolerates concurrent readers — Invariant 5), and only hand finished meshes to the main-thread
-            // GL upload (Invariant 1), so a pool scales throughput ~linearly with cores. Leave two cores for
+            // GPU upload (Invariant 1), so a pool scales throughput ~linearly with cores. Leave two cores for
             // the main (render) and server load threads.
             var meshWorkers = Math.Max(1, Environment.ProcessorCount - 2);
             // Reserve a fraction of the pool as LOD-first workers so the distant horizon can never be fully
@@ -297,7 +297,7 @@ namespace MinecraftClone3API.Client.Blocks
             var uploadIndices = 0;
             while (true)
             {
-                Vector3i pos;
+                Vector3D<int> pos;
                 lock (_uploadLock)
                 {
                     if (_uploadQueue.Count == 0)
@@ -340,7 +340,7 @@ namespace MinecraftClone3API.Client.Blocks
             lodRequeue.Clear();
             while (Stopwatch.GetTimestamp() < uploadDeadline)
             {
-                Vector3i key;
+                Vector3D<int> key;
                 lock (_uploadLock)
                 {
                     if (_lodUploadQueue.Count == 0) break;
@@ -388,7 +388,7 @@ namespace MinecraftClone3API.Client.Blocks
             foreach (var entity in Entities.Values) entity.UpdateInterpolation(interpDt);
         }
 
-        /// <summary>Creates the GL render data (a GL call, hence main-thread only) for chunks the apply
+        /// <summary>Creates the GPU render data (a GPU call, hence main-thread only) for chunks the apply
         /// thread finished decoding/mutating, and queues them for meshing. The apply thread already
         /// published the chunk to <see cref="WorldBase.LoadedChunks"/>; this only wires up rendering.</summary>
         private void DrainRenderReady()
@@ -413,7 +413,7 @@ namespace MinecraftClone3API.Client.Blocks
             }
         }
 
-        /// <summary>Main thread: creates LOD render-data (GL-free CPU buffer; arena alloc happens at upload) for
+        /// <summary>Main thread: creates LOD render-data (GPU-free CPU buffer; arena alloc happens at upload) for
         /// regions the apply thread decoded, and queues them for meshing on the shared pool. Mirrors
         /// <see cref="DrainRenderReady"/>.</summary>
         private void DrainLodRenderReady()
@@ -436,7 +436,7 @@ namespace MinecraftClone3API.Client.Blocks
             }
         }
 
-        private void QueueLodMesh(Vector3i key)
+        private void QueueLodMesh(Vector3D<int> key)
         {
             lock (_meshLock)
                 if (_lodMeshPending.Add(key))
@@ -451,9 +451,9 @@ namespace MinecraftClone3API.Client.Blocks
         private const float LodRing1Distance = 16 * Chunk.Size;   // stride-2 within this many blocks past RD
         private const float LodRing2Distance = 32 * Chunk.Size;   // then stride-4
         private const float LodRing3Distance = 64 * Chunk.Size;   // then stride-8; beyond: stride-16
-        private Vector3i _lastLodStepChunk = new Vector3i(int.MinValue);
+        private Vector3D<int> _lastLodStepChunk = new Vector3D<int>(int.MinValue);
 
-        private int MeshStepFor(Vector3 middle)
+        private int MeshStepFor(Vector3D<float> middle)
         {
             // Horizontal (XZ) distance: the LOD regions form a horizontal annulus and the rings are defined in the
             // ground plane (EvictDistantLod uses XZ too), so a region's stride must not change with the player's
@@ -471,7 +471,7 @@ namespace MinecraftClone3API.Client.Blocks
 
         /// <summary>Forces the next <see cref="ScanLodForMeshStep"/> to re-evaluate every LOD region's stride
         /// (after a LOD-Quality change, which shifts the ring distances). Main-thread only.</summary>
-        public void ForceLodMeshRescan() => _lastLodStepChunk = new Vector3i(int.MinValue);
+        public void ForceLodMeshRescan() => _lastLodStepChunk = new Vector3D<int>(int.MinValue);
 
         /// <summary>Re-evaluates each LOD region's mesh stride against the player's new position and re-queues any
         /// whose ring changed. Gated on a chunk-border crossing (own gate), so a stationary player does no work.
@@ -492,7 +492,7 @@ namespace MinecraftClone3API.Client.Blocks
             }
         }
 
-        private void RequeueLodUpload(Vector3i key)
+        private void RequeueLodUpload(Vector3D<int> key)
         {
             lock (_uploadLock)
                 if (_lodUploadPending.Add(key))
@@ -523,7 +523,7 @@ namespace MinecraftClone3API.Client.Blocks
             _evictScratch.Clear();
             foreach (var entry in LoadedChunks)
             {
-                var center = (entry.Key * Chunk.Size + new Vector3i(Chunk.Size / 2)).ToVector3();
+                var center = (entry.Key * Chunk.Size + new Vector3D<int>(Chunk.Size / 2)).ToVector3();
                 if ((center - _playerPosition).LengthSquared > _cacheDistanceSq)
                     _evictScratch.Add(entry.Key);
             }
@@ -561,7 +561,7 @@ namespace MinecraftClone3API.Client.Blocks
 
         /// <summary>Tells the server this client opened the container block at <paramref name="pos"/> (a furnace),
         /// so it streams that block's state; the returned <see cref="ContainerView"/> is the screen's live replica.</summary>
-        public ContainerView OpenContainer(Vector3i pos, int slotCount, int fieldCount)
+        public ContainerView OpenContainer(Vector3D<int> pos, int slotCount, int fieldCount)
         {
             if (!Containers.TryGetValue(pos, out var view) || view.Slots.Length != slotCount)
             {
@@ -572,16 +572,16 @@ namespace MinecraftClone3API.Client.Blocks
             return view;
         }
 
-        public void CloseContainer(Vector3i pos)
+        public void CloseContainer(Vector3D<int> pos)
         {
             Containers.Remove(pos);
             _connection.Send(new CloseContainerPacket());
         }
 
-        public void SendContainerSlot(Vector3i pos, int slot, ItemStack stack)
+        public void SendContainerSlot(Vector3D<int> pos, int slot, ItemStack stack)
             => _connection.Send(new ContainerSlotPacket {Position = pos, Slot = slot, Stack = stack});
 
-        public void SendUseItem(Vector3i position)
+        public void SendUseItem(Vector3D<int> position)
             => _connection.Send(new UseItemRequestPacket {Position = position});
 
         public void SendUseItemOnEntity(int entityId)
@@ -618,7 +618,7 @@ namespace MinecraftClone3API.Client.Blocks
             _stopped = true;
             _applySignal.Set();
             _connection.Close();
-            // Main-thread GL teardown of the shared arenas (the mesh/apply threads no longer touch them).
+            // Main-thread GPU teardown of the shared arenas (the mesh/apply threads no longer touch them).
             OpaqueArena.Dispose();
             LodArena.Dispose();
         }
@@ -712,12 +712,12 @@ namespace MinecraftClone3API.Client.Blocks
 
             while (_applyQueue.TryDequeue(out _)) Interlocked.Decrement(ref _applyQueueDepth);
 
-            foreach (var pos in new List<Vector3i>(LoadedChunks.Keys)) UnloadChunk(pos);
-            foreach (var key in new List<Vector3i>(LodRegions.Keys)) UnloadLodRegion(key);
+            foreach (var pos in new List<Vector3D<int>>(LoadedChunks.Keys)) UnloadChunk(pos);
+            foreach (var key in new List<Vector3D<int>>(LodRegions.Keys)) UnloadLodRegion(key);
 
             // Drop any decoded-but-not-yet-rendered LOD regions too (UnloadLodRegion only covered the rendered
             // ones), so no stale horizon survives the dimension switch.
-            var lodKeys = new List<Vector3i>();
+            var lodKeys = new List<Vector3D<int>>();
             LodStore.SnapshotKeys(lodKeys);
             foreach (var key in lodKeys) LodStore.RemoveRegion(key);
 
@@ -750,9 +750,9 @@ namespace MinecraftClone3API.Client.Blocks
             HasSky = dim.HasSky;
             FogColor = dim.FogColor;
             AmbientLight = dim.AmbientLight;
-            _lastEvictChunk = new Vector3i(int.MinValue);
-            _lastLodEvictChunk = new Vector3i(int.MinValue);
-            _lastLodStepChunk = new Vector3i(int.MinValue);
+            _lastEvictChunk = new Vector3D<int>(int.MinValue);
+            _lastLodEvictChunk = new Vector3D<int>(int.MinValue);
+            _lastLodStepChunk = new Vector3D<int>(int.MinValue);
             _dimensionChanged = true;
 
             _resetting = false;
@@ -859,7 +859,7 @@ namespace MinecraftClone3API.Client.Blocks
 
         /// <summary>Apply-thread: builds the chunk (loopback clone, or multiplayer decompress +
         /// deserialize), publishes it, and hands its position plus loaded neighbours to the main thread
-        /// for GL render-data creation and meshing.</summary>
+        /// for GPU render-data creation and meshing.</summary>
         private void ApplyChunk(ChunkDataPacket packet)
         {
             var position = packet.Position;
@@ -890,8 +890,8 @@ namespace MinecraftClone3API.Client.Blocks
         }
 
         /// <summary>Apply-thread: decodes one LOD region (loopback clone or TCP decompress + deserialize),
-        /// publishes it to the client LOD store (sole writer), and hands its key to the main thread for GL
-        /// render-data creation + meshing. No GL, no chunk/light state touched.</summary>
+        /// publishes it to the client LOD store (sole writer), and hands its key to the main thread for GPU
+        /// render-data creation + meshing. No GPU, no chunk/light state touched.</summary>
         private void ApplyLodColumn(LodColumnDataPacket packet)
         {
             LodColumn region;
@@ -911,9 +911,9 @@ namespace MinecraftClone3API.Client.Blocks
             Interlocked.Increment(ref _lodRenderReadyDepth);
         }
 
-        /// <summary>Enqueues a position for the main-thread GL render-data step, keeping the lock-free
+        /// <summary>Enqueues a position for the main-thread GPU render-data step, keeping the lock-free
         /// <see cref="RenderReadyQueueDepth"/> mirror in sync. Apply-thread only (the sole producer).</summary>
-        private void EnqueueRenderReady(Vector3i position, bool highPriority)
+        private void EnqueueRenderReady(Vector3D<int> position, bool highPriority)
         {
             _renderReady.Enqueue((position, highPriority));
             Interlocked.Increment(ref _renderReadyDepth);
@@ -955,7 +955,7 @@ namespace MinecraftClone3API.Client.Blocks
             }
         }
 
-        private void UnloadChunk(Vector3i position)
+        private void UnloadChunk(Vector3D<int> position)
         {
             ChunkTracer.Abandon(position);
             if (LoadedChunks.TryRemove(position, out _)) Interlocked.Decrement(ref _loadedChunkCount);
@@ -1006,7 +1006,7 @@ namespace MinecraftClone3API.Client.Blocks
             foreach (var key in _lodEvictScratch) UnloadLodRegion(key);
         }
 
-        private void UnloadLodRegion(Vector3i key)
+        private void UnloadLodRegion(Vector3D<int> key)
         {
             // The client LOD store is lock-based (not the lock-free paletted containers the single-writer rule
             // guards), so a main-thread removal here is safe alongside the apply thread's PutRegion.
@@ -1034,7 +1034,7 @@ namespace MinecraftClone3API.Client.Blocks
         /// <summary>Re-queues a chunk whose <see cref="ChunkRenderData.TryUpload"/> found the mesh thread
         /// mid-remesh, so it uploads on a later frame. The mesh thread also re-enqueues on remesh
         /// completion; the pending set dedups so the chunk sits in the queue at most once.</summary>
-        private void RequeueUpload(Vector3i position)
+        private void RequeueUpload(Vector3D<int> position)
         {
             lock (_uploadLock)
             {
@@ -1044,7 +1044,7 @@ namespace MinecraftClone3API.Client.Blocks
             }
         }
 
-        private void QueueMesh(Vector3i position, bool highPriority)
+        private void QueueMesh(Vector3D<int> position, bool highPriority)
         {
             lock (_meshLock)
             {
@@ -1083,7 +1083,7 @@ namespace MinecraftClone3API.Client.Blocks
         /// chunk work is pending. Mesh-pool worker only.</summary>
         private bool TryMeshOneChunk()
         {
-            Vector3i position = default;
+            Vector3D<int> position = default;
             var found = false;
             lock (_meshLock)
             {
@@ -1109,7 +1109,7 @@ namespace MinecraftClone3API.Client.Blocks
             return true;
         }
 
-        private void MeshChunk(Vector3i position)
+        private void MeshChunk(Vector3D<int> position)
         {
             if (!RenderData.TryGetValue(position, out var renderData)) return;
             if (!LoadedChunks.TryGetValue(position, out var chunk)) return;
@@ -1132,12 +1132,12 @@ namespace MinecraftClone3API.Client.Blocks
             }
         }
 
-        /// <summary>Mesh-pool worker: meshes one queued LOD region from the streamed run-list (CPU only, no GL).
+        /// <summary>Mesh-pool worker: meshes one queued LOD region from the streamed run-list (CPU only, no GPU).
         /// One worker per region via the _lodMeshPending claim. Returns true if it found a region to consider
         /// (so the worker doesn't idle while LOD work remains).</summary>
         private bool TryMeshOneLod()
         {
-            Vector3i key;
+            Vector3D<int> key;
             bool claimed;
             lock (_meshLock)
             {
@@ -1157,9 +1157,9 @@ namespace MinecraftClone3API.Client.Blocks
         }
 
         public override void SetBlock(int x, int y, int z, Block block, bool update, bool lowPriority)
-            => _connection.Send(new PlaceBlockRequestPacket {Position = new Vector3i(x, y, z), BlockId = block.Id});
+            => _connection.Send(new PlaceBlockRequestPacket {Position = new Vector3D<int>(x, y, z), BlockId = block.Id});
 
-        public override void PlaceBlock(EntityPlayer player, Vector3i blockPos, Block block, int metadata)
+        public override void PlaceBlock(EntityPlayer player, Vector3D<int> blockPos, Block block, int metadata)
             => _connection.Send(new PlaceBlockRequestPacket {Position = blockPos, BlockId = block.Id, Metadata = metadata});
 
         public override Block GetBlock(int x, int y, int z)

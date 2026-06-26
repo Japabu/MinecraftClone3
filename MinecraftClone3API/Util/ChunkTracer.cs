@@ -6,7 +6,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using MinecraftClone3API.IO;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Util
 {
@@ -25,7 +25,7 @@ namespace MinecraftClone3API.Util
     /// call into here) and share <see cref="Profiler.ElapsedSeconds"/> so the two CSVs correlate offline.
     ///
     /// A chunk's life spans many frames and four threads (load → main drain → stream → client decode →
-    /// mesh → GL upload), so its latency can't be frame-bucketed; instead a side
+    /// mesh → GPU upload), so its latency can't be frame-bucketed; instead a side
     /// <see cref="ConcurrentDictionary{TKey,TValue}"/> keyed by chunk position (the only identity stable
     /// across the <c>CachedChunk → Chunk → ChunkRenderData</c> handoffs) accumulates timestamps, and one
     /// row is emitted to <c>chunk-trace.csv</c> when the chunk finishes uploading.
@@ -64,8 +64,8 @@ namespace MinecraftClone3API.Util
             ApplyEnq, ApplyStart, Applied, EditApplied, MeshStart, MeshDone
         }
 
-        private static readonly ConcurrentDictionary<Vector3i, ChunkTrace> _live =
-            new ConcurrentDictionary<Vector3i, ChunkTrace>();
+        private static readonly ConcurrentDictionary<Vector3D<int>, ChunkTrace> _live =
+            new ConcurrentDictionary<Vector3D<int>, ChunkTrace>();
         private static int _liveCount;
         private static long _dropped;
 
@@ -103,22 +103,22 @@ namespace MinecraftClone3API.Util
             Interlocked.Exchange(ref _liveCount, 0);
         }
 
-        public static void Born(Vector3i pos) => Mark(pos, Stage.Born, ChunkSource.None, true);
-        public static void Loaded(Vector3i pos, ChunkSource source) => Mark(pos, Stage.Loaded, source, false);
-        public static void Staged(Vector3i pos) => Mark(pos, Stage.Staged, ChunkSource.None, false);
-        public static void Published(Vector3i pos) => Mark(pos, Stage.Published, ChunkSource.None, false);
-        public static void Streamed(Vector3i pos) => Mark(pos, Stage.Streamed, ChunkSource.None, false);
-        public static void ApplyEnq(Vector3i pos) => Mark(pos, Stage.ApplyEnq, ChunkSource.None, true);
-        public static void ApplyStart(Vector3i pos) => Mark(pos, Stage.ApplyStart, ChunkSource.None, false);
-        public static void Applied(Vector3i pos) => Mark(pos, Stage.Applied, ChunkSource.None, false);
-        public static void EditApplied(Vector3i pos) => Mark(pos, Stage.EditApplied, ChunkSource.Edit, true);
-        public static void MeshStart(Vector3i pos) => Mark(pos, Stage.MeshStart, ChunkSource.None, false);
-        public static void MeshDone(Vector3i pos) => Mark(pos, Stage.MeshDone, ChunkSource.None, false);
+        public static void Born(Vector3D<int> pos) => Mark(pos, Stage.Born, ChunkSource.None, true);
+        public static void Loaded(Vector3D<int> pos, ChunkSource source) => Mark(pos, Stage.Loaded, source, false);
+        public static void Staged(Vector3D<int> pos) => Mark(pos, Stage.Staged, ChunkSource.None, false);
+        public static void Published(Vector3D<int> pos) => Mark(pos, Stage.Published, ChunkSource.None, false);
+        public static void Streamed(Vector3D<int> pos) => Mark(pos, Stage.Streamed, ChunkSource.None, false);
+        public static void ApplyEnq(Vector3D<int> pos) => Mark(pos, Stage.ApplyEnq, ChunkSource.None, true);
+        public static void ApplyStart(Vector3D<int> pos) => Mark(pos, Stage.ApplyStart, ChunkSource.None, false);
+        public static void Applied(Vector3D<int> pos) => Mark(pos, Stage.Applied, ChunkSource.None, false);
+        public static void EditApplied(Vector3D<int> pos) => Mark(pos, Stage.EditApplied, ChunkSource.Edit, true);
+        public static void MeshStart(Vector3D<int> pos) => Mark(pos, Stage.MeshStart, ChunkSource.None, false);
+        public static void MeshDone(Vector3D<int> pos) => Mark(pos, Stage.MeshDone, ChunkSource.None, false);
 
         /// <summary>Final stamp: records the upload time, removes the trace, and writes its row. Main-thread
-        /// only (the GL upload site), so writer access never races the background stamps (which only touch
+        /// only (the GPU upload site), so writer access never races the background stamps (which only touch
         /// the thread-safe <see cref="_live"/> map).</summary>
-        public static void Uploaded(Vector3i pos)
+        public static void Uploaded(Vector3D<int> pos)
         {
             if (!Profiler.Recording) return;
             var t = Stopwatch.GetTimestamp();
@@ -134,13 +134,13 @@ namespace MinecraftClone3API.Util
         /// <summary>Drops a trace whose chunk left the pipeline before uploading (an empty chunk never
         /// staged, a server-side eviction, or a client cache eviction — the last also clears the old trace
         /// so a re-streamed chunk starts a fresh one).</summary>
-        public static void Abandon(Vector3i pos)
+        public static void Abandon(Vector3D<int> pos)
         {
             if (!Profiler.Recording) return;
             if (_live.TryRemove(pos, out _)) Interlocked.Decrement(ref _liveCount);
         }
 
-        private static void Mark(Vector3i pos, Stage stage, ChunkSource source, bool create)
+        private static void Mark(Vector3D<int> pos, Stage stage, ChunkSource source, bool create)
         {
             if (!Profiler.Recording) return;
             var t = Stopwatch.GetTimestamp();
@@ -178,7 +178,7 @@ namespace MinecraftClone3API.Util
             if (!existed) Interlocked.Increment(ref _liveCount);
         }
 
-        private static void Emit(Vector3i pos, ChunkTrace c)
+        private static void Emit(Vector3D<int> pos, ChunkTrace c)
         {
             if (_writer == null) return;
 

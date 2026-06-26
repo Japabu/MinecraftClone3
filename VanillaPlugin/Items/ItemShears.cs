@@ -3,7 +3,7 @@ using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 using VanillaPlugin.Entities;
 
 namespace VanillaPlugin.Items
@@ -30,7 +30,7 @@ namespace VanillaPlugin.Items
             sheep.Sheared = true;
             if (GameRegistry.TryGetItem(WoolKey, out var wool))
                 world.DropItem(new ItemStack(wool.Id, 1 + _rng.Next(3)),
-                    target.Position + new Vector3(0f, target.Type.Height * 0.5f, 0f));
+                    target.Position + new Vector3D<float>(0f, target.Type.Height * 0.5f, 0f));
         }
     }
 }

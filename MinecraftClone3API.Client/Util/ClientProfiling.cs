@@ -2,11 +2,11 @@ using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Client.Blocks;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Graphics;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Util
 {
-    /// <summary>Client-side companion to the GL-free Core <see cref="Profiler"/>: holds the active
+    /// <summary>Client-side companion to the GPU-free Core <see cref="Profiler"/>: holds the active
     /// <see cref="WorldClient"/> and samples the client renderer/world each frame into a
     /// <see cref="ClientFrameStats"/> the render loop pushes into <see cref="Profiler.Record"/>. Keeps the
     /// WorldClient/RenderDebug/GpuTimers/PlayerController reads on the client side of the assembly split.</summary>
@@ -21,7 +21,7 @@ namespace MinecraftClone3API.Util
 
             var entity = PlayerController.PlayerEntity;
             stats.PlayerChunk = entity == null
-                ? Vector3i.Zero
+                ? Vector3D<int>.Zero
                 : WorldBase.ChunkInWorld(entity.Position.ToVector3i());
 
             stats.ShadowMs = GpuTimers.Ms(GpuTimers.Pass.Shadow);

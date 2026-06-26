@@ -1,5 +1,5 @@
 using MinecraftClone3API.Blocks;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.WorldGen
 {
@@ -12,7 +12,7 @@ namespace MinecraftClone3API.WorldGen
     /// </summary>
     public abstract class Carver
     {
-        public abstract void Carve(CachedChunk chunk, Vector3i chunkPos, NoiseChunkGenerator generator,
+        public abstract void Carve(CachedChunk chunk, Vector3D<int> chunkPos, NoiseChunkGenerator generator,
             int[] surfaceHeights);
     }
 }

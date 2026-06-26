@@ -1,5 +1,5 @@
 using MinecraftClone3API.Blocks;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.WorldGen
 {
@@ -28,7 +28,7 @@ namespace MinecraftClone3API.WorldGen
             _maxY = maxY;
         }
 
-        public override void Place(IChunkGenRegion region, Vector3i originColumn, ref WorldGenRandom rng)
+        public override void Place(IChunkGenRegion region, Vector3D<int> originColumn, ref WorldGenRandom rng)
         {
             for (var v = 0; v < _veinsPerChunk; v++)
             {

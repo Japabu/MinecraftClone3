@@ -1,9 +1,9 @@
 using System.Collections.Generic;
-using MinecraftClone3API.Client;
+using System.Runtime.InteropServices;
+using MinecraftClone3API.Graphics.Rhi;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
-using OpenTK.Graphics.OpenGL4;
+using Silk.NET.WebGPU;
 
 namespace MinecraftClone3API.Graphics
 {
@@ -14,64 +14,77 @@ namespace MinecraftClone3API.Graphics
     /// surface, so the cracks read like part of the block. Draws nothing when no resource pack supplies the
     /// stage textures.
     /// </summary>
-    public static class BlockBreakRenderer
+    public static unsafe class BlockBreakRenderer
     {
         private const int Stages = 10;
 
-        private static VertexArrayObject _vbo;
+        [StructLayout(LayoutKind.Sequential)]
+        private struct BreakPush
+        {
+            public Mat4 Transform;
+        }
+
+        private static GpuShaderModule _module;
+        private static GpuPipelineLayout _layout;
+        private static GpuRenderPipeline _pipeline;
+        private static GpuBuffer _vbo;
+        private static GpuBuffer _ibo;
+        private static uint _indexCount;
+
         private static Texture[] _stages;
         private static bool _stagesLoaded;
 
         public static void Load()
         {
-            _vbo = new VertexArrayObject();
+            _module = new GpuShaderModule(ResourceReader.ReadString("System/Shaders/BlockBreak.wgsl"), "blockBreak");
+            _layout = new GpuPipelineLayout(new[] { GpuPipelineLayout.Ptr(GpuLayouts.ScreenTexture) },
+                ShaderStage.Vertex, (uint)sizeof(BreakPush), "blockBreak");
+
+            var vbDesc = new VertexBufferDesc(20, new[]
+            {
+                new VertexAttr(0, VertexFormat.Float32x3, 0),
+                new VertexAttr(1, VertexFormat.Float32x2, 12),
+            });
+            // Straight-alpha blend into the diffuse attachment only; the normal + light attachments are masked
+            // so the block keeps its geometry-pass shading and composition lights the cracked surface as one.
+            var targets = new[]
+            {
+                new ColorTargetDesc(GBufferTargets.DiffuseFormat, GpuRenderPipeline.AlphaBlend),
+                new ColorTargetDesc(GBufferTargets.NormalFormat, null, ColorWriteMask.None),
+                new ColorTargetDesc(GBufferTargets.LightFormat, null, ColorWriteMask.None),
+            };
+            // The crack sits a touch proud of the block (scaled 1.002x), so reverse-Z GreaterEqual keeps the
+            // near faces while the far ones stay depth-culled; no depth write.
+            var depth = new DepthDesc(GBufferTargets.DepthFormat, false, CompareFunction.GreaterEqual);
+            _pipeline = new GpuRenderPipeline(_layout, _module, "vs_main", "fs_main",
+                new[] { vbDesc }, targets, depth,
+                topology: PrimitiveTopology.TriangleList, cullMode: CullMode.None, label: "blockBreak");
+
             BuildCube();
-            _vbo.Upload();
         }
 
-        public static void Render(AxisAlignedBoundingBox boundingBox, Vector3 translation, float progress,
-            Camera camera, Matrix4 projection)
+        public static void Render(RenderPass pass, AxisAlignedBoundingBox boundingBox, Vector3 translation, float progress)
         {
-            if (_vbo == null || progress <= 0f) return;
+            if (_pipeline == null || progress <= 0f) return;
 
             EnsureStages();
-            var stage = (int) (progress * Stages);
+            var stage = (int)(progress * Stages);
             if (stage < 0) stage = 0;
             else if (stage >= Stages) stage = Stages - 1;
             var texture = _stages[stage];
             if (texture == null) return;
 
-            // A touch larger than the block so the crack sits just proud of the surface and never z-fights it.
-            var transform = Matrix4.CreateScale(boundingBox.Scale * 1.002f) *
-                            Matrix4.CreateTranslation(boundingBox.Translation + translation) *
-                            camera.View * projection;
+            var transform = Matrix4X4.CreateScale(boundingBox.Scale * 1.002f) *
+                            Matrix4X4.CreateTranslation(boundingBox.Translation + translation) *
+                            Renderer.View * Renderer.Projection;
+            var push = new BreakPush { Transform = MatrixConvert.ToGpu(transform) };
 
-            RenderState.Set(new GlState
-            {
-                Blend = true,
-                BlendFunc = (BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha),
-                DepthTest = true,
-                DepthFunc = DepthFunction.Lequal,
-                CullFace = false
-            });
-
-            // Touch the diffuse attachment only and don't write depth — the block's geometry-pass normal/light
-            // and depth must survive so it shades normally and the far cube faces stay depth-culled.
-            GL.DepthMask(false);
-            GL.ColorMask(1u, false, false, false, false);
-            GL.ColorMask(2u, false, false, false, false);
-
-            var shader = ClientResources.BlockBreakShader;
-            shader.Bind();
-            GL.UniformMatrix4(shader.GetUniformLocation("uTransform"), false, ref transform);
-            GL.Uniform1(shader.GetUniformLocation("uTexture"), 0);
-            texture.Bind(TextureUnit.Texture0);
-            Samplers.BindGuiSampler(0);
-            _vbo.Draw();
-
-            GL.ColorMask(1u, true, true, true, true);
-            GL.ColorMask(2u, true, true, true, true);
-            GL.DepthMask(true);
+            pass.SetPipeline(_pipeline);
+            pass.SetBindGroup(0, texture.GuiBindGroup);
+            pass.SetVertexBuffer(0, _vbo);
+            pass.SetIndexBuffer(_ibo, IndexFormat.Uint32);
+            pass.SetPushConstants(ShaderStage.Vertex, 0, in push);
+            pass.DrawIndexed(_indexCount);
         }
 
         private static void EnsureStages()
@@ -89,31 +102,38 @@ namespace MinecraftClone3API.Graphics
 
         private static void BuildCube()
         {
+            var verts = new List<float>();
             var indices = new List<uint>();
 
-            AddFace(indices, new Vector3(0.5f, -0.5f, -0.5f), new Vector3(0.5f, -0.5f, 0.5f),
+            AddFace(verts, indices, new Vector3(0.5f, -0.5f, -0.5f), new Vector3(0.5f, -0.5f, 0.5f),
                 new Vector3(0.5f, 0.5f, 0.5f), new Vector3(0.5f, 0.5f, -0.5f));       // +X
-            AddFace(indices, new Vector3(-0.5f, -0.5f, 0.5f), new Vector3(-0.5f, -0.5f, -0.5f),
+            AddFace(verts, indices, new Vector3(-0.5f, -0.5f, 0.5f), new Vector3(-0.5f, -0.5f, -0.5f),
                 new Vector3(-0.5f, 0.5f, -0.5f), new Vector3(-0.5f, 0.5f, 0.5f));     // -X
-            AddFace(indices, new Vector3(-0.5f, 0.5f, -0.5f), new Vector3(0.5f, 0.5f, -0.5f),
+            AddFace(verts, indices, new Vector3(-0.5f, 0.5f, -0.5f), new Vector3(0.5f, 0.5f, -0.5f),
                 new Vector3(0.5f, 0.5f, 0.5f), new Vector3(-0.5f, 0.5f, 0.5f));       // +Y
-            AddFace(indices, new Vector3(-0.5f, -0.5f, 0.5f), new Vector3(0.5f, -0.5f, 0.5f),
+            AddFace(verts, indices, new Vector3(-0.5f, -0.5f, 0.5f), new Vector3(0.5f, -0.5f, 0.5f),
                 new Vector3(0.5f, -0.5f, -0.5f), new Vector3(-0.5f, -0.5f, -0.5f));   // -Y
-            AddFace(indices, new Vector3(0.5f, -0.5f, 0.5f), new Vector3(-0.5f, -0.5f, 0.5f),
+            AddFace(verts, indices, new Vector3(0.5f, -0.5f, 0.5f), new Vector3(-0.5f, -0.5f, 0.5f),
                 new Vector3(-0.5f, 0.5f, 0.5f), new Vector3(0.5f, 0.5f, 0.5f));       // +Z
-            AddFace(indices, new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(0.5f, -0.5f, -0.5f),
+            AddFace(verts, indices, new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(0.5f, -0.5f, -0.5f),
                 new Vector3(0.5f, 0.5f, -0.5f), new Vector3(-0.5f, 0.5f, -0.5f));     // -Z
 
-            _vbo.AddFace(indices.ToArray(), Vector3.Zero);
+            _indexCount = (uint)indices.Count;
+            _vbo = new GpuBuffer((ulong)(verts.Count * sizeof(float)),
+                BufferUsage.Vertex | BufferUsage.CopyDst, "blockBreak.verts");
+            _vbo.QueueWrite<float>(CollectionsMarshal.AsSpan(verts));
+            _ibo = new GpuBuffer((ulong)(indices.Count * sizeof(uint)),
+                BufferUsage.Index | BufferUsage.CopyDst, "blockBreak.indices");
+            _ibo.QueueWrite<uint>(CollectionsMarshal.AsSpan(indices));
         }
 
-        private static void AddFace(List<uint> indices, Vector3 a, Vector3 b, Vector3 c, Vector3 d)
+        private static void AddFace(List<float> verts, List<uint> indices, Vector3 a, Vector3 b, Vector3 c, Vector3 d)
         {
-            var baseIndex = (uint) _vbo.VertexCount;
-            _vbo.Add(a, new Vector4(0, 0, 0, 0), Vector4.Zero, Vector3.Zero, Vector4.Zero);
-            _vbo.Add(b, new Vector4(1, 0, 0, 0), Vector4.Zero, Vector3.Zero, Vector4.Zero);
-            _vbo.Add(c, new Vector4(1, 1, 0, 0), Vector4.Zero, Vector3.Zero, Vector4.Zero);
-            _vbo.Add(d, new Vector4(0, 1, 0, 0), Vector4.Zero, Vector3.Zero, Vector4.Zero);
+            var baseIndex = (uint)(verts.Count / 5);
+            Vertex(verts, a, 0, 0);
+            Vertex(verts, b, 1, 0);
+            Vertex(verts, c, 1, 1);
+            Vertex(verts, d, 0, 1);
 
             indices.Add(baseIndex + 0);
             indices.Add(baseIndex + 1);
@@ -121,6 +141,15 @@ namespace MinecraftClone3API.Graphics
             indices.Add(baseIndex + 0);
             indices.Add(baseIndex + 2);
             indices.Add(baseIndex + 3);
+        }
+
+        private static void Vertex(List<float> verts, Vector3 p, float u, float v)
+        {
+            verts.Add(p.X);
+            verts.Add(p.Y);
+            verts.Add(p.Z);
+            verts.Add(u);
+            verts.Add(v);
         }
     }
 }

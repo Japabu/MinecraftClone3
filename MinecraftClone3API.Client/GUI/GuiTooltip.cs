@@ -2,8 +2,7 @@ using MinecraftClone3API.Client.Graphics;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
-using OpenTK.Graphics.OpenGL4;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Client.GUI
 {
@@ -14,7 +13,7 @@ namespace MinecraftClone3API.Client.GUI
         private const int Scale = 2;
         private const int Pad = 4;
 
-        public static void Draw(ItemStack stack, Vector2 mouseGuiPos)
+        public static void Draw(ItemStack stack, Vector2D<float> mouseGuiPos)
         {
             if (stack.IsEmpty) return;
             var item = stack.Item;
@@ -26,14 +25,9 @@ namespace MinecraftClone3API.Client.GUI
             var x = (int) mouseGuiPos.X + 10;
             var y = (int) mouseGuiPos.Y - 10;
 
-            RenderState.Set(new GlState
-            {
-                Blend = true,
-                BlendFunc = (BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha)
-            });
             GuiRenderer.DrawTexture(ClientResources.WhitePixel,
-                Rectangle.FromSize(x - Pad, y - Pad, w + Pad * 2, h + Pad * 2), null, new Color4(0.05f, 0.0f, 0.1f, 0.9f));
-            Font.DrawString(name, x, y, Scale, Color4.White);
+                Rectangle.FromSize(x - Pad, y - Pad, w + Pad * 2, h + Pad * 2), null, new Vector4D<float>(0.05f, 0.0f, 0.1f, 0.9f));
+            Font.DrawString(name, x, y, Scale, new Vector4D<float>(1f,1f,1f,1f));
         }
     }
 }

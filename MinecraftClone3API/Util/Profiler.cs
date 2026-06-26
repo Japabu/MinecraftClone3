@@ -6,7 +6,7 @@ using System.Text;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Networking;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Util
 {
@@ -38,7 +38,7 @@ namespace MinecraftClone3API.Util
         private static readonly Stopwatch _clock = new Stopwatch();
         private static long _lastGen0, _lastGen1, _lastGen2, _lastAlloc;
         private static int _rowsSinceFlush;
-        private static Vector3i _lastPlayerChunk;
+        private static Vector3D<int> _lastPlayerChunk;
 
         // Main-thread allocation attributed per phase, accumulated across the update ticks in a
         // render-frame interval and emitted (then reset) each Record. Measured by the world state.
@@ -114,7 +114,7 @@ namespace MinecraftClone3API.Util
             _lastGen1 = GC.CollectionCount(1);
             _lastGen2 = GC.CollectionCount(2);
             _lastAlloc = GC.GetTotalAllocatedBytes();
-            _lastPlayerChunk = Vector3i.Zero;
+            _lastPlayerChunk = Vector3D<int>.Zero;
             _rowsSinceFlush = 0;
 
             // The phase accumulators run every Update tick regardless of recording, so without this the

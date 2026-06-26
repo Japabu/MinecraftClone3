@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.WorldGen
 {
@@ -182,7 +182,7 @@ namespace MinecraftClone3API.WorldGen
         /// the canopy top. The RNG order matches <see cref="TreeFeature.Place"/> exactly (via CollectTrees), so
         /// the horizon's trees land on the same columns the real chunks grow — no tree pop at the render-distance
         /// boundary. LOD-thread only (uses the per-thread tree scratch).</summary>
-        public void DecorateLodRegion(Vector3i regionKey, long[] columns)
+        public void DecorateLodRegion(Vector3D<int> regionKey, long[] columns)
         {
             var baseX = regionKey.X << 7;
             var baseZ = regionKey.Z << 7;
@@ -193,7 +193,7 @@ namespace MinecraftClone3API.WorldGen
             for (var ocx = ocx0 - 1; ocx <= ocx0 + 8; ocx++)
             for (var ocz = ocz0 - 1; ocz <= ocz0 + 8; ocz++)
             {
-                var origin = new Vector3i(ocx * Chunk.Size, 0, ocz * Chunk.Size);
+                var origin = new Vector3D<int>(ocx * Chunk.Size, 0, ocz * Chunk.Size);
                 var biome = BiomeAt(ocx * Chunk.Size + Chunk.Size / 2, ocz * Chunk.Size + Chunk.Size / 2);
                 var feats = biome.GetFeatures(DecorationStep.Vegetation);
                 for (var f = 0; f < feats.Count; f++)
@@ -235,7 +235,7 @@ namespace MinecraftClone3API.WorldGen
             }
         }
 
-        public void Generate(CachedChunk chunk, Vector3i chunkPos)
+        public void Generate(CachedChunk chunk, Vector3D<int> chunkPos)
         {
             var min = chunkPos * Chunk.Size;
             var surfMap = _surfScratch.Value;
@@ -326,7 +326,7 @@ namespace MinecraftClone3API.WorldGen
             if (min.Y <= colTopMax + DecorationHeadroom) Decorate(chunk, chunkPos);
         }
 
-        private void Decorate(CachedChunk chunk, Vector3i chunkPos)
+        private void Decorate(CachedChunk chunk, Vector3D<int> chunkPos)
         {
             var region = new ChunkGenRegion(this, chunk, chunkPos);
 
@@ -335,7 +335,7 @@ namespace MinecraftClone3API.WorldGen
             {
                 var ocx = chunkPos.X + dx;
                 var ocz = chunkPos.Z + dz;
-                var originColumn = new Vector3i(ocx * Chunk.Size, 0, ocz * Chunk.Size);
+                var originColumn = new Vector3D<int>(ocx * Chunk.Size, 0, ocz * Chunk.Size);
                 var centerBiome = BiomeAt(ocx * Chunk.Size + Chunk.Size / 2, ocz * Chunk.Size + Chunk.Size / 2);
 
                 foreach (var step in Steps)
@@ -352,13 +352,13 @@ namespace MinecraftClone3API.WorldGen
             }
         }
 
-        private void RunFeature(Feature feature, IChunkGenRegion region, Vector3i originColumn, int ocx, int ocz)
+        private void RunFeature(Feature feature, IChunkGenRegion region, Vector3D<int> originColumn, int ocx, int ocz)
         {
             var rng = new WorldGenRandom(_seed, ocx, ocz, feature.Salt);
             feature.Place(region, originColumn, ref rng);
         }
 
-        public Vector3i Spawn()
+        public Vector3D<int> Spawn()
         {
             for (var r = 0; r <= 64; r++)
             for (var dx = -r; dx <= r; dx++)
@@ -370,10 +370,10 @@ namespace MinecraftClone3API.WorldGen
                 if (biome == _ocean) continue;
 
                 var surf = SurfaceHeight(dx, dz);
-                if (surf >= SeaLevel) return new Vector3i(dx, surf + 2, dz);
+                if (surf >= SeaLevel) return new Vector3D<int>(dx, surf + 2, dz);
             }
 
-            return new Vector3i(0, SeaLevel + 2, 0);
+            return new Vector3D<int>(0, SeaLevel + 2, 0);
         }
 
         private static int FloorDiv(int a, int b)

@@ -1,6 +1,6 @@
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace VanillaPlugin.Blocks
 {
@@ -17,14 +17,14 @@ namespace VanillaPlugin.Blocks
             ModelPath = "Vanilla/Models/Lava.json";
         }
 
-        public override bool IsFullBlock(WorldBase world, Vector3i blockPos) => false;
-        public override bool CanPassThrough(WorldBase world, Vector3i blockPos) => true;
-        public override bool CanTarget(WorldBase world, Vector3i blockPos) => false;
+        public override bool IsFullBlock(WorldBase world, Vector3D<int> blockPos) => false;
+        public override bool CanPassThrough(WorldBase world, Vector3D<int> blockPos) => true;
+        public override bool CanTarget(WorldBase world, Vector3D<int> blockPos) => false;
         public override bool IsLiquid => true;
 
-        public override LightLevel GetLightLevel(WorldBase world, Vector3i blockPos) => new LightLevel(15, 11, 6);
+        public override LightLevel GetLightLevel(WorldBase world, Vector3D<int> blockPos) => new LightLevel(15, 11, 6);
 
-        public override ConnectionType ConnectsToBlock(WorldBase world, Vector3i blockPos, Vector3i otherBlockPos,
+        public override ConnectionType ConnectsToBlock(WorldBase world, Vector3D<int> blockPos, Vector3D<int> otherBlockPos,
             Block otherBlock) => otherBlock == this ? ConnectionType.Connected : ConnectionType.Undefined;
     }
 }

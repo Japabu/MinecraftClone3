@@ -1,7 +1,7 @@
 using System;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Client.GUI
 {
@@ -43,7 +43,7 @@ namespace MinecraftClone3API.Client.GUI
             Set = set;
         }
 
-        public bool Contains(Vector2 p) =>
+        public bool Contains(Vector2D<float> p) =>
             p.X >= Bounds.MinX && p.X < Bounds.MaxX && p.Y >= Bounds.MinY && p.Y < Bounds.MaxY;
     }
 }

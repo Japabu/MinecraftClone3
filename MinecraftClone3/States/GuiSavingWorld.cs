@@ -4,8 +4,7 @@ using MinecraftClone3API.Client.StateSystem;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
-using OpenTK.Windowing.Desktop;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3.States
 {
@@ -22,11 +21,8 @@ namespace MinecraftClone3.States
 
         private static Texture _background;
 
-        private readonly GameWindow _window;
-
-        public GuiSavingWorld(GameWindow window)
+        public GuiSavingWorld()
         {
-            _window = window;
             if (_background == null)
                 _background = GlResources.ReadTexture("System/Textures/Gui/ResourceLoadingBackground.png");
         }
@@ -36,7 +32,7 @@ namespace MinecraftClone3.States
             // The teardown thread was started in StateWorld.Exit before this screen became active; once it has
             // finished saving, reveal the title. Transitions immediately when there is nothing to save.
             if (!StateWorld.IsTearingDown)
-                StateEngine.ReplaceState(new GuiMainMenu(_window));
+                StateEngine.ReplaceState(new GuiMainMenu());
         }
 
         public override void Render()
@@ -46,7 +42,7 @@ namespace MinecraftClone3.States
             var width = (int) ScaledResolution.GuiResolution.X;
             var height = (int) ScaledResolution.GuiResolution.Y;
             var x = (width - Font.MeasureWidth(Message, MessageScale)) / 2;
-            Font.DrawString(Message, x, height / 2, MessageScale, Color4.White);
+            Font.DrawString(Message, x, height / 2, MessageScale, new Vector4D<float>(1f,1f,1f,1f));
         }
     }
 }

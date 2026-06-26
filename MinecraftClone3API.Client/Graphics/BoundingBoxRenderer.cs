@@ -1,52 +1,22 @@
-﻿using MinecraftClone3API.Client;
-using MinecraftClone3API.IO;
+using MinecraftClone3API.Graphics.Rhi;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
-using OpenTK.Graphics.OpenGL4;
 
 namespace MinecraftClone3API.Graphics
 {
-    public class BoundingBoxRenderer
+    /// <summary>Draws a black wireframe box around an axis-aligned bounding box (the block-selection outline),
+    /// using the shared <see cref="OutlineRenderer"/> cube transformed onto the box.</summary>
+    public static class BoundingBoxRenderer
     {
-        private static readonly Vector3[] Vertices =
+        private static readonly Vector4 OutlineColor = new Vector4(0f, 0f, 0f, 1f);
+
+        public static void Load() => OutlineRenderer.Load();
+
+        public static void Render(RenderPass pass, AxisAlignedBoundingBox boundingBox, Vector3 translation, float scale)
         {
-            //North
-            new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(+0.5f, -0.5f, -0.5f),
-            new Vector3(-0.5f, +0.5f, -0.5f), new Vector3(+0.5f, +0.5f, -0.5f),
-            //South
-            new Vector3(+0.5f, -0.5f, +0.5f), new Vector3(-0.5f, -0.5f, +0.5f),
-            new Vector3(+0.5f, +0.5f, +0.5f), new Vector3(-0.5f, +0.5f, +0.5f),
-        };
-
-        private static readonly uint[] Indices =
-        {
-            0, 1, 1, 3, 3, 2, 2, 0,
-            4, 5, 5, 7, 7, 6, 6, 4,
-            0, 5, 1, 4, 2, 7, 3, 6
-        };
-
-        private static VertexArrayObject _vbo;
-
-        public static void Load()
-        {
-            _vbo = new VertexArrayObject();
-            foreach (var vertex in Vertices)
-                _vbo.Add(vertex, Vector4.Zero, Vector4.Zero, Vector3.Zero, Vector4.Zero);
-            _vbo.AddFace(Indices, Vector3.Zero);
-            _vbo.Upload();
-        }
-
-        public static void Render(AxisAlignedBoundingBox boundingBox, Vector3 translation, float scale, Camera camera, Matrix4 projection)
-        {
-            var transform = Matrix4.CreateScale(boundingBox.Scale * scale) * Matrix4.CreateTranslation(boundingBox.Translation + translation) *
-                        camera.View * projection;
-
-            var shader = ClientResources.BlockOutlineShader;
-            shader.Bind();
-            GL.UniformMatrix4(shader.GetUniformLocation("uTransform"), false, ref transform);
-            GL.Uniform4(shader.GetUniformLocation("uColor"), Color4.Black);
-
-            _vbo.Draw(BeginMode.Lines);
+            var mvp = Matrix4X4.CreateScale(boundingBox.Scale * scale) *
+                      Matrix4X4.CreateTranslation(boundingBox.Translation + translation) *
+                      Renderer.View * Renderer.Projection;
+            OutlineRenderer.Draw(pass, mvp, OutlineColor);
         }
     }
 }

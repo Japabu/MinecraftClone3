@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 using VanillaPlugin.BlockDatas;
 
 namespace VanillaPlugin.Blocks
@@ -29,7 +29,7 @@ namespace VanillaPlugin.Blocks
             ModelPath = "minecraft:block/oak_stairs";
         }
 
-        public override bool IsFullBlock(WorldBase world, Vector3i blockPos) => false;
+        public override bool IsFullBlock(WorldBase world, Vector3D<int> blockPos) => false;
 
         public override int GetPlacementMetadata(EntityPlayer player, BlockRaytraceResult ray)
         {
@@ -46,26 +46,26 @@ namespace VanillaPlugin.Blocks
             return (facing & 0x3) | (top << 2);
         }
 
-        public override void OnPlaced(WorldBase world, Vector3i blockPos, EntityPlayer player, int metadata)
+        public override void OnPlaced(WorldBase world, Vector3D<int> blockPos, EntityPlayer player, int metadata)
             => world.SetBlockData(blockPos, new BlockDataMetadata(metadata));
 
-        public override Matrix4 GetModelTransform(WorldBase world, Vector3i blockPos)
+        public override Matrix4X4<float> GetModelTransform(WorldBase world, Vector3D<int> blockPos)
         {
             Decode(world, blockPos, out var facing, out var top);
-            var rot = Matrix4.CreateRotationY(FacingAngle(facing));
+            var rot = Matrix4X4.CreateRotationY(FacingAngle(facing));
             // Top half = the vanilla "upside-down" stair: flip about X (y -> -y) before rotating to facing.
-            if (top) rot = Matrix4.CreateRotationX(MathHelper.Pi) * rot;
+            if (top) rot = Matrix4X4.CreateRotationX(MathF.PI) * rot;
             return rot;
         }
 
-        public override void GetCollisionBoxes(WorldBase world, Vector3i blockPos, List<AxisAlignedBoundingBox> boxes)
+        public override void GetCollisionBoxes(WorldBase world, Vector3D<int> blockPos, List<AxisAlignedBoundingBox> boxes)
         {
             Decode(world, blockPos, out var facing, out var top);
 
             // The full-footprint slab fills one Y half; the tall step fills the other Y half on the facing side.
             var slabMinY = top ? 0f : -0.5f;
             var slabMaxY = top ? 0.5f : 0f;
-            boxes.Add(new AxisAlignedBoundingBox(new Vector3(-0.5f, slabMinY, -0.5f), new Vector3(0.5f, slabMaxY, 0.5f)));
+            boxes.Add(new AxisAlignedBoundingBox(new Vector3D<float>(-0.5f, slabMinY, -0.5f), new Vector3D<float>(0.5f, slabMaxY, 0.5f)));
 
             var stepMinY = top ? -0.5f : 0f;
             var stepMaxY = top ? 0f : 0.5f;
@@ -77,7 +77,7 @@ namespace VanillaPlugin.Blocks
                 case South: szMin = 0f; break;
                 default: szMax = 0f; break; // North
             }
-            boxes.Add(new AxisAlignedBoundingBox(new Vector3(sxMin, stepMinY, szMin), new Vector3(sxMax, stepMaxY, szMax)));
+            boxes.Add(new AxisAlignedBoundingBox(new Vector3D<float>(sxMin, stepMinY, szMin), new Vector3D<float>(sxMax, stepMaxY, szMax)));
         }
 
         // Rotation taking the base model's +X (east) tall step to the stored facing (engine axes: +X east,
@@ -86,14 +86,14 @@ namespace VanillaPlugin.Blocks
         {
             switch (facing)
             {
-                case North: return MathHelper.PiOver2;
-                case South: return -MathHelper.PiOver2;
-                case West: return MathHelper.Pi;
+                case North: return (MathF.PI / 2f);
+                case South: return -(MathF.PI / 2f);
+                case West: return MathF.PI;
                 default: return 0f; // East
             }
         }
 
-        private static void Decode(WorldBase world, Vector3i pos, out int facing, out bool top)
+        private static void Decode(WorldBase world, Vector3D<int> pos, out int facing, out bool top)
         {
             var meta = (world.GetBlockData(pos) as BlockDataMetadata)?.Metadata ?? 0;
             facing = meta & 0x3;

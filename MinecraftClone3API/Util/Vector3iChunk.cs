@@ -1,5 +1,5 @@
 ﻿using System;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Util
 {
@@ -25,19 +25,19 @@ namespace MinecraftClone3API.Util
         public int X
         {
             get { return (Binary & 0x1F) >> 0; }
-            set { Binary = (ushort)(Binary & ~0x1F | MathHelper.Clamp(value, 0, 31) << 0 & 0x1F); }
+            set { Binary = (ushort)(Binary & ~0x1F | Math.Clamp(value, 0, 31) << 0 & 0x1F); }
         }
 
         public int Y
         {
             get { return (Binary & 0x3E0) >> 5; }
-            set { Binary = (ushort)(Binary & ~0x3E0 | MathHelper.Clamp(value, 0, 31) << 5 & 0x3E0); }
+            set { Binary = (ushort)(Binary & ~0x3E0 | Math.Clamp(value, 0, 31) << 5 & 0x3E0); }
         }
 
         public int Z
         {
             get { return (Binary & 0x7C00) >> 10; }
-            set { Binary = (ushort)(Binary & ~0x7C00 | MathHelper.Clamp(value, 0, 31) << 10 & 0x7C00); }
+            set { Binary = (ushort)(Binary & ~0x7C00 | Math.Clamp(value, 0, 31) << 10 & 0x7C00); }
         }
 
         public int this[int id]
@@ -58,7 +58,7 @@ namespace MinecraftClone3API.Util
             }
         }
 
-        public static implicit operator Vector3iChunk(Vector3i v)
+        public static implicit operator Vector3iChunk(Vector3D<int> v)
         {
             return new Vector3iChunk(v.X, v.Y, v.Z);
         }

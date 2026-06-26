@@ -1,8 +1,8 @@
 using System;
 using MinecraftClone3API.Client.Graphics;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
-using OpenTK.Windowing.GraphicsLibraryFramework;
+using Silk.NET.Input;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Client.GUI
 {
@@ -11,12 +11,12 @@ namespace MinecraftClone3API.Client.GUI
         private const int TextScale = 2;
         private const int BorderThickness = 2;
 
-        private static readonly Color4 FillNormal = new Color4(0.5f, 0.5f, 0.5f, 1f);
-        private static readonly Color4 FillHovered = new Color4(0.7f, 0.7f, 0.7f, 1f);
-        private static readonly Color4 FillDisabled = new Color4(0.3f, 0.3f, 0.3f, 1f);
-        private static readonly Color4 BorderEnabled = new Color4(0.8f, 0.8f, 0.8f, 1f);
-        private static readonly Color4 BorderDisabled = new Color4(0.4f, 0.4f, 0.4f, 1f);
-        private static readonly Color4 TextDisabled = new Color4(0.6f, 0.6f, 0.6f, 1f);
+        private static readonly Vector4D<float> FillNormal = new Vector4D<float>(0.5f, 0.5f, 0.5f, 1f);
+        private static readonly Vector4D<float> FillHovered = new Vector4D<float>(0.7f, 0.7f, 0.7f, 1f);
+        private static readonly Vector4D<float> FillDisabled = new Vector4D<float>(0.3f, 0.3f, 0.3f, 1f);
+        private static readonly Vector4D<float> BorderEnabled = new Vector4D<float>(0.8f, 0.8f, 0.8f, 1f);
+        private static readonly Vector4D<float> BorderDisabled = new Vector4D<float>(0.4f, 0.4f, 0.4f, 1f);
+        private static readonly Vector4D<float> TextDisabled = new Vector4D<float>(0.6f, 0.6f, 0.6f, 1f);
 
         public Rectangle Bounds;
         public string Label;
@@ -40,15 +40,18 @@ namespace MinecraftClone3API.Client.GUI
                 return;
             }
 
-            var mouse = ClientResources.Window.MouseState;
-            var position = ScaledResolution.ToGuiCoords(mouse.Position);
-            _hovered = position.X >= Bounds.MinX && position.X <= Bounds.MaxX &&
-                       position.Y >= Bounds.MinY && position.Y <= Bounds.MaxY;
+            var position = ScaledResolution.ToGuiCoords(ClientResources.Input.MousePosition);
+            _hovered = Contains(position);
+        }
 
-            if (Enabled && _hovered &&
-                mouse.IsButtonDown(MouseButton.Left) && !mouse.WasButtonDown(MouseButton.Left))
+        public override void OnMouseDown(MouseButton button, Vector2D<float> guiPos)
+        {
+            if (Enabled && button == MouseButton.Left && Contains(guiPos))
                 OnClick?.Invoke();
         }
+
+        private bool Contains(Vector2D<float> p) =>
+            p.X >= Bounds.MinX && p.X <= Bounds.MaxX && p.Y >= Bounds.MinY && p.Y <= Bounds.MaxY;
 
         public override void Render()
         {
@@ -60,11 +63,11 @@ namespace MinecraftClone3API.Client.GUI
 
             var textX = Bounds.MinX + (Bounds.Width - Font.MeasureWidth(Label, TextScale)) / 2;
             var textY = Bounds.MinY + (Bounds.Height - Font.LineHeight(TextScale)) / 2;
-            var textColor = Enabled ? Color4.White : TextDisabled;
+            var textColor = Enabled ? new Vector4D<float>(1f,1f,1f,1f) : TextDisabled;
             Font.DrawString(Label, textX, textY, TextScale, textColor);
         }
 
-        private void DrawBorder(Color4 color)
+        private void DrawBorder(Vector4D<float> color)
         {
             GuiRenderer.DrawTexture(ClientResources.WhitePixel,
                 new Rectangle(Bounds.MinX, Bounds.MinY, Bounds.MaxX, Bounds.MinY + BorderThickness), null, color);

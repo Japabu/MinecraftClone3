@@ -1,14 +1,13 @@
 using System;
-using OpenTK.Graphics.OpenGL4;
 
 namespace MinecraftClone3API.Graphics
 {
-    /// <summary>KHR_debug annotations -- debug groups + object labels -- that make a RenderDoc/apitrace
-    /// frame capture navigable (passes become collapsible groups with per-group GPU timing, resources get
-    /// names) without any in-engine profiling: RenderDoc still does all the timing, we only label the
-    /// command stream. Every call is a no-op unless a graphics debugger is attached (RenderDoc sets
-    /// RENDERDOC_CAPOPTS) or MC3_GL_DEBUG=1, so normal runs -- and macOS, which has no KHR_debug -- pay
-    /// nothing and never touch the (possibly absent) entry points.</summary>
+    /// <summary>Debug annotations -- debug groups + object labels -- that make a graphics-debugger frame
+    /// capture navigable (passes become collapsible groups, resources get names). In WebGPU the per-pass
+    /// groups map to the frame encoder's <c>PushDebugGroup</c>/<c>PopDebugGroup</c>; object labels are set at
+    /// resource-creation time in the RHI wrappers (every <c>GpuBuffer</c>/<c>GpuTexture</c>/pipeline takes a
+    /// label), so <see cref="Label"/> is a no-op. Groups are issued only when <see cref="Enabled"/>
+    /// (RenderDoc sets RENDERDOC_CAPOPTS, or MC3_GL_DEBUG=1), so normal runs pay nothing.</summary>
     public static class GraphicsDebug
     {
         public static readonly bool Enabled =
@@ -18,17 +17,16 @@ namespace MinecraftClone3API.Graphics
 
         public static void PushGroup(string name)
         {
-            if (Enabled) GL.PushDebugGroup(DebugSourceExternal.DebugSourceApplication, 0, name.Length, name);
+            if (Enabled) Renderer.Encoder.PushDebugGroup(name);
         }
 
         public static void PopGroup()
         {
-            if (Enabled) GL.PopDebugGroup();
+            if (Enabled) Renderer.Encoder.PopDebugGroup();
         }
 
-        public static void Label(ObjectLabelIdentifier type, int handle, string name)
-        {
-            if (Enabled) GL.ObjectLabel(type, handle, name.Length, name);
-        }
+        /// <summary>Object labels are set at creation in the RHI wrappers, so this is a no-op (kept so callers
+        /// that named GPU resources still compile).</summary>
+        public static void Label(string name) { }
     }
 }

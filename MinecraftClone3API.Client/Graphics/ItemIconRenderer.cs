@@ -1,76 +1,173 @@
+using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using MinecraftClone3API.Blocks;
-using MinecraftClone3API.Client;
+using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
-using OpenTK.Graphics.OpenGL4;
-using OpenTK.Mathematics;
+using MinecraftClone3API.Graphics.Rhi;
+using Silk.NET.WebGPU;
 
 namespace MinecraftClone3API.Graphics
 {
     /// <summary>
-    /// Renders a block into a small off-screen texture as a Minecraft-style isometric icon, cached per
-    /// block id. The block is meshed in the void <see cref="IconWorld"/> (all six faces, full light) and
-    /// drawn with the <see cref="ClientResources.ItemIconShader"/> into a <see cref="TextureFramebuffer"/>.
-    /// Lazy and main-thread only (every step here is a GL call); the inventory GUI calls
-    /// <see cref="GetIcon"/> while drawing.
+    /// Renders a block into a small off-screen texture as a Minecraft-style isometric icon, cached per block
+    /// id. The block is meshed in the void <see cref="IconWorld"/> (all six faces, full light) and forward-
+    /// shaded by <c>ItemIcon.wgsl</c> into a per-icon rgba8unorm colour target (with its own reverse-Z depth);
+    /// the GUI then samples that target. Lazy and main-thread only (it records a render pass into a transient
+    /// encoder); the inventory GUI calls <see cref="GetIcon"/> while drawing.
     /// </summary>
-    public static class ItemIconRenderer
+    public static unsafe class ItemIconRenderer
     {
         public const int Size = 64;
-
-        private static readonly Dictionary<ushort, TextureFramebuffer> Cache = new Dictionary<ushort, TextureFramebuffer>();
+        private const TextureFormat ColorFormat = TextureFormat.Rgba8Unorm;
+        private const TextureFormat DepthFormat = TextureFormat.Depth32float;
 
         // Isometric camera: look down at the cube (centred on the origin, spanning [-0.5,0.5]) from the
         // top-front-right so the +Y/top, +Z/front and +X/right faces are all visible, matching MC's icons.
         private static readonly Matrix4 View =
-            Matrix4.LookAt(new Vector3(1.2f, 1.05f, 1.2f), Vector3.Zero, Vector3.UnitY);
+            Matrix4X4.CreateLookAt(new Vector3(1.2f, 1.05f, 1.2f), Vector3.Zero, Vector3.UnitY);
+        // Reverse-Z orthographic: near/far swapped so a greater depth wins, matching the pipeline's
+        // CompareFunction.Greater and the depth-cleared-to-0 attachment.
         private static readonly Matrix4 Projection =
-            Matrix4.CreateOrthographicOffCenter(-0.9f, 0.9f, -0.9f, 0.9f, -10f, 10f);
+            Matrix4X4.CreateOrthographicOffCenter(-0.9f, 0.9f, -0.9f, 0.9f, 10f, -10f);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct IconFrame
+        {
+            public Mat4 View;
+            public Mat4 Proj;
+        }
+
+        private static readonly Dictionary<ushort, Texture> Cache = new Dictionary<ushort, Texture>();
+
+        private static bool _loaded;
+        private static GpuShaderModule _module;
+        private static GpuBindGroupLayout _frameLayout;
+        private static GpuPipelineLayout _pipelineLayout;
+        private static GpuRenderPipeline _pipeline;
+        private static GpuBuffer _frameUbo;
+        private static GpuBindGroup _frameBind;
+        private static GpuBindGroup _atlasBind;
 
         /// <summary>The icon texture for a block id (rendered and cached on first request).</summary>
         public static Texture GetIcon(ushort blockId)
         {
-            if (Cache.TryGetValue(blockId, out var fbo)) return fbo.Texture;
-            fbo = Render(GameRegistry.GetBlock(blockId));
-            Cache[blockId] = fbo;
-            return fbo.Texture;
+            if (Cache.TryGetValue(blockId, out var tex)) return tex;
+            tex = Render(GameRegistry.GetBlock(blockId));
+            Cache[blockId] = tex;
+            return tex;
         }
 
-        private static TextureFramebuffer Render(Block block)
+        private static void EnsureLoaded()
         {
-            var fbo = new TextureFramebuffer(Size, Size, true);
+            if (_loaded) return;
+            _loaded = true;
 
-            var vao = new VertexArrayObject();
-            ChunkMesher.AddBlockToVao(IconWorld.Instance, Vector3i.Zero, 0, 0, 0, block, vao, vao);
-            vao.Upload();
+            _module = new GpuShaderModule(ResourceReader.ReadString("System/Shaders/ItemIcon.wgsl"), "itemIcon");
 
-            fbo.Bind();
-            fbo.Clear(new Color4(0f, 0f, 0f, 0f));
+            // group(0): the IconFrame UBO (view, proj). group(1): the four block-atlas arrays + sampler,
+            // the shared BlockAtlas layout the geometry pass also uses.
+            _frameLayout = new GpuBindGroupLayout(new[]
+            {
+                GpuBindGroupLayout.Buffer(0, ShaderStage.Vertex, BufferBindingType.Uniform),
+            }, "itemIcon.frame");
 
-            // Depth so the cube's near faces occlude the far ones; no face culling because non-full models
-            // (stairs, etc.) rely on their back faces being visible.
-            RenderState.Set(new GlState { DepthTest = true });
+            _pipelineLayout = new GpuPipelineLayout(new[]
+            {
+                GpuPipelineLayout.Ptr(_frameLayout),
+                GpuPipelineLayout.Ptr(GpuLayouts.BlockAtlas),
+            }, label: "itemIcon");
 
-            var shader = ClientResources.ItemIconShader;
-            shader.Bind();
-            var view = View;
-            var projection = Projection;
-            GL.UniformMatrix4(shader.GetUniformLocation("uView"), false, ref view);
-            GL.UniformMatrix4(shader.GetUniformLocation("uProjection"), false, ref projection);
-            GL.Uniform1(shader.GetUniformLocation("uTextures16"), 0);
-            GL.Uniform1(shader.GetUniformLocation("uTextures64"), 1);
-            GL.Uniform1(shader.GetUniformLocation("uTextures256"), 2);
-            GL.Uniform1(shader.GetUniformLocation("uTextures1024"), 3);
+            // Straight-alpha blend so the discard-driven transparent background composites correctly into the
+            // cleared (transparent) colour target. No face culling: non-full models (stairs, etc.) rely on
+            // their back faces being visible. Reverse-Z depth writes so near cube faces occlude the far ones.
+            var color = new ColorTargetDesc(ColorFormat, GpuRenderPipeline.AlphaBlend);
+            var depth = new DepthDesc(DepthFormat, true, CompareFunction.Greater);
+            _pipeline = new GpuRenderPipeline(_pipelineLayout, _module, "vs_main", "fs_main",
+                ChunkMeshArena.GeometryVertexLayout, stackalloc[] { color }, depth, label: "itemIcon");
 
-            GlTextureUploader.Bind();
-            Samplers.BindBlockTextureSampler();
+            _frameUbo = new GpuBuffer((ulong)sizeof(IconFrame),
+                BufferUsage.Uniform | BufferUsage.CopyDst, "itemIcon.frame");
+            _frameUbo.QueueWriteStruct(new IconFrame
+            {
+                View = MatrixConvert.ToGpu(View),
+                Proj = MatrixConvert.ToGpu(Projection),
+            });
+            _frameBind = new GpuBindGroup(_frameLayout, new[] { GpuBindGroup.Buffer(0, _frameUbo) }, "itemIcon.frame");
 
-            vao.Draw();
+            _atlasBind = new GpuBindGroup(GpuLayouts.BlockAtlas, new[]
+            {
+                GpuBindGroup.Texture(0, BlockTextureUploader.ArrayAt(0).View),
+                GpuBindGroup.Texture(1, BlockTextureUploader.ArrayAt(1).View),
+                GpuBindGroup.Texture(2, BlockTextureUploader.ArrayAt(2).View),
+                GpuBindGroup.Texture(3, BlockTextureUploader.ArrayAt(3).View),
+                GpuBindGroup.Sampler(4, GpuSamplers.Block),
+            }, "itemIcon.atlas");
+        }
 
-            fbo.Unbind(ClientResources.Window.FramebufferSize.X, ClientResources.Window.FramebufferSize.Y);
-            vao.Dispose();
+        private static Texture Render(Block block)
+        {
+            EnsureLoaded();
 
-            return fbo;
+            var mesh = new MeshBuffer();
+            ChunkMesher.AddBlockToVao(IconWorld.Instance, Vector3i.Zero, 0, 0, 0, block, mesh, mesh);
+
+            var colorTex = new GpuTexture(Size, Size, ColorFormat,
+                TextureUsage.RenderAttachment | TextureUsage.TextureBinding, label: "itemIcon.color");
+            var icon = Texture.FromGpu(colorTex);
+
+            if (mesh.IndicesCount == 0) return icon;
+
+            var streams = UploadMesh(mesh);
+            var depthTex = new GpuTexture(Size, Size, DepthFormat, TextureUsage.RenderAttachment, label: "itemIcon.depth");
+
+            var encoder = GpuCommandEncoder.Create("itemIcon");
+            var pass = RenderPassBuilder.Begin(encoder,
+                stackalloc[] { ColorAttachment.ClearTo(colorTex.View, 0, 0, 0, 0) },
+                new DepthAttachment(depthTex.View, LoadOp.Clear, 0f));
+
+            pass.SetPipeline(_pipeline);
+            pass.SetBindGroup(0, _frameBind);
+            pass.SetBindGroup(1, _atlasBind);
+            for (uint i = 0; i < 5; i++) pass.SetVertexBuffer(i, streams.Vbo[i]);
+            pass.SetIndexBuffer(streams.Ibo, IndexFormat.Uint32);
+            pass.DrawIndexed((uint)mesh.IndicesCount);
+
+            pass.End();
+            pass.Release();
+            encoder.SubmitImmediate("itemIcon");
+
+            for (var i = 0; i < 5; i++) streams.Vbo[i].Dispose();
+            streams.Ibo.Dispose();
+            depthTex.Dispose();
+            mesh.Clear();
+
+            return icon;
+        }
+
+        private struct MeshStreams { public GpuBuffer[] Vbo; public GpuBuffer Ibo; }
+
+        private static MeshStreams UploadMesh(MeshBuffer mesh)
+        {
+            var vbo = new GpuBuffer[5];
+            vbo[0] = StreamBuffer(mesh.Positions, 12, "itemIcon.pos");
+            vbo[1] = StreamBuffer(mesh.Uvs, 8, "itemIcon.uv");
+            vbo[2] = StreamBuffer(mesh.Packed, 4, "itemIcon.packed");
+            vbo[3] = StreamBuffer(mesh.Colors, 4, "itemIcon.color");
+            vbo[4] = StreamBuffer(mesh.Lights, 4, "itemIcon.light");
+
+            var ibo = new GpuBuffer((ulong)((long)mesh.IndicesCount * sizeof(uint)),
+                BufferUsage.Index | BufferUsage.CopyDst, "itemIcon.ibo");
+            ibo.QueueWrite<uint>(CollectionsMarshal.AsSpan(mesh.Indices));
+            return new MeshStreams { Vbo = vbo, Ibo = ibo };
+        }
+
+        private static GpuBuffer StreamBuffer<T>(List<T> data, int elemBytes, string label) where T : unmanaged
+        {
+            var buffer = new GpuBuffer((ulong)((long)data.Count * elemBytes),
+                BufferUsage.Vertex | BufferUsage.CopyDst, label);
+            buffer.QueueWrite<T>(CollectionsMarshal.AsSpan(data));
+            return buffer;
         }
     }
 }

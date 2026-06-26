@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Headless WGSL validator. Creates a wgpu device with no surface or window (Metal on macOS),
+       then compiles every .wgsl file under the given directory and prints compilation diagnostics.
+       Lets shader ports be validated headlessly without bringing up the game window.
+       Run it with: dotnet run, project tools/wgsl-validate, passing the Shaders dir as an argument. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Silk.NET.WebGPU" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.WebGPU.Native.WGPU" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.WebGPU.Extensions.WGPU" Version="2.23.0" />
+  </ItemGroup>
+
+</Project>

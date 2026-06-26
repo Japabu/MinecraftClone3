@@ -5,8 +5,7 @@ using MinecraftClone3API.Client.Blocks;
 using MinecraftClone3API.Client.Graphics;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
-using OpenTK.Windowing.Desktop;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Client.GUI
 {
@@ -41,14 +40,14 @@ namespace MinecraftClone3API.Client.GUI
         private const int HotbarGroup = 4;
 
         private readonly WorldClient _world;
-        private readonly Vector3i _pos;
+        private readonly Vector3D<int> _pos;
         private readonly ContainerView _view;
         private readonly List<Slot> _slots = new List<Slot>();
 
         private readonly int _bgX;
         private readonly int _bgY;
 
-        public GuiFurnace(GameWindow window, WorldClient world, Vector3i pos) : base(window)
+        public GuiFurnace(WorldClient world, Vector3D<int> pos) : base()
         {
             _world = world;
             _pos = pos;
@@ -131,9 +130,9 @@ namespace MinecraftClone3API.Client.GUI
             else
             {
                 GuiRenderer.DrawTexture(ClientResources.WhitePixel, Rectangle.FromSize(_bgX, _bgY, GuiW * Scale, GuiH * Scale),
-                    null, new Color4(0.16f, 0.16f, 0.16f, 0.96f));
+                    null, new Vector4D<float>(0.16f, 0.16f, 0.16f, 0.96f));
                 foreach (var s in _slots)
-                    GuiRenderer.DrawTexture(ClientResources.WhitePixel, s.Bounds, null, new Color4(0.36f, 0.36f, 0.36f, 1f));
+                    GuiRenderer.DrawTexture(ClientResources.WhitePixel, s.Bounds, null, new Vector4D<float>(0.36f, 0.36f, 0.36f, 1f));
             }
 
             DrawProgress();

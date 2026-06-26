@@ -1,12 +1,10 @@
 using System.Collections.Generic;
-using MinecraftClone3API.Client;
 using MinecraftClone3API.Client.Graphics;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
-using OpenTK.Graphics.OpenGL4;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Client.GUI
 {
@@ -15,10 +13,6 @@ namespace MinecraftClone3API.Client.GUI
     /// count is above one.</summary>
     public static class ItemStackRenderer
     {
-        // The icon framebuffer is rendered with GL's bottom-left origin, so it reads upside-down through the
-        // GUI's top-left sampling; flip V (MinY/MaxY swapped) to present it upright.
-        private static readonly Rectangle FlipV = new Rectangle(0, ItemIconRenderer.Size, ItemIconRenderer.Size, 0);
-
         // Lazily-loaded 2D sprites for non-block items, cached by item id (null = no resource pack provides it).
         private static readonly Dictionary<ushort, Texture> Sprites = new Dictionary<ushort, Texture>();
 
@@ -30,18 +24,14 @@ namespace MinecraftClone3API.Client.GUI
 
             if (item is ItemBlock blockItem)
             {
-                // GetIcon may render into its own framebuffer (depth on, blend off); restore alpha blending
-                // afterwards so the icon's transparent background doesn't overwrite the GUI as black.
                 var icon = ItemIconRenderer.GetIcon(blockItem.Block.Id);
-                SetBlend();
-                GuiRenderer.DrawTexture(icon, rect, FlipV);
+                GuiRenderer.DrawTexture(icon, rect, null);
             }
             else
             {
                 var sprite = Sprite(item);
-                SetBlend();
                 if (sprite != null) GuiRenderer.DrawTexture(sprite, rect, null);
-                else GuiRenderer.DrawTexture(ClientResources.WhitePixel, rect, null, new Color4(0.7f, 0.7f, 0.7f, 1f));
+                else GuiRenderer.DrawTexture(ClientResources.WhitePixel, rect, null, new Vector4D<float>(0.7f, 0.7f, 0.7f, 1f));
             }
 
             if (stack.Count > 1)
@@ -50,15 +40,9 @@ namespace MinecraftClone3API.Client.GUI
                 var scale = 1;
                 var tx = rect.MaxX - Font.MeasureWidth(text, scale) - 1;
                 var ty = rect.MaxY - Font.LineHeight(scale) - 1;
-                Font.DrawString(text, tx, ty, scale, Color4.White);
+                Font.DrawString(text, tx, ty, scale, new Vector4D<float>(1f,1f,1f,1f));
             }
         }
-
-        private static void SetBlend() => RenderState.Set(new GlState
-        {
-            Blend = true,
-            BlendFunc = (BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha)
-        });
 
         private static Texture Sprite(Item item)
         {

@@ -1,6 +1,6 @@
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace VanillaPlugin.Blocks
 {
@@ -11,6 +11,6 @@ namespace VanillaPlugin.Blocks
         {
         }
 
-        public override LightLevel GetLightLevel(WorldBase world, Vector3i blockPos) => new LightLevel(15, 15, 15);
+        public override LightLevel GetLightLevel(WorldBase world, Vector3D<int> blockPos) => new LightLevel(15, 15, 15);
     }
 }

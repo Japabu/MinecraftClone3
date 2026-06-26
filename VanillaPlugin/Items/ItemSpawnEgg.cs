@@ -2,7 +2,7 @@ using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace VanillaPlugin.Items
 {
@@ -26,7 +26,7 @@ namespace VanillaPlugin.Items
         public override string MinecraftId => _minecraftId;
         public override bool IsUsable => true;
 
-        public override void OnUseServer(WorldServer world, EntityPlayer player, Vector3 position)
+        public override void OnUseServer(WorldServer world, EntityPlayer player, Vector3D<float> position)
             => world.SpawnEntity(_type, position);
     }
 }

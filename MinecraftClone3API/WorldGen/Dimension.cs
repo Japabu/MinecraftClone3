@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.WorldGen
 {
@@ -25,8 +25,8 @@ namespace MinecraftClone3API.WorldGen
         /// <see cref="AmbientLight"/> is a minimum light flooded everywhere so a sunless dimension isn't pitch
         /// black. Defaults are the open-sky Overworld (sky on, no fog override, no ambient floor).</summary>
         public bool HasSky = true;
-        public Vector3 FogColor = Vector3.Zero;
-        public Vector3 AmbientLight = Vector3.Zero;
+        public Vector3D<float> FogColor = Vector3D<float>.Zero;
+        public Vector3D<float> AmbientLight = Vector3D<float>.Zero;
 
         public void AddFeature(DecorationStep step, Feature feature)
         {
