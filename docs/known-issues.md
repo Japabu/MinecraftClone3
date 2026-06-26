@@ -10,9 +10,12 @@ relevant permanent doc. Not a changelog.
   no nether mobs — ambient spawning is dimension-blind, so **Overworld animals can spawn in the Nether**);
   the portal renders the pack's real axis-oriented thin pane but is **not animated** (a static texture frame);
   **lava deals no damage** and is a pass-through fluid (no flow, no fire); the **current dimension is not
-  persisted** — relog always lands in the Overworld at its
-  spawn; an Overworld return portal builds at the floor under the scaled coords, which may be far from where
-  you left (no surface-match beyond a local floor scan / portal search radius of 16).
+  persisted** — a player's position/look persists (`PlayerSerializer`) and is restored only when they log back
+  into the *same* dimension they left, so a player who logged off in the Nether relogs at the **Overworld
+  spawn** (the saved dimension key doesn't match) rather than back in the Nether. Restoring into a non-Overworld
+  dimension at login would need the dimension-transfer flow run at join time. An Overworld return portal builds
+  at the floor under the scaled coords, which may be far from where you left (no surface-match beyond a local
+  floor scan / portal search radius of 16).
 - **Dimension transfer briefly stalls the client.** `WorldClient.ResetForDimensionChange` parks the apply
   thread and tears the whole cached world down on the main thread (reusing the eviction paths), so the
   transfer frame can hitch by up to the apply-thread park latency (~50 ms) plus the teardown. One-time per
@@ -178,10 +181,6 @@ relevant permanent doc. Not a changelog.
   `InventoryAction`s — fine for a creative sandbox, exploitable in real MP. No survival pickup/drop, no recipe
   book; no survival item pickup/drop. (The apple is edible and mining tools work — but tools have no durability
   and broken blocks drop nothing; see the tool/survival limitations above.)
-- **Item ids aren't remapped from disk.** Like block ids, the `registry.bin` save/load path exists but is
-  unwired, so item ids are assigned by registration order — stable only for a fixed plugin set. A changed
-  plugin set shifts ids and a saved inventory would show wrong items (delete the world, per the no-back-compat
-  rule).
 - **Right-clicking a crafting table or furnace always opens it.** `Block.OnActivated` returning true suppresses
   placement, so you can't place a block against their face, and there's no sneak-to-place override.
 - **Furnaces are plain-furnace only; no XP, no blast furnace/smoker.** Smelting matches `minecraft:smelting`
@@ -208,6 +207,12 @@ relevant permanent doc. Not a changelog.
   mirrors the right-side legs and one arm/leg of the humanoid): we render those faces un-mirrored, which is
   near-invisible on the near-symmetric limb textures. Applying it means swapping the left/right face regions
   and reversing U in `EntityRenderer.AddBox`.
+- **Entity persistence runs on chunk-unload + shutdown, not the periodic autosave.** Entities save when their
+  chunk unloads and on clean shutdown (see [entities.md](entities.md)), so quitting is lossless; a hard crash
+  loses entity motion since the last unload (chunks/players are bounded by the 30 s autosave, entities aren't).
+  An entity that wanders entirely out of every loaded chunk between unload cycles ticks unchecked until it
+  void-despawns rather than being saved — bounded and rare. Adding an entity pass to the periodic autosave
+  would need it to run on the tick thread (where `Entities` lives), not the unload thread.
 - **Entities are stored/queried by linear scan — fine now, wants a spatial index eventually.** The server keeps
   a flat `WorldServer.Entities` `HashSet`; `FindEntity` (entity-targeted use), `EntityCreature.NearestPlayer`
   (every creature, every tick), and the client's `PlayerController.PickEntity` (every right-click) all scan the

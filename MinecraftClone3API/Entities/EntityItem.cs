@@ -34,5 +34,19 @@ namespace MinecraftClone3API.Entities
             Age++;
             if (Age >= LifetimeTicks) Dead = true;
         }
+
+        internal override void SerializeState(System.IO.BinaryWriter writer)
+        {
+            Stack.Write(writer);
+            writer.Write(Age);
+            writer.Write(PickupDelay);
+        }
+
+        internal override void DeserializeState(System.IO.BinaryReader reader)
+        {
+            Stack = ItemStack.Read(reader);
+            Age = reader.ReadInt32();
+            PickupDelay = reader.ReadInt32();
+        }
     }
 }

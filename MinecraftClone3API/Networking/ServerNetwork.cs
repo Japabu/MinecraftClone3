@@ -51,6 +51,11 @@ namespace MinecraftClone3API.Networking
         private const int TimeSyncTicks = 20;
         private long _lastTimeSync = long.MinValue;
 
+        // Persist connected players this often (≈30 s at 20 ticks/s) so a crash loses at most one interval;
+        // disconnect and shutdown still save immediately.
+        private const int PlayerSaveTicks = 600;
+        private long _lastPlayerSave = long.MinValue;
+
         // Resolved once from the generator (it spirals out for a land column, so cache it).
         private Vector3 _spawnPoint;
         private bool _spawnResolved;
@@ -227,6 +232,7 @@ namespace MinecraftClone3API.Networking
             SyncEntities();
             SyncContainers();
             SyncPlayerStats();
+            SavePlayersPeriodic();
 
             _pumpTimer.Restart();
             FlushBlockChanges();
@@ -244,6 +250,19 @@ namespace MinecraftClone3API.Networking
             foreach (var session in _sessions)
                 if (session.LoggedIn)
                     session.Connection.Send(new WorldTimePacket {WorldSeconds = session.World.WorldTimeSeconds});
+        }
+
+        // Periodically persist connected players so a crash loses at most PlayerSaveTicks of progress. Player
+        // files live under the primary world dir (mirrors the disconnect/shutdown saves), regardless of which
+        // dimension the player is currently in.
+        private void SavePlayersPeriodic()
+        {
+            if (_world.TickCount - _lastPlayerSave < PlayerSaveTicks) return;
+            _lastPlayerSave = _world.TickCount;
+            foreach (var session in _sessions)
+                if (session.LoggedIn)
+                    PlayerSerializer.Save(_world.WorldDir, session.PlayerName, session.Inventory, session.Player,
+                        session.World.DimensionKey);
         }
 
         // Pickup reach (squared): a player within this distance of a pickup-ready dropped item collects it.
@@ -489,13 +508,16 @@ namespace MinecraftClone3API.Networking
             session.Player = new EntityPlayer
                 {Position = SpawnPosition, LastTickPosition = SpawnPosition, EntityId = session.EntityId};
             session.LoggedIn = true;
-            session.ReadyGate = SpawnPosition;
             _world.AddPlayer(session.Player);
 
-            if (!PlayerSerializer.Load(_world.WorldDir, session.PlayerName, session.Inventory, session.Player))
+            // Load restores the player's saved position too (or leaves it at spawn for a new player); the join
+            // handshake pre-streams the column under wherever they land.
+            if (!PlayerSerializer.Load(_world.WorldDir, session.PlayerName, session.Inventory, session.Player,
+                    _world.DimensionKey))
                 SeedCreativeInventory(session.Inventory);
 
-            session.Connection.Send(new LoginAcceptPacket {EntityId = session.EntityId, Spawn = SpawnPosition});
+            session.ReadyGate = session.Player.Position;
+            session.Connection.Send(new LoginAcceptPacket {EntityId = session.EntityId, Spawn = session.Player.Position});
             session.Connection.Send(new WorldTimePacket {WorldSeconds = _world.WorldTimeSeconds});
             session.Connection.Send(new InventoryStatePacket {Inventory = session.Inventory});
 
@@ -645,7 +667,8 @@ namespace MinecraftClone3API.Networking
 
                 if (session.LoggedIn)
                 {
-                    PlayerSerializer.Save(_world.WorldDir, session.PlayerName, session.Inventory, session.Player);
+                    PlayerSerializer.Save(_world.WorldDir, session.PlayerName, session.Inventory, session.Player,
+                        session.World.DimensionKey);
                     session.World.RemovePlayer(session.Player);
                     BroadcastTo(session.World, new EntityDespawnPacket {EntityId = session.EntityId}, session);
                     Logger.Info($"Player {session.EntityId} disconnected");
@@ -1019,7 +1042,8 @@ namespace MinecraftClone3API.Networking
             // never sent a disconnect, so RemoveDisconnected wouldn't have saved them.
             foreach (var session in _sessions)
                 if (session.LoggedIn)
-                    PlayerSerializer.Save(_world.WorldDir, session.PlayerName, session.Inventory, session.Player);
+                    PlayerSerializer.Save(_world.WorldDir, session.PlayerName, session.Inventory, session.Player,
+                        session.World.DimensionKey);
 
             try
             {

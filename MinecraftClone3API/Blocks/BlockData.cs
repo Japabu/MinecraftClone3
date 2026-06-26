@@ -30,20 +30,34 @@ namespace MinecraftClone3API.Blocks
             writer.Write(bytes);
         }
 
+        /// <summary>Reads one block-data entry, or null when its type is unknown (its plugin is gone) or it
+        /// fails to deserialize. The key + length-prefixed payload are always consumed first, so a null return
+        /// just drops that one block's data and the rest of the chunk loads intact.</summary>
         internal static BlockData ReadFromStream(BinaryReader reader)
         {
             var blockDataRegistryKey = reader.ReadString();
             var bytesLength = reader.ReadUInt16();
             var bytes = reader.ReadBytes(bytesLength);
 
-            var entry = GameRegistry.BlockDataRegistry[blockDataRegistryKey];
-            var blockData = (BlockData)Activator.CreateInstance(entry.Type);
+            if (!GameRegistry.BlockDataRegistry.TryGet(blockDataRegistryKey, out var entry))
+            {
+                Logger.Warn($"Skipping unknown block data \"{blockDataRegistryKey}\"");
+                return null;
+            }
 
-            using (var ms = new MemoryStream(bytes))
-            using (var br = new BinaryReader(ms))
-                blockData.Deserialize(br);
-
-            return blockData;
+            try
+            {
+                var blockData = (BlockData) Activator.CreateInstance(entry.Type);
+                using (var ms = new MemoryStream(bytes))
+                using (var br = new BinaryReader(ms))
+                    blockData.Deserialize(br);
+                return blockData;
+            }
+            catch (Exception e)
+            {
+                Logger.Error($"Failed to deserialize block data \"{blockDataRegistryKey}\": {e.Message}");
+                return null;
+            }
         }
 
         public abstract void Serialize(BinaryWriter writer);

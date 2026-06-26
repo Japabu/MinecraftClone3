@@ -3,15 +3,18 @@ using System.IO;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
+using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.IO
 {
-    /// <summary>Per-player save: the inventory (hotbar + main grid + selected slot) plus the survival stats
-    /// (health/hunger/saturation/exhaustion/air/game mode) for one player name, stored at
-    /// <c>&lt;worldDir&gt;/Players/&lt;name&gt;.dat</c>. Server-side only; the client never touches it.</summary>
+    /// <summary>Per-player save: the inventory (hotbar + main grid + selected slot), survival stats
+    /// (health/hunger/saturation/exhaustion/air/game mode), and the last position + look (with the dimension it
+    /// was in), for one player name, stored at <c>&lt;worldDir&gt;/Players/&lt;name&gt;.dat</c> under the primary
+    /// world dir. Server-side only; the client never touches it.</summary>
     public static class PlayerSerializer
     {
         private const string PlayersFolder = "Players";
+        private const int Version = 2;
 
         private static string FileFor(string worldDir, string name)
         {
@@ -21,8 +24,12 @@ namespace MinecraftClone3API.IO
         }
 
         /// <summary>Loads a player's inventory and stats, or returns false if there is no save yet (caller seeds
-        /// defaults). A corrupt file is treated as "no save" rather than crashing.</summary>
-        public static bool Load(string worldDir, string name, Inventory inventory, EntityPlayer player)
+        /// defaults). The saved position is restored only when it belongs to <paramref name="currentDimensionKey"/>
+        /// (the dimension the player is logging into); a player who logged off in another dimension keeps the
+        /// caller-set spawn position, matching the not-yet-persisted cross-dimension relog. A corrupt file is
+        /// treated as "no save" rather than crashing.</summary>
+        public static bool Load(string worldDir, string name, Inventory inventory, EntityPlayer player,
+            string currentDimensionKey)
         {
             var file = FileFor(worldDir, name);
             if (!File.Exists(file)) return false;
@@ -31,6 +38,13 @@ namespace MinecraftClone3API.IO
             {
                 using (var reader = new BinaryReader(File.OpenRead(file)))
                 {
+                    var version = reader.ReadInt32();
+                    if (version != Version)
+                    {
+                        Logger.Warn($"Player \"{name}\" is save version {version}, expected {Version} — resetting");
+                        return false;
+                    }
+
                     inventory.Read(reader);
                     player.Health = reader.ReadSingle();
                     player.Hunger = reader.ReadSingle();
@@ -38,6 +52,18 @@ namespace MinecraftClone3API.IO
                     player.Exhaustion = reader.ReadSingle();
                     player.Air = reader.ReadInt32();
                     player.GameMode = (GameMode) reader.ReadByte();
+
+                    var savedDimension = reader.ReadString();
+                    var position = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+                    var pitch = reader.ReadSingle();
+                    var yaw = reader.ReadSingle();
+                    if (savedDimension == currentDimensionKey)
+                    {
+                        player.Position = position;
+                        player.LastTickPosition = position;
+                        player.Pitch = pitch;
+                        player.Yaw = yaw;
+                    }
                 }
 
                 return true;
@@ -49,13 +75,16 @@ namespace MinecraftClone3API.IO
             }
         }
 
-        public static void Save(string worldDir, string name, Inventory inventory, EntityPlayer player)
+        public static void Save(string worldDir, string name, Inventory inventory, EntityPlayer player,
+            string dimensionKey)
         {
             var file = new FileInfo(FileFor(worldDir, name));
             file.Directory.Create();
 
-            using (var writer = new BinaryWriter(file.Create()))
+            var tmp = file.FullName + ".tmp";
+            using (var writer = new BinaryWriter(File.Create(tmp)))
             {
+                writer.Write(Version);
                 inventory.Write(writer);
                 writer.Write(player.Health);
                 writer.Write(player.Hunger);
@@ -63,7 +92,14 @@ namespace MinecraftClone3API.IO
                 writer.Write(player.Exhaustion);
                 writer.Write(player.Air);
                 writer.Write((byte) player.GameMode);
+                writer.Write(dimensionKey);
+                writer.Write(player.Position.X);
+                writer.Write(player.Position.Y);
+                writer.Write(player.Position.Z);
+                writer.Write(player.Pitch);
+                writer.Write(player.Yaw);
             }
+            File.Move(tmp, file.FullName, true);
         }
     }
 }

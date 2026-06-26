@@ -102,6 +102,8 @@ snapshots it under the same lock. `DirtyChunks` is a `ConcurrentDictionary` used
 `_pending`). **Per-container single-writer (Invariant 5)** — each `PaletteStorage` container has exactly one
 writer thread; see the [world-model.md](world-model.md) copy-on-grow rule.
 
-**Invariant 4 — block-id agreement.** Block ids are assigned by plugin **enumeration order** at load. Client
-and server MUST load the same `Plugins/` so ids match (they share `VanillaPlugin`). If this ever needs
-hardening, ship `GameRegistry.Save/Load` (a `registry.bin` exchange) — it already exists, unused.
+**Invariant 4 — block/item-id agreement (within a session).** Numeric block/item ids are assigned in
+**deterministic plugin order** at load (`PluginManager` sorts by plugin id), so the client and server agree on
+the wire as long as they load the same `Plugins/`. The ids are session-local only: disk and the TCP
+chunk/inventory payloads carry the stable registry **name**, remapped on read, so worlds/inventories survive
+plugin churn and never depend on cross-run id stability (see [world-model.md](world-model.md)).

@@ -18,6 +18,12 @@ later. **Both transports decode on the client's background apply thread, not the
 tolerates the server mutating the source chunk concurrently (a torn entry self-corrects via the next
 `BlockChanges` delta), made safe by the palette copy-on-grow rule.
 
+The TCP `Chunk.Write` payload and `ItemStack` (in `InventoryState`/`InventoryAction`/container packets) encode
+blocks/items by stable registry **name**, not numeric id (the same self-describing form as disk — see
+[world-model.md](world-model.md)); the client resolves names to its own session-local ids on decode. The
+compact `BlockChanges`/`PlaceBlockRequest` paths still carry numeric `blockId` — fine because ids are assigned
+in deterministic plugin order, so client and server agree within a session.
+
 ```
   Packets (Networking/Packets.cs)
   C→S  Login                 announce (carries the player name, used as the inventory save key)
@@ -91,8 +97,8 @@ The client mirrors the stats onto `WorldClient` (HUD, flight gate, death screen)
 so the server can apply fall damage despite the player owning its position; `SetGameModeRequest` flips the mode;
 `RespawnRequest` (only while dead) resets stats + teleports the player to spawn, after which the next
 `PlayerStats` clears the dead flag and the client snaps to the respawn point. Player **stats persist** alongside
-the inventory in `PlayerSerializer` (`<worldDir>/Players/<name>.dat`) — a save-format change, so an existing
-world (or its `Players/` folder) must be deleted.
+the inventory in `PlayerSerializer` (`<worldDir>/Players/<name>.dat`), behind a save version + atomic
+temp-and-rename write; a version mismatch resets the player rather than misreading it.
 
 **Placement metadata is computed client-side, never read on the server.** `Block.OnPlaced(world, pos,
 player, int metadata)` receives the metadata from the `PlaceBlockRequest`; the client derives it via

@@ -17,6 +17,12 @@ namespace MinecraftClone3API.Plugins
         private static readonly Dictionary<string, PluginContext> PluginDlls = new Dictionary<string, PluginContext>();
         private static readonly List<string> LoadedPlugins = new List<string>();
 
+        // Plugins drive block/item id assignment in registration order, so they must be iterated in a stable
+        // order independent of filesystem-enumeration order — otherwise a client and server (or two machines)
+        // could assign different ids and disagree on the wire. Order by plugin id, ordinally.
+        private static IEnumerable<PluginContext> OrderedPlugins =>
+            PluginDlls.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => p.Value);
+
         public static void LoadResources(Action<float, string, string> progress)
         {
             I18N.Load(t => progress(t * 0.5f, "Loading", "Translations"));
@@ -26,11 +32,11 @@ namespace MinecraftClone3API.Plugins
 
             var part = 1f / PluginDlls.Count;
             var total = 0f;
-            foreach (var plugin in PluginDlls)
+            foreach (var plugin in OrderedPlugins)
             {
-                progress(0.5f + total * 0.5f, "system.loading.resources.plugin", plugin.Value.PluginAttribute.Name);
+                progress(0.5f + total * 0.5f, "system.loading.resources.plugin", plugin.PluginAttribute.Name);
                 total += part;
-                plugin.Value.Plugin.LoadResources(plugin.Value);
+                plugin.Plugin.LoadResources(plugin);
             }
         }
 
@@ -38,25 +44,25 @@ namespace MinecraftClone3API.Plugins
         {
             var part = 0.3333333F / PluginDlls.Count;
             var total = 0f;
-            foreach (var plugin in PluginDlls)
+            foreach (var plugin in OrderedPlugins)
             {
-                progress(total, "system.loading.preLoad", plugin.Value.PluginAttribute.Name);
+                progress(total, "system.loading.preLoad", plugin.PluginAttribute.Name);
                 total += part;
-                plugin.Value.Plugin.PreLoad(plugin.Value);
+                plugin.Plugin.PreLoad(plugin);
             }
 
-            foreach (var plugin in PluginDlls)
+            foreach (var plugin in OrderedPlugins)
             {
-                progress(total, "system.loading.load", plugin.Value.PluginAttribute.Name);
+                progress(total, "system.loading.load", plugin.PluginAttribute.Name);
                 total += part;
-                plugin.Value.Plugin.Load(plugin.Value);
+                plugin.Plugin.Load(plugin);
             }
 
-            foreach (var plugin in PluginDlls)
+            foreach (var plugin in OrderedPlugins)
             {
-                progress(total, "system.loading.postLoad", plugin.Value.PluginAttribute.Name);
+                progress(total, "system.loading.postLoad", plugin.PluginAttribute.Name);
                 total += part;
-                plugin.Value.Plugin.PostLoad(plugin.Value);
+                plugin.Plugin.PostLoad(plugin);
             }
 
             // Recipes come from the resource pack's data/ tree, so they load after every plugin has registered

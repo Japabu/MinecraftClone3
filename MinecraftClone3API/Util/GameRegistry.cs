@@ -1,5 +1,4 @@
 ﻿using System.Collections.Generic;
-using System.IO;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Items;
@@ -9,8 +8,6 @@ namespace MinecraftClone3API.Util
 {
     public static class GameRegistry
     {
-        private const string RegistryFilename = "registry.bin";
-
         internal static readonly BlockRegistry BlockRegistry = new BlockRegistry();
         internal static readonly ItemRegistry ItemRegistry = new ItemRegistry();
         internal static readonly Registry<CraftingRecipe> RecipeRegistry = new Registry<CraftingRecipe>();
@@ -25,8 +22,6 @@ namespace MinecraftClone3API.Util
         /// <summary>The content-provided portal/dimension-travel rules (see <see cref="WorldGen.IDimensionPortals"/>),
         /// or null if no plugin registered any (then standing in a block never transfers dimensions).</summary>
         public static WorldGen.IDimensionPortals Portals;
-
-        public static List<string> GetMissingBlocks() => BlockRegistry.GetMissingBlocks();
 
         /// <summary>Client-only: parse every registered block's model and blockstate from the resource pack
         /// (<see cref="Block.LoadModel"/>). Run once after plugins load and before meshing. The headless server
@@ -91,28 +86,5 @@ namespace MinecraftClone3API.Util
             => EntityDataRegistry[new EntityDataRegistryEntry(data.GetType())];
 
         internal static System.Type GetEntityDataType(string key) => EntityDataRegistry[key].Type;
-
-        public static void Save(DirectoryInfo saveDir)
-        {
-            var file = new FileInfo(Path.Combine(saveDir.FullName, RegistryFilename));
-
-            using (var writer = new BinaryWriter(file.Create()))
-            {
-                BlockRegistry.Write(writer);
-                ItemRegistry.Write(writer);
-            }
-        }
-
-        public static void Load(DirectoryInfo saveDir)
-        {
-            var file = new FileInfo(Path.Combine(saveDir.FullName, RegistryFilename));
-            if (!file.Exists) return;
-
-            using (var reader = new BinaryReader(file.OpenRead()))
-            {
-                BlockRegistry.Read(reader);
-                ItemRegistry.Read(reader);
-            }
-        }
     }
 }

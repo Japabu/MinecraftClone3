@@ -195,7 +195,9 @@ namespace MinecraftClone3API.Blocks
             writer.Write(_max.Y);
             writer.Write(_max.Z);
 
-            _blockStorage.Write(writer);
+            // The block palette is written by stable registry name, not session-local id, so the chunk
+            // survives blocks being added/removed/reordered. Light/sky values are raw data, written as-is.
+            _blockStorage.Write(writer, WriteBlockName);
             _lightStorage.Write(writer);
             _skyStorage.Write(writer);
 
@@ -206,5 +208,8 @@ namespace MinecraftClone3API.Blocks
                 BlockData.WriteToStream(data.Value, writer);
             }
         }
+
+        private static void WriteBlockName(BinaryWriter writer, ushort id)
+            => writer.Write(GameRegistry.GetBlock(id).RegistryKey);
     }
 }
