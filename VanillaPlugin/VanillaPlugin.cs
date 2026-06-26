@@ -1,5 +1,6 @@
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Graphics;
+using MinecraftClone3API.Items;
 using MinecraftClone3API.Plugins;
 using VanillaPlugin.BlockDatas;
 using VanillaPlugin.Blocks;
@@ -29,22 +30,24 @@ namespace VanillaPlugin
 
         public void Load(PluginContext context)
         {
-            context.Register(new BlockBasic("Stone", "minecraft:block/stone", true));
-            context.Register(new BlockBasic("Cobblestone", "minecraft:block/cobblestone", true));
-            context.Register(new BlockBasic("Dirt", "minecraft:block/dirt", true));
-            context.Register(new BlockFalling("Sand", "minecraft:block/sand"));
-            context.Register(new BlockFalling("Gravel", "minecraft:block/gravel"));
-            context.Register(new BlockBasic("Snow", "minecraft:block/snow_block", true));
-            context.Register(new BlockBasic("Bedrock", "minecraft:block/bedrock", true));
-            context.Register(new BlockBasic("Obsidian", "minecraft:block/obsidian", true));
-            context.Register(new BlockBasic("Bricks", "minecraft:block/bricks", true));
-            context.Register(new BlockBasic("StoneBricks", "minecraft:block/stone_bricks", true));
-            context.Register(new BlockBasic("CoalOre", "minecraft:block/coal_ore", true));
-            context.Register(new BlockBasic("IronOre", "minecraft:block/iron_ore", true));
-            context.Register(new BlockBasic("GoldOre", "minecraft:block/gold_ore", true));
-            context.Register(new BlockBasic("DiamondOre", "minecraft:block/diamond_ore", true));
-            context.Register(new BlockBasic("OakLog", "minecraft:block/oak_log", true));
-            context.Register(new BlockBasic("OakPlanks", "minecraft:block/oak_planks", true));
+            // Hardness, preferred tool, and harvest tier match Minecraft (drive survival mining time); bedrock
+            // is unbreakable (-1). Stone/ores/obsidian require the correct tool tier to mine at full speed.
+            context.Register(new BlockBasic("Stone", "minecraft:block/stone", true, 1.5f, ToolType.Pickaxe, 0, true));
+            context.Register(new BlockBasic("Cobblestone", "minecraft:block/cobblestone", true, 2.0f, ToolType.Pickaxe, 0, true));
+            context.Register(new BlockBasic("Dirt", "minecraft:block/dirt", true, 0.5f, ToolType.Shovel));
+            context.Register(new BlockFalling("Sand", "minecraft:block/sand", 0.5f, ToolType.Shovel));
+            context.Register(new BlockFalling("Gravel", "minecraft:block/gravel", 0.6f, ToolType.Shovel));
+            context.Register(new BlockBasic("Snow", "minecraft:block/snow_block", true, 0.2f, ToolType.Shovel, 0, true));
+            context.Register(new BlockBasic("Bedrock", "minecraft:block/bedrock", true, -1f));
+            context.Register(new BlockBasic("Obsidian", "minecraft:block/obsidian", true, 50.0f, ToolType.Pickaxe, 3, true));
+            context.Register(new BlockBasic("Bricks", "minecraft:block/bricks", true, 2.0f, ToolType.Pickaxe, 0, true));
+            context.Register(new BlockBasic("StoneBricks", "minecraft:block/stone_bricks", true, 1.5f, ToolType.Pickaxe, 0, true));
+            context.Register(new BlockBasic("CoalOre", "minecraft:block/coal_ore", true, 3.0f, ToolType.Pickaxe, 0, true));
+            context.Register(new BlockBasic("IronOre", "minecraft:block/iron_ore", true, 3.0f, ToolType.Pickaxe, 1, true));
+            context.Register(new BlockBasic("GoldOre", "minecraft:block/gold_ore", true, 3.0f, ToolType.Pickaxe, 2, true));
+            context.Register(new BlockBasic("DiamondOre", "minecraft:block/diamond_ore", true, 3.0f, ToolType.Pickaxe, 2, true));
+            context.Register(new BlockBasic("OakLog", "minecraft:block/oak_log", true, 2.0f, ToolType.Axe));
+            context.Register(new BlockBasic("OakPlanks", "minecraft:block/oak_planks", true, 2.0f, ToolType.Axe));
             context.Register(new BlockLeaves());
             context.Register(new BlockWater());
             context.Register(new BlockBasic("BrewingStand", "minecraft:block/brewing_stand", false));
@@ -68,16 +71,33 @@ namespace VanillaPlugin
             context.Register(new ItemSimple("IronIngot", "minecraft/textures/item/iron_ingot.png"));
             context.Register(new ItemSimple("GoldIngot", "minecraft/textures/item/gold_ingot.png"));
             context.Register(new ItemSimple("Diamond", "minecraft/textures/item/diamond.png"));
-            context.Register(new ItemSimple("Apple", "minecraft/textures/item/apple.png"));
+            context.Register(new ItemFood("Apple", "minecraft/textures/item/apple.png", 4f, 0.3f));
             context.Register(new ItemShears());
+
+            // Mining tools per Minecraft material (speed multiplier, harvest tier): wood 2/0, stone 4/1,
+            // iron 6/2, gold 12/0, diamond 8/3. Each material gets a pickaxe, axe, and shovel.
+            RegisterToolSet(context, "Wooden", "wooden", 2f, 0);
+            RegisterToolSet(context, "Stone", "stone", 4f, 1);
+            RegisterToolSet(context, "Iron", "iron", 6f, 2);
+            RegisterToolSet(context, "Golden", "golden", 12f, 0);
+            RegisterToolSet(context, "Diamond", "diamond", 8f, 3);
 
             context.Register<BlockDataMetadata>();
             context.Register<BlockDataFurnace>();
+
+            context.RegisterEntityData<FallingBlockData>();
 
             VanillaWorldGen.Register(context);
             context.Register(new OverworldDimension());
 
             RegisterEntities(context);
+        }
+
+        private static void RegisterToolSet(PluginContext context, string prefix, string material, float speed, int tier)
+        {
+            context.Register(new ItemTool(prefix + "Pickaxe", $"minecraft/textures/item/{material}_pickaxe.png", ToolType.Pickaxe, speed, tier));
+            context.Register(new ItemTool(prefix + "Axe", $"minecraft/textures/item/{material}_axe.png", ToolType.Axe, speed, tier));
+            context.Register(new ItemTool(prefix + "Shovel", $"minecraft/textures/item/{material}_shovel.png", ToolType.Shovel, speed, tier));
         }
 
         // Animals, a hostile mob, and the dropped-item type. Width/height drive server collision; the texture
@@ -109,6 +129,8 @@ namespace VanillaPlugin
             context.Register(chicken);
             context.Register(zombie);
             context.Register(new EntityType("Item", EntityKind.Item, 0.25f, 0.25f, 1f, 0f, false, null, null));
+            context.Register(new EntityType("FallingBlock", EntityKind.FallingBlock,
+                EntityFallingBlock.Size, EntityFallingBlock.Size, 1f, 0f, false, null, null));
 
             context.Register(new ItemSpawnEgg(pig, "minecraft/textures/item/pig_spawn_egg.png"));
             context.Register(new ItemSpawnEgg(cow, "minecraft/textures/item/cow_spawn_egg.png"));

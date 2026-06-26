@@ -27,6 +27,7 @@ namespace MinecraftClone3API.Client
         public static Shader CompositionShader;
         public static Shader PointLightShader;
         public static Shader BlockOutlineShader;
+        public static Shader BlockBreakShader;
         public static Shader SpriteShader;
         public static Shader ItemIconShader;
         public static Shader ShadowDepthShader;
@@ -51,6 +52,7 @@ namespace MinecraftClone3API.Client
             CompositionShader = GlResources.ReadShader(PluginDir + "Shaders/Composition");
             PointLightShader = GlResources.ReadShader(PluginDir + "Shaders/PointLight");
             BlockOutlineShader = GlResources.ReadShader(PluginDir + "Shaders/BlockOutline");
+            BlockBreakShader = GlResources.ReadShader(PluginDir + "Shaders/BlockBreak");
             SpriteShader = GlResources.ReadShader(PluginDir + "Shaders/Sprite");
             ItemIconShader = GlResources.ReadShader(PluginDir + "Shaders/ItemIcon");
             ShadowDepthShader = GlResources.ReadShader(PluginDir + "Shaders/ShadowDepth");

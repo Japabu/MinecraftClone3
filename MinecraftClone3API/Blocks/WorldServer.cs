@@ -460,6 +460,24 @@ namespace MinecraftClone3API.Blocks
             return item;
         }
 
+        /// <summary>Spawns a falling-block entity for the block id at <paramref name="blockPos"/> (whose cell the
+        /// caller has just cleared to air), positioned so it begins exactly where the block was. No-op if no
+        /// <see cref="EntityKind.FallingBlock"/> type is registered.</summary>
+        public EntityFallingBlock SpawnFallingBlock(ushort blockId, Vector3i blockPos)
+        {
+            EntityType type = null;
+            foreach (var t in GameRegistry.EntityTypes)
+                if (t.Kind == EntityKind.FallingBlock) { type = t; break; }
+            if (type == null) return null;
+
+            // Position is the block's bottom-centre: a block at by spans by-0.5..by+0.5, so its floor is by-0.5.
+            var spawnPos = new Vector3(blockPos.X, blockPos.Y - 0.5f, blockPos.Z);
+            var falling = (EntityFallingBlock) SpawnEntity(type, spawnPos);
+            falling.BlockId = blockId;
+            falling.Data = new FallingBlockData {BlockId = blockId};
+            return falling;
+        }
+
         public override void Update()
         {
             if (_unloaded) return;
@@ -470,6 +488,7 @@ namespace MinecraftClone3API.Blocks
             foreach (var playerEntity in PlayerEntities)
             {
                 playerEntity.Update();
+                PlayerSurvival.Tick(this, playerEntity);
             }
             foreach (var entity in Entities)
             {

@@ -59,6 +59,11 @@ namespace MinecraftClone3API.Graphics
             if (UploadedCount <= 0) return;
 
             GL.BindVertexArray(VaoId);
+            // Re-assert the element buffer every draw: the macOS OpenGL-over-Metal driver drops a VAO's
+            // element-array binding when unrelated VAOs/buffers are deleted (chunk eviction disposes them
+            // every frame), which would make glDrawElements raise GL_INVALID_OPERATION and silently drop the
+            // mesh. Idempotent and cheap; does not rely on the driver preserving VAO state.
+            GL.BindBuffer(BufferTarget.ElementArrayBuffer, IndicesId);
             GL.DrawElements(mode, UploadedCount, DrawElementsType.UnsignedInt, 0);
         }
 

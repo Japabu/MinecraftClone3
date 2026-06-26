@@ -33,6 +33,7 @@ namespace MinecraftClone3.States
             ResourceReader.ClearCache();
             ClientResources.Load(window);
             BoundingBoxRenderer.Load();
+            BlockBreakRenderer.Load();
             EntityRenderer.Load();
             ChunkBorderRenderer.Load();
 

@@ -1,21 +1,25 @@
 using MinecraftClone3API.Blocks;
+using MinecraftClone3API.Entities;
+using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
 
 namespace VanillaPlugin.Blocks
 {
     /// <summary>
-    /// A block affected by gravity (sand, gravel): when the cell beneath it is empty it descends one block per
-    /// tick until it lands on a solid block. Falling is server-authoritative — the block simply moves through
-    /// the grid (no falling-block entity). It ticks only while unsupported: a freshly placed block ticks via
-    /// the <see cref="Block.NeedsServerTick"/> registration in <c>SetBlock</c>, a resting block starts again
-    /// when <see cref="OnNeighborChanged"/> sees its support removed, and it deregisters itself on landing.
+    /// A block affected by gravity (sand, gravel): when the cell beneath it is empty it clears itself and spawns
+    /// a <see cref="EntityFallingBlock"/> that falls smoothly under gravity and turns back into a block on
+    /// landing. Server-authoritative. It is armed for a tick only when it might be unsupported: a freshly placed
+    /// block via the <see cref="Block.NeedsServerTick"/> registration in <c>SetBlock</c>, a resting block when
+    /// <see cref="OnNeighborChanged"/> sees the block beneath it removed.
     /// </summary>
     public class BlockFalling : BlockBasic
     {
         private static readonly Vector3i Down = new Vector3i(0, -1, 0);
 
-        public BlockFalling(string name, string modelPath) : base(name, modelPath, true)
+        public BlockFalling(string name, string modelPath, float hardness = 1.5f,
+            ToolType tool = ToolType.None, int toolTier = 0, bool requiresTool = false)
+            : base(name, modelPath, true, hardness, tool, toolTier, requiresTool)
         {
         }
 
@@ -30,16 +34,14 @@ namespace VanillaPlugin.Blocks
         {
             var below = blockPos + Down;
 
-            // Don't fall into an unloaded column — that would force-create a chunk and drop the block into the
-            // void. Treat the edge of the loaded world as solid ground.
-            if (world.IsBlockInEmptyChunk(below) || world.GetBlock(below) != BlockRegistry.BlockAir)
-            {
-                world.UnscheduleBlockTick(blockPos);
-                return;
-            }
+            // Don't fall into an unloaded column — that would let the entity drop through ungenerated terrain.
+            // Treat the edge of the loaded world as solid ground.
+            if (world.IsBlockInEmptyChunk(below) || world.GetBlock(below) != BlockRegistry.BlockAir) return;
 
+            // Clear the cell (this also deregisters it from ticking) and hand the fall off to an entity. Clearing
+            // notifies the block above, so a stacked column converts to falling entities one tick after another.
             world.SetBlock(blockPos, BlockRegistry.BlockAir);
-            world.SetBlock(below, this);
+            world.SpawnFallingBlock(Id, blockPos);
         }
     }
 }

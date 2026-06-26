@@ -68,6 +68,20 @@ chunk's positions) — far cheaper than scanning every loaded block. Such a bloc
 light — e.g. a furnace lighting/extinguishing. Container blocks expose their state to the network generically
 through `ContainerBlockData` (see [inventory.md](inventory.md), [networking.md](networking.md)).
 
+**Block updates.** Every server `SetBlock` (with `update`) notifies the six face-adjacent blocks via
+`Block.OnNeighborChanged` (server-only; the client world just replays deltas). Overrides must stay light —
+schedule a tick (`WorldServer.ScheduleBlockTick`/`UnscheduleBlockTick`) or touch their own data, never call
+back into `SetBlock` (it would recurse through the same notification).
+
+**Falling blocks.** `VanillaPlugin.Blocks.BlockFalling` (sand, gravel) uses the update + ticking machinery to
+drop under gravity *as an entity*, so the fall is smooth rather than a per-tick grid snap. When a falling block
+is unsupported — placed onto air (`NeedsServerTick` registration) or its support removed (`OnNeighborChanged`)
+— its `OnServerTick` clears the cell and calls `WorldServer.SpawnFallingBlock`, which spawns an
+`EntityFallingBlock` that falls via `EntityPhysics` and turns back into a block on landing (see
+[entities.md](entities.md)). Clearing the cell notifies the block above, so a stacked column converts to
+falling entities one tick after another. Naturally generated floating sand never falls until disturbed (it is
+never registered), matching Minecraft.
+
 ## LOD columns: the distant-horizon storage model
 
 The Phase-2 distant horizon streams a second, far cheaper representation for terrain *beyond* the render

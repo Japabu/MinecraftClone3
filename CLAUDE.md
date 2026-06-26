@@ -4,8 +4,9 @@ A from-scratch Minecraft-like voxel engine in C# on OpenTK (OpenGL). Custom defe
 Distant-Horizons-style far-terrain LOD horizon, plugin system, chunked world with RGB block-light +
 sky-light propagation and a dynamic day/night cycle, a
 plugin-extensible world generator (biomes, ores, trees, caves, oceans), player movement (MC-exact walking +
-a creative free-flight toggle), and client/server multiplayer (singleplayer runs an in-process server over a
-loopback connection; multiplayer connects to a dedicated server over TCP).
+a creative free-flight toggle), server-authoritative survival (health/hunger, fall/void/drowning damage,
+death/respawn, eating, per-player game-mode toggle), and client/server multiplayer (singleplayer runs an
+in-process server over a loopback connection; multiplayer connects to a dedicated server over TCP).
 
 > **⚠️ KEEP THE DOCS UP TO DATE — and keep THIS file lean.** This root is always loaded into context, so it
 > holds only the orientation map, the cross-cutting rules below, and an index into `docs/`. **The deep detail

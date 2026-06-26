@@ -166,6 +166,7 @@ namespace MinecraftClone3API.Networking
             SendTimeSync();
             SyncEntities();
             SyncContainers();
+            SyncPlayerStats();
 
             _pumpTimer.Restart();
             FlushBlockChanges();
@@ -298,6 +299,15 @@ namespace MinecraftClone3API.Networking
                 case UseItemOnEntityRequestPacket useOn when session.LoggedIn:
                     ApplyUseOnEntityRequest(session, useOn);
                     break;
+                case PlayerFallPacket fall when session.LoggedIn:
+                    PlayerSurvival.ApplyFallDamage(session.Player, fall.FallDistance);
+                    break;
+                case SetGameModeRequestPacket gm when session.LoggedIn:
+                    SetGameMode(session, (GameMode) gm.GameMode);
+                    break;
+                case RespawnRequestPacket _ when session.LoggedIn:
+                    Respawn(session);
+                    break;
                 case DropItemRequestPacket drop when session.LoggedIn:
                     ApplyDropRequest(session, drop);
                     break;
@@ -341,17 +351,69 @@ namespace MinecraftClone3API.Networking
                 });
         }
 
+        /// <summary>Sends each player its own survival stats when a value changed since the last send (so the
+        /// owning client's HUD/death screen stay in sync). Also latches <see cref="ClientSession.Dead"/> from
+        /// the authoritative health.</summary>
+        private void SyncPlayerStats()
+        {
+            foreach (var session in _sessions)
+            {
+                if (!session.LoggedIn) continue;
+                var p = session.Player;
+                session.Dead = p.Health <= 0f;
+
+                if (session.StatsSent && p.Health == session.LastHealth && p.Hunger == session.LastHunger &&
+                    p.Saturation == session.LastSaturation && (byte) p.GameMode == session.LastGameMode &&
+                    session.Dead == session.LastDead)
+                    continue;
+
+                session.StatsSent = true;
+                session.LastHealth = p.Health;
+                session.LastHunger = p.Hunger;
+                session.LastSaturation = p.Saturation;
+                session.LastGameMode = (byte) p.GameMode;
+                session.LastDead = session.Dead;
+
+                session.Connection.Send(new PlayerStatsPacket
+                {
+                    Health = p.Health,
+                    MaxHealth = PlayerSurvival.MaxHealth,
+                    Hunger = p.Hunger,
+                    Saturation = p.Saturation,
+                    GameMode = (byte) p.GameMode,
+                    Dead = session.Dead
+                });
+            }
+        }
+
+        private static void SetGameMode(ClientSession session, GameMode mode)
+        {
+            session.Player.GameMode = mode;
+            // Survival forbids flight; the meaningful gate is client-side, but clear the flag for cleanliness.
+            if (mode == GameMode.Survival) session.Player.Flying = false;
+        }
+
+        private void Respawn(ClientSession session)
+        {
+            if (!session.Dead) return;
+            PlayerSurvival.Reset(session.Player);
+            session.Player.Position = SpawnPosition;
+            session.Player.LastTickPosition = SpawnPosition;
+            session.Dead = false;
+        }
+
         private void Login(ClientSession session, string name)
         {
             if (session.LoggedIn) return;
 
             session.EntityId = _world.NextEntityId();
             session.PlayerName = name ?? "";
-            session.Player = new EntityPlayer {Position = SpawnPosition, EntityId = session.EntityId};
+            session.Player = new EntityPlayer
+                {Position = SpawnPosition, LastTickPosition = SpawnPosition, EntityId = session.EntityId};
             session.LoggedIn = true;
             _world.AddPlayer(session.Player);
 
-            if (!PlayerSerializer.Load(_world.WorldDir, session.PlayerName, session.Inventory))
+            if (!PlayerSerializer.Load(_world.WorldDir, session.PlayerName, session.Inventory, session.Player))
                 SeedCreativeInventory(session.Inventory);
 
             session.Connection.Send(new LoginAcceptPacket {EntityId = session.EntityId, Spawn = SpawnPosition});
@@ -427,9 +489,21 @@ namespace MinecraftClone3API.Networking
         /// is read from the server's authoritative inventory copy, not the request, so it can't be spoofed.</summary>
         private void ApplyUseRequest(ClientSession session, UseItemRequestPacket use)
         {
-            var item = session.Inventory.SelectedItem.Item;
+            var slot = session.Inventory.SelectedHotbar;
+            var held = session.Inventory.Slots[slot];
+            var item = held.Item;
             if (item == null || !item.IsUsable) return;
+            // Item-specific gate (e.g. food only applies in survival when there is hunger to refill).
+            if (!item.CanUseServer(session.Player)) return;
+
             item.OnUseServer(_world, session.Player, use.Position.ToVector3() + new Vector3(0.5f, 0f, 0.5f));
+
+            if (item.ConsumesOnUse)
+            {
+                session.Inventory.Slots[slot] =
+                    held.Count - 1 <= 0 ? ItemStack.Empty : held.WithCount(held.Count - 1);
+                session.Connection.Send(new InventoryStatePacket {Inventory = session.Inventory});
+            }
         }
 
         /// <summary>Runs the held item's server-side action against the targeted entity (shears on a sheep). The
@@ -486,7 +560,7 @@ namespace MinecraftClone3API.Networking
 
                 if (session.LoggedIn)
                 {
-                    PlayerSerializer.Save(_world.WorldDir, session.PlayerName, session.Inventory);
+                    PlayerSerializer.Save(_world.WorldDir, session.PlayerName, session.Inventory, session.Player);
                     _world.RemovePlayer(session.Player);
                     Broadcast(new EntityDespawnPacket {EntityId = session.EntityId}, session);
                     Logger.Info($"Player {session.EntityId} disconnected");
@@ -694,7 +768,7 @@ namespace MinecraftClone3API.Networking
             // never sent a disconnect, so RemoveDisconnected wouldn't have saved them.
             foreach (var session in _sessions)
                 if (session.LoggedIn)
-                    PlayerSerializer.Save(_world.WorldDir, session.PlayerName, session.Inventory);
+                    PlayerSerializer.Save(_world.WorldDir, session.PlayerName, session.Inventory, session.Player);
 
             try
             {

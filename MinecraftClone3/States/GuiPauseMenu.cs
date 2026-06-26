@@ -1,4 +1,5 @@
 using MinecraftClone3API.Client;
+using MinecraftClone3API.Client.Blocks;
 using MinecraftClone3API.Client.Graphics;
 using MinecraftClone3API.Client.GUI;
 using MinecraftClone3API.Client.StateSystem;
@@ -22,28 +23,44 @@ namespace MinecraftClone3.States
         private const string Title = "Game Menu";
 
         private readonly GameWindow _window;
+        private readonly WorldClient _world;
+        private readonly GuiButton _gameModeButton;
 
-        public GuiPauseMenu(GameWindow window)
+        public GuiPauseMenu(GameWindow window, WorldClient world)
         {
             _window = window;
+            _world = world;
             _window.CursorState = CursorState.Normal;
 
             var x = ((int) ScaledResolution.GuiResolution.X - ButtonWidth) / 2;
-            var y = (int) ScaledResolution.GuiResolution.Y / 2 - (3 * ButtonHeight + 2 * ButtonGap) / 2;
+            var y = (int) ScaledResolution.GuiResolution.Y / 2 - (4 * ButtonHeight + 3 * ButtonGap) / 2;
             var step = ButtonHeight + ButtonGap;
 
             Elements.Add(new GuiButton(Rectangle.FromSize(x, y, ButtonWidth, ButtonHeight), "Back to Game", Close));
-            Elements.Add(new GuiButton(Rectangle.FromSize(x, y + step, ButtonWidth, ButtonHeight), "Options",
+            _gameModeButton = new GuiButton(Rectangle.FromSize(x, y + step, ButtonWidth, ButtonHeight),
+                GameModeLabel(), ToggleGameMode);
+            Elements.Add(_gameModeButton);
+            Elements.Add(new GuiButton(Rectangle.FromSize(x, y + 2 * step, ButtonWidth, ButtonHeight), "Options",
                 () => StateEngine.AddOverlay(new GuiOptions(_window))));
-            Elements.Add(new GuiButton(Rectangle.FromSize(x, y + 2 * step, ButtonWidth, ButtonHeight),
+            Elements.Add(new GuiButton(Rectangle.FromSize(x, y + 3 * step, ButtonWidth, ButtonHeight),
                 "Save and Quit to Title", () => StateEngine.ReplaceState(new GuiSavingWorld(_window))));
         }
 
         public override bool PausesWorld => true;
 
+        private string GameModeLabel() => "Game Mode: " + _world.GameMode;
+
+        private void ToggleGameMode()
+        {
+            var target = _world.GameMode == GameMode.Survival ? GameMode.Creative : GameMode.Survival;
+            _world.SendSetGameMode(target);
+        }
+
         public override void Update(bool focused)
         {
             base.Update(focused);
+            // The mode is server-authoritative; refresh the label once the change round-trips.
+            _gameModeButton.Label = GameModeLabel();
             if (focused && _window.KeyboardState.IsKeyPressed(Keys.Escape))
                 Close();
         }

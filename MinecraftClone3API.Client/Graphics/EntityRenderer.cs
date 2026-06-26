@@ -175,6 +175,8 @@ namespace MinecraftClone3API.Graphics
                     DrawModel(_playerModel, entity, world, uModel, uLight);
                 else if (entity.Type.Kind == EntityKind.Item)
                     DrawItem((EntityItem) entity, world, uModel, uLight);
+                else if (entity.Type.Kind == EntityKind.FallingBlock)
+                    DrawFallingBlock((EntityFallingBlock) entity, world, uModel, uLight);
                 else if (CreatureModels.TryGetValue(entity.Type.Id, out var model))
                     DrawModel(model, entity, world, uModel, uLight);
             }
@@ -228,6 +230,22 @@ namespace MinecraftClone3API.Graphics
             var bob = 0.1f + 0.05f * MathF.Sin(t * 3f);
             var matrix = Matrix4.CreateScale(0.4f) * Matrix4.CreateRotationY(t * 2f) *
                          Matrix4.CreateTranslation(pos + new Vector3(0, 0.25f + bob, 0));
+            GL.UniformMatrix4(uModel, false, ref matrix);
+            mesh.Draw();
+        }
+
+        private static void DrawFallingBlock(EntityFallingBlock falling, WorldClient world, int uModel, int uLight)
+        {
+            var mesh = GetItemMesh(falling.BlockId);
+            if (mesh == null) return;
+
+            // RenderPosition is the block's bottom-centre; the icon mesh is centred on the origin, so lift it by
+            // half a block to fill the cell from feet upward (no spin/bob — it's a full block, not an item).
+            var pos = falling.RenderPosition;
+            var centre = pos + new Vector3(0, 0.5f, 0);
+            SetLight(world, centre, uLight);
+
+            var matrix = Matrix4.CreateTranslation(centre);
             GL.UniformMatrix4(uModel, false, ref matrix);
             mesh.Draw();
         }

@@ -18,8 +18,9 @@
   </ItemGroup>
 
   <!-- Stage the System plugin (shared with the client) next to the binary so the server runs from
-       AppContext.BaseDirectory regardless of the current working directory. The server reads model
-       JSON and PNGs CPU-side via StbImage; no GL context is needed. -->
+       AppContext.BaseDirectory regardless of the current working directory. The server reads only
+       non-render plugin data; model/texture parsing is a client-only pass, so no GL context or
+       resource pack is needed. -->
   <ItemGroup>
     <Content Include="..\MinecraftClone3\Content\System\**\*"
              Link="Plugins\System\%(RecursiveDir)%(Filename)%(Extension)"

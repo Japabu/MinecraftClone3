@@ -9,7 +9,11 @@ namespace MinecraftClone3API.Entities
         Creature,
 
         /// <summary>A dropped item stack: a small spinning block icon affected by gravity, picked up by players.</summary>
-        Item
+        Item,
+
+        /// <summary>A block falling under gravity (sand, gravel): rendered as a full-size block, turns back into
+        /// a placed block when it lands.</summary>
+        FallingBlock
     }
 
     /// <summary>
@@ -77,7 +81,13 @@ namespace MinecraftClone3API.Entities
         /// <summary>Creates a server-side instance of this type (used by <c>WorldServer.SpawnEntity</c>).</summary>
         public Entity CreateEntity()
         {
-            var entity = Kind == EntityKind.Item ? (Entity) new EntityItem() : new EntityCreature();
+            Entity entity;
+            switch (Kind)
+            {
+                case EntityKind.Item: entity = new EntityItem(); break;
+                case EntityKind.FallingBlock: entity = new EntityFallingBlock(); break;
+                default: entity = new EntityCreature(); break;
+            }
             entity.Type = this;
             entity.Data = DataFactory?.Invoke();
             return entity;

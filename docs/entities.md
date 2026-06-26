@@ -17,8 +17,16 @@ network data is needed). Subclasses:
   collision via `EntityPhysics`, hopping 1-block steps. `ServerWorld` is the back-reference its AI reads.
 - **`EntityItem`** — a dropped `ItemStack`. Falls under gravity, settles, and despawns after ~5 min; `CanPickup`
   gates a short delay so a just-broken block isn't instantly re-collected.
+- **`EntityFallingBlock`** — a block (sand, gravel) mid-fall. Spawned by `BlockFalling` via
+  `WorldServer.SpawnFallingBlock` when the block is unsupported (see [world-model.md](world-model.md)); falls via
+  `EntityPhysics` and on landing turns back into a placed block at its rest cell (stacking one cell up if that
+  cell was filled the same tick). `Position` is the block's bottom-centre. It carries its block id on a
+  `FallingBlockData` so the client renders the right full-size block (`EntityRenderer.DrawFallingBlock`, reusing
+  the dropped-item block mesh at full scale, no spin).
 - **`EntityPlayer`** — the player (its own tuned [PlayerPhysics](../MinecraftClone3API/Entities/PlayerPhysics.cs);
-  remote copies are bare `Entity`s with `Type == null`).
+  remote copies are bare `Entity`s with `Type == null`). Also carries the survival stats
+  (`Health`/`Hunger`/`Saturation`/`Exhaustion`/`Air`/`GameMode`, see below) — server-authoritative, mirrored on
+  the client from the stats packet.
 
 `EntityPhysics` ([Entities/EntityPhysics.cs](../MinecraftClone3API/Entities/EntityPhysics.cs)) is the generic
 gravity + AABB sweep (clip Y→X→Z against each cell's `GetCollisionBoxes`), parameterised by the entity's
@@ -27,7 +35,8 @@ width/height. It runs **server-side only** and reuses the same collision contrac
 ## Types & registry
 
 An `EntityType` ([Entities/EntityType.cs](../MinecraftClone3API/Entities/EntityType.cs)) is a registered species:
-collision `Width`/`Height`, AI fields (`Hostile`, `MoveSpeed`, `MaxHealth`), an `EntityKind` (`Creature`/`Item`),
+collision `Width`/`Height`, AI fields (`Hostile`, `MoveSpeed`, `MaxHealth`), an `EntityKind`
+(`Creature`/`Item`/`FallingBlock`),
 and the **client-only** render data (`TexturePath` + a `ModelPath` resource key). Plugins register them with
 `context.Register(EntityType)`; the `EntityRegistry` assigns each a sequential numeric `Id` in registration order.
 **Client and server load the same plugins in the same order, so the ids agree on the wire** — the same
@@ -77,6 +86,30 @@ resolves the id against its **own** `WorldServer.FindEntity` list (so it can't a
 shears a woolly sheep — flips `SheepData.Sheared` (which the client uses to drop the wool layer) and `DropItem`s
 1–3 wool.
 
+## Player survival
+
+Health/hunger/damage are **server-authoritative** even though the player's *position* is client-authoritative.
+`PlayerSurvival` ([Entities/PlayerSurvival.cs](../MinecraftClone3API/Entities/PlayerSurvival.cs)) is stateless
+logic over `EntityPlayer`'s stat fields, run once per 20 tps tick from `WorldServer.Update`'s player loop. It
+applies Minecraft-exact mechanics on Normal difficulty:
+
+- **Health** 20 (10 hearts, 1 heart = 2 points), **Hunger** 20, saturation gated by hunger.
+- **Hunger/saturation/exhaustion:** movement (approximated server-side from the reported position delta) and
+  regen accrue exhaustion; at the threshold it drains saturation, then hunger.
+- **Regen:** hunger ≥ 18 heals 1 health on the 80-tick cadence (costs exhaustion). **Starvation:** hunger 0
+  drains 1 health on the same cadence, floored at 1 (Normal).
+- **Drowning:** when the head cell is liquid, `Air` drains from 300; at 0, 2 points every 20 ticks (refills
+  above water). **Void:** below Y −96, 4 points every 10 ticks.
+- **Fall damage:** `max(0, ceil(distance − 3))`. Because the client owns position, `PlayerController` accumulates
+  the fall while airborne and reports it on landing (`PlayerFallPacket`); the server computes the damage.
+- **Creative** short-circuits everything (stats clamped full, immune, may fly). The mode is per-player
+  (`GameMode`), toggled via the pause menu (`SetGameModeRequest`); flight is gated to Creative client-side.
+
+Death is `Health ≤ 0`: the network layer latches `ClientSession.Dead`, broadcasts it in the stats packet, and
+holds the player until a `RespawnRequest` (the death screen) resets stats + teleports to spawn. Stats persist
+per player (see [networking.md](networking.md) / `PlayerSerializer`). Eating drives hunger back up — see
+[inventory.md](inventory.md). Mob combat (creatures dealing/taking damage) is **not** wired yet; `EntityType`
+already carries `MaxHealth` for it.
 ## Rendering
 
 `EntityRenderer` ([Client/Graphics/EntityRenderer.cs](../MinecraftClone3API/Client/Graphics/EntityRenderer.cs))
