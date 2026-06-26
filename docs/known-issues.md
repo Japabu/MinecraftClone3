@@ -8,9 +8,9 @@ relevant permanent doc. Not a changelog.
   travel with find-or-build destination portals, the multi-dimension server, and the sunless red-fog render
   mode. **Deferred / accepted:** only one biome (no soul-sand valley / crimson-warped forests, no fortresses,
   no nether mobs — ambient spawning is dimension-blind, so **Overworld animals can spawn in the Nether**);
-  the portal block is an opaque-ish cutoff cube (no translucency, no axis-aware model, **not animated**) and is
-  **not removed when its obsidian frame is broken**; **lava deals no damage** and is a pass-through fluid (no
-  flow, no fire); the **current dimension is not persisted** — relog always lands in the Overworld at its
+  the portal renders the pack's real axis-oriented thin pane but is **not animated** (a static texture frame);
+  **lava deals no damage** and is a pass-through fluid (no flow, no fire); the **current dimension is not
+  persisted** — relog always lands in the Overworld at its
   spawn; an Overworld return portal builds at the floor under the scaled coords, which may be far from where
   you left (no surface-match beyond a local floor scan / portal search radius of 16).
 - **Dimension transfer briefly stalls the client.** `WorldClient.ResetForDimensionChange` parks the apply
