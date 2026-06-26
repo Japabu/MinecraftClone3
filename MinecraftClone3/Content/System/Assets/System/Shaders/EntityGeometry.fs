@@ -17,6 +17,9 @@ uniform sampler2DArray uTextures1024;
 // shadow/caves and brightens in the open like the blocks around it.
 uniform vec4 uLight;
 
+// Per-draw diffuse multiplier. White (1,1,1) normally; the hurt flash tints a just-damaged entity red.
+uniform vec4 uTint;
+
 vec4 SampleTexture()
 {
 	if(vTexCoord.w == 0) return texture(uTextures16, vTexCoord.xyz);
@@ -32,7 +35,7 @@ void main()
 	// Entity sheets have fully-transparent regions (the unused parts of the box-unwrap, capes, etc.); drop them.
 	if(texColor.a < 0.5) discard;
 
-	outDiffuse = vec4(texColor.rgb * vColor, 1);
+	outDiffuse = vec4(texColor.rgb * vColor * uTint.rgb, 1);
 	outNormal = vNormal*0.5 + 0.5;   // material .w = 0 => lit (receives sun/shadow + light in composition)
 	outLight = uLight;
 }

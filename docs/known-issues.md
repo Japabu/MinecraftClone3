@@ -3,6 +3,25 @@
 This list is for *open* work only — when an item is resolved, delete it or move its rationale into the
 relevant permanent doc. Not a changelog.
 
+- **Held-item rendering & chest — accepted simplifications.** Held items render two ways: the **first-person
+  viewmodel** (`HeldItemRenderer`, lower-right, empty hand draws nothing — no first-person arm) and, on the
+  **player body's right arm**, in third person and for remote players (`EntityRenderer.DrawHeldItem`). The
+  first-person pose is sourced from the resource pack exactly like Minecraft (`ItemDisplay` — the model's
+  `display.firstperson_righthand` × MC's arm/swing constants), but the **body-attached** pose
+  (`EntityRenderer`'s `HeldBlockArm`/`HeldFlatArm`) is still **hand-tuned** and wants a visual pass against MC's
+  `thirdperson_righthand` display. **Flat held items can read as faintly doubled** at off-perpendicular angles:
+  the extruded mesh draws a full front *and* back sprite face and the viewmodel draws with culling off, so the
+  two faces can separate slightly on screen — a true fix would cull the back face or thin/merge the faces. The
+  body-attached item follows only the **walk** animation, not the local attack-swing (`SwingPhase` is
+  first-person only), and remote players' swing isn't networked. `BlockChest`'s facing→yaw table is tunable
+  against a runtime check (the latch may point the wrong way until then), and because the box-model loader
+  **mirrors z** (`BedrockModelLoader`), confirm the front/back-facing textures aren't flipped front-to-back at
+  runtime. The chest is **single only** (no double chest). Its lid open/close animation is driven by **this
+  client's** open screen only — a chest a *remote* player opens won't animate here (no viewer-count sync). It's
+  treated as a non-full, light-transmitting block for neighbour face-culling. `BlockEntityRenderer` re-scans the
+  sparse per-chunk block-data of nearby chunks each frame (bounded to a chunk radius) rather than maintaining an
+  event-driven set of block-entity positions — fine for the few chests in view, revisit if block entities
+  become common.
 - **Nether is the "core, one-biome" slice.** Implemented: the dimension + generator (netherrack/lava/soul-sand/
   glowstone/quartz-ore), obsidian portals lit with flint & steel (`VanillaPortals`), 8:1 Overworld↔Nether
   travel with find-or-build destination portals, the multi-dimension server, and the sunless red-fog render

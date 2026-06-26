@@ -148,6 +148,25 @@ namespace MinecraftClone3API.Blocks
             if (BlockStateId != null) StateDefinition = ResourceReader.ReadBlockState(BlockStateId);
         }
 
+        /// <summary>True for blocks rendered as a <em>block entity</em> — a separate animated box model drawn by
+        /// the client's block-entity renderer (e.g. a chest), not baked into the chunk mesh. The mesher skips
+        /// such blocks (they emit no chunk geometry); storage, collision and targeting are unaffected. The model
+        /// + texture come from <see cref="BlockEntityModelPath"/>/<see cref="BlockEntityTexturePath"/>, and the
+        /// inventory icon + first-person viewmodel use that same box model instead of a chunk-mesh cube.</summary>
+        public virtual bool RendersAsBlockEntity => false;
+
+        /// <summary>Resource path of this block's block-entity geometry (a Bedrock <c>*.geo.json</c>), used only
+        /// when <see cref="RendersAsBlockEntity"/>. Client-only; the headless server never resolves it.</summary>
+        public virtual string BlockEntityModelPath => null;
+
+        /// <summary>Resource identifier of this block-entity's texture (e.g. <c>minecraft:entity/chest/normal</c>),
+        /// used only when <see cref="RendersAsBlockEntity"/>. Client-only.</summary>
+        public virtual string BlockEntityTexturePath => null;
+
+        /// <summary>The Y rotation (radians) the block-entity model is drawn at, derived from the block's stored
+        /// data (e.g. a chest's facing). Client-side; default unrotated.</summary>
+        public virtual float GetBlockEntityRotation(WorldBase world, Vector3i blockPos) => 0f;
+
         /// <summary>True for blocks whose <see cref="OnServerTick"/> must run every server tick (e.g. a smelting
         /// furnace). The server keeps a registry of such block positions so it ticks only them.</summary>
         public virtual bool NeedsServerTick => false;
@@ -169,6 +188,11 @@ namespace MinecraftClone3API.Blocks
         public virtual void OnPlaced(WorldBase world, Vector3i blockPos, EntityPlayer player, int metadata)
         {
         }
+
+        /// <summary>Server-side: this block is about to be removed by a player break. Default no-op; a container
+        /// block (e.g. a chest) overrides it to drop its stored contents so they aren't lost. Called just before
+        /// the block is set to air; must not place/break blocks itself.</summary>
+        public virtual void OnBroken(WorldServer world, Vector3i blockPos) { }
 
         /// <summary>Client-side: derive the metadata to carry in the place request (e.g. a stair's facing from
         /// the placing player's look + clicked face). Runs on the client; takes only Core types so the headless

@@ -1,0 +1,35 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": {
+        "identifier": "geometry.chest",
+        "texture_width": 64,
+        "texture_height": 64
+      },
+      "bones": [
+        {
+          "name": "bottom",
+          "pivot": [0, 0, 0],
+          "cubes": [
+            { "origin": [-7, 0, -7], "size": [14, 10, 14], "uv": [0, 19] }
+          ]
+        },
+        {
+          "name": "lid",
+          "pivot": [0, 9, 7],
+          "cubes": [
+            { "origin": [-7, 9, -7], "size": [14, 5, 14], "uv": [0, 0] }
+          ]
+        },
+        {
+          "name": "lock",
+          "pivot": [0, 9, 7],
+          "cubes": [
+            { "origin": [-1, 7, -8], "size": [2, 4, 1], "uv": [0, 0] }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -286,6 +286,15 @@ namespace MinecraftClone3API.Networking
         public float Pitch;
         public float Yaw;
 
+        /// <summary>Ticks remaining on the damage flash (0 normally); the client renders the entity red while
+        /// non-zero so a hit reads. Streamed each tick with the position.</summary>
+        public byte HurtTime;
+
+        /// <summary>The session-local id of the item the entity holds in its main hand (0 = nothing), so other
+        /// clients can draw it. Session-local ids are safe on the live wire (client and server share the same
+        /// plugin load), as with <see cref="BlockChangesPacket"/>. Streamed each tick with the position.</summary>
+        public ushort HeldItemId;
+
         public override PacketId Id => PacketId.EntityMove;
 
         public override void Write(BinaryWriter writer)
@@ -294,6 +303,8 @@ namespace MinecraftClone3API.Networking
             WriteVector3(writer, Position);
             writer.Write(Pitch);
             writer.Write(Yaw);
+            writer.Write(HurtTime);
+            writer.Write(HeldItemId);
         }
 
         public override void Read(BinaryReader reader)
@@ -302,6 +313,8 @@ namespace MinecraftClone3API.Networking
             Position = ReadVector3(reader);
             Pitch = reader.ReadSingle();
             Yaw = reader.ReadSingle();
+            HurtTime = reader.ReadByte();
+            HeldItemId = reader.ReadUInt16();
         }
     }
 

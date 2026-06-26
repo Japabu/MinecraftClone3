@@ -40,10 +40,6 @@ namespace MinecraftClone3API.Graphics
         {
             var fbo = new TextureFramebuffer(Size, Size, true);
 
-            var vao = new VertexArrayObject();
-            ChunkMesher.AddBlockToVao(IconWorld.Instance, Vector3i.Zero, 0, 0, 0, block, vao, vao);
-            vao.Upload();
-
             fbo.Bind();
             fbo.Clear(new Color4(0f, 0f, 0f, 0f));
 
@@ -65,6 +61,25 @@ namespace MinecraftClone3API.Graphics
             GlTextureUploader.Bind();
             Samplers.BindBlockTextureSampler();
 
+            var uModel = shader.GetUniformLocation("uModel");
+
+            // Block entities (chests) have no chunk-mesh cube; draw their box model instead (same packed vertex
+            // format, so the icon shader handles it). Use this single-output shader — NOT the entity shader,
+            // whose 3 G-buffer outputs into this 1-attachment icon FBO render nothing on macOS.
+            if (block.RendersAsBlockEntity && BlockEntityRenderer.GetModel(block.Id) is EntityRenderer.RenderModel beModel)
+            {
+                // The model is centred on x/z with its feet at y=0; drop it so it sits centred in the icon.
+                EntityRenderer.DrawStaticParts(beModel, Matrix4.CreateTranslation(0f, -0.45f, 0f), uModel);
+                fbo.Unbind(ClientResources.Window.FramebufferSize.X, ClientResources.Window.FramebufferSize.Y);
+                return fbo;
+            }
+
+            var vao = new VertexArrayObject();
+            ChunkMesher.AddBlockToVao(IconWorld.Instance, Vector3i.Zero, 0, 0, 0, block, vao, vao);
+            vao.Upload();
+
+            var identity = Matrix4.Identity;
+            GL.UniformMatrix4(uModel, false, ref identity);
             vao.Draw();
 
             fbo.Unbind(ClientResources.Window.FramebufferSize.X, ClientResources.Window.FramebufferSize.Y);

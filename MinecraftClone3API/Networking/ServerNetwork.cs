@@ -295,7 +295,8 @@ namespace MinecraftClone3API.Networking
                     EntityId = entity.EntityId,
                     Position = entity.Position,
                     Pitch = entity.Pitch,
-                    Yaw = entity.Yaw
+                    Yaw = entity.Yaw,
+                    HurtTime = (byte) Math.Min(255, Math.Max(0, entity.HurtTime))
                 }, null);
             }
         }
@@ -399,7 +400,8 @@ namespace MinecraftClone3API.Networking
                         EntityId = session.EntityId,
                         Position = move.Position,
                         Pitch = move.Pitch,
-                        Yaw = move.Yaw
+                        Yaw = move.Yaw,
+                        HeldItemId = (ushort) session.Inventory.SelectedItem.ItemId
                     }, session);
                     break;
                 case PlaceBlockRequestPacket place when session.LoggedIn:
@@ -618,6 +620,7 @@ namespace MinecraftClone3API.Networking
                 if (broken.Id != 0 && GameRegistry.TryGetItem(broken.RegistryKey, out var dropped))
                     world.DropItem(new ItemStack(dropped.Id, 1),
                         place.Position.ToVector3() + new Vector3(0.5f, 0.25f, 0.5f));
+                broken.OnBroken(world, place.Position);
                 world.SetBlock(place.Position, BlockRegistry.BlockAir);
             }
             else

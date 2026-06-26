@@ -17,6 +17,7 @@ out float vShade;
 
 uniform mat4 uView;
 uniform mat4 uProjection;
+uniform mat4 uModel;   // identity for a block mesh; the part transform for a block-entity (chest) icon
 
 // Fixed face shading indexed by the packed normalIndex (+X,-X,+Y,-Y,+Z,-Z): top brightest, bottom darkest,
 // the four sides in between, matching Minecraft's vanilla block shading.
@@ -24,7 +25,7 @@ const float Shade[6] = float[6](0.6, 0.6, 1.0, 0.5, 0.8, 0.8);
 
 void main()
 {
-	gl_Position = uProjection * uView * vec4(inPosition, 1);
+	gl_Position = uProjection * uView * uModel * vec4(inPosition, 1);
 
 	uint texId = inPacked & 0xFFFFu;
 	uint arrayId = (inPacked >> 16) & 0x3u;

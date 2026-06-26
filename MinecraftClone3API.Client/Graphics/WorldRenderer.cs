@@ -610,8 +610,11 @@ namespace MinecraftClone3API.Graphics
 
             GraphicsDebug.PushGroup("Overlays");
             EntityRenderer.Render(world, camera, projection);
+            BlockEntityRenderer.Render(world, camera, projection);
             PlayerController.Render(camera, projection);
             ChunkBorderRenderer.Render(camera, projection);
+            // Last: it compresses depth so the first-person viewmodel sits on top of the world.
+            HeldItemRenderer.Render(world, camera, projection);
             GraphicsDebug.PopGroup();
 
             ClientResources.GeometryFramebuffer.Unbind(ClientResources.Window.FramebufferSize.X, ClientResources.Window.FramebufferSize.Y);

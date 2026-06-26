@@ -27,7 +27,7 @@ namespace MinecraftClone3API.Graphics
         private const string PlayerSkinPathLegacy = "minecraft:entity/steve";
         private const string PlayerModelPath = "System/Models/Entity/player.geo.json";
 
-        private class RenderModel
+        internal class RenderModel
         {
             public BlockTexture Texture;
             // Optional second layer drawn over this one with its own texture (the sheep's wool); suppressed when
@@ -61,7 +61,7 @@ namespace MinecraftClone3API.Graphics
         public static void LoadModels()
         {
             var skinPath = ResolvePath(PlayerSkinPath) ?? ResolvePath(PlayerSkinPathLegacy);
-            _playerModel = BuildModel(LoadModel(PlayerModelPath), LoadPlayerSkin(), ReadData(skinPath));
+            _playerModel = BuildModel(LoadModel(PlayerModelPath), LoadPlayerSkin(), ReadData(skinPath), true);
 
             foreach (var type in GameRegistry.EntityTypes)
             {
@@ -73,12 +73,37 @@ namespace MinecraftClone3API.Graphics
 
                 if (type.Kind != EntityKind.Creature || type.ModelPath == null) continue;
                 var texture = ResourceReader.ReadBlockTexture(type.TexturePath);
-                var model = BuildModel(LoadModel(type.ModelPath), texture, ReadData(ResolvePath(type.TexturePath)));
+                var model = BuildModel(LoadModel(type.ModelPath), texture, ReadData(ResolvePath(type.TexturePath)), true);
                 if (type.OverlayModelPath != null)
                     model.Overlay = BuildModel(LoadModel(type.OverlayModelPath),
                         ResourceReader.ReadBlockTexture(type.OverlayTexturePath),
-                        ReadData(ResolvePath(type.OverlayTexturePath)));
+                        ReadData(ResolvePath(type.OverlayTexturePath)), true);
                 CreatureModels[type.Id] = model;
+            }
+        }
+
+        /// <summary>Builds a box-model <see cref="RenderModel"/> from a Bedrock geo path + a texture identifier,
+        /// registering the texture into the block-texture arrays. Must run before the texture-array upload (like
+        /// <see cref="LoadModels"/>). Used by the block-entity renderer (chests). Block-entity models are not
+        /// Y-flipped (unlike living entities — see <see cref="BuildModel"/>), so <c>flipUv</c> is false.</summary>
+        internal static RenderModel BuildModelFromPaths(string modelPath, string texturePath)
+        {
+            var texture = ResourceReader.ReadBlockTexture(texturePath);
+            return BuildModel(LoadModel(modelPath), texture, ReadData(ResolvePath(texturePath)), false);
+        }
+
+        /// <summary>Draws a model's parts at <paramref name="root"/> with only their authored part rotations (no
+        /// per-entity walk animation) — for static block entities and the held-item viewmodel.</summary>
+        internal static void DrawStaticParts(RenderModel model, Matrix4 root, int uModel)
+        {
+            foreach (var (part, vao) in model.Parts)
+            {
+                var rotation = part.Rotation;
+                var matrix = Matrix4.CreateRotationX(rotation.X) * Matrix4.CreateRotationY(rotation.Y) *
+                             Matrix4.CreateRotationZ(rotation.Z) *
+                             Matrix4.CreateTranslation(part.Pivot) * root;
+                GL.UniformMatrix4(uModel, false, ref matrix);
+                vao.Draw();
             }
         }
 
@@ -97,7 +122,11 @@ namespace MinecraftClone3API.Graphics
         private static TextureData ReadData(string resolved) =>
             resolved == null ? null : ResourceReader.ReadTextureData(resolved);
 
-        private static RenderModel BuildModel(EntityModel model, BlockTexture texture, TextureData data)
+        /// <param name="flipUv">When true the box top/bottom UV regions are swapped, reproducing the
+        /// <c>scale(-1,-1,1)</c> Y-flip that Minecraft's <c>LivingEntityRenderer</c> applies to mobs/players
+        /// (we author those models Y-up rather than flipping the geometry). Block-entity models (the chest) pass
+        /// false to keep Minecraft's raw cube unwrap, exactly as its <c>ChestRenderer</c> applies no flip.</param>
+        private static RenderModel BuildModel(EntityModel model, BlockTexture texture, TextureData data, bool flipUv)
         {
             var render = new RenderModel {Texture = texture};
             var layerSize = BlockTextureManager.Sizes[texture.ArrayId];
@@ -108,7 +137,7 @@ namespace MinecraftClone3API.Graphics
             {
                 var vao = new VertexArrayObject();
                 foreach (var box in part.Boxes)
-                    AddBox(vao, box, texture, layerSize);
+                    AddBox(vao, box, texture, layerSize, flipUv);
                 vao.Upload();
                 render.Parts.Add((part, vao));
             }
@@ -157,25 +186,40 @@ namespace MinecraftClone3API.Graphics
             return true;
         }
 
+        /// <summary>Binds the entity geometry shader with the camera/projection, samplers and a white
+        /// <c>uTint</c>, returning the per-draw uniform locations. Shared by the entity, block-entity and
+        /// first-person held-item renderers, which all draw box models into the G-buffer in the overlay pass.</summary>
+        internal static void BindShader(Camera camera, Matrix4 projection, out int uModel, out int uLight, out int uTint)
+            => BindShaderRaw(camera.View, projection, out uModel, out uLight, out uTint);
+
+        /// <summary>As <see cref="BindShader"/> but with explicit view/projection matrices (the inventory-icon
+        /// FBO uses its own isometric camera rather than the world camera).</summary>
+        internal static void BindShaderRaw(Matrix4 view, Matrix4 projection, out int uModel, out int uLight, out int uTint)
+        {
+            var shader = ClientResources.EntityGeometryShader;
+            shader.Bind();
+            uModel = shader.GetUniformLocation("uModel");
+            uLight = shader.GetUniformLocation("uLight");
+            uTint = shader.GetUniformLocation("uTint");
+            GL.UniformMatrix4(shader.GetUniformLocation("uView"), false, ref view);
+            GL.UniformMatrix4(shader.GetUniformLocation("uProjection"), false, ref projection);
+            GL.Uniform1(shader.GetUniformLocation("uTextures16"), 0);
+            GL.Uniform1(shader.GetUniformLocation("uTextures64"), 1);
+            GL.Uniform1(shader.GetUniformLocation("uTextures256"), 2);
+            GL.Uniform1(shader.GetUniformLocation("uTextures1024"), 3);
+            GL.Uniform4(uTint, Vector4.One);
+
+            GlTextureUploader.Bind();
+            Samplers.BindBlockTextureSampler();
+        }
+
         public static void Render(WorldClient world, Camera camera, Matrix4 projection)
         {
             // In a third-person view the local player draws its own body (it isn't in world.Entities).
             var drawSelf = PlayerController.RenderSelf && PlayerController.PlayerEntity != null;
             if (world.Entities.Count == 0 && !drawSelf) return;
 
-            var shader = ClientResources.EntityGeometryShader;
-            shader.Bind();
-            var uModel = shader.GetUniformLocation("uModel");
-            var uLight = shader.GetUniformLocation("uLight");
-            GL.UniformMatrix4(shader.GetUniformLocation("uView"), false, ref camera.View);
-            GL.UniformMatrix4(shader.GetUniformLocation("uProjection"), false, ref projection);
-            GL.Uniform1(shader.GetUniformLocation("uTextures16"), 0);
-            GL.Uniform1(shader.GetUniformLocation("uTextures64"), 1);
-            GL.Uniform1(shader.GetUniformLocation("uTextures256"), 2);
-            GL.Uniform1(shader.GetUniformLocation("uTextures1024"), 3);
-
-            GlTextureUploader.Bind();
-            Samplers.BindBlockTextureSampler();
+            BindShader(camera, projection, out var uModel, out var uLight, out var uTint);
 
             // Box models emit all six faces of every box; drawing them with culling on would drop the
             // back-facing ones, so disable culling here (depth still resolves what's visible) and restore after.
@@ -184,7 +228,7 @@ namespace MinecraftClone3API.Graphics
             foreach (var entity in world.Entities.Values)
             {
                 if (entity.Type == null)
-                    DrawModel(_playerModel, entity, world, uModel, uLight);
+                    DrawModel(_playerModel, entity, world, uModel, uLight, uTint);
                 else if (entity.Type.Kind == EntityKind.Item)
                     DrawItem((EntityItem) entity, world, uModel, uLight);
                 else if (entity.Type.Kind == EntityKind.FallingBlock)
@@ -192,22 +236,31 @@ namespace MinecraftClone3API.Graphics
                 else if (entity.Type.Kind == EntityKind.Projectile)
                     DrawProjectile(entity, world, camera, uModel, uLight);
                 else if (CreatureModels.TryGetValue(entity.Type.Id, out var model))
-                    DrawModel(model, entity, world, uModel, uLight);
+                    DrawModel(model, entity, world, uModel, uLight, uTint);
             }
 
             if (drawSelf)
-                DrawModel(_playerModel, PlayerController.PlayerEntity, world, uModel, uLight);
+            {
+                // The local player isn't network-synced to itself, so fill its held item from the live inventory
+                // (so the third-person view shows what's selected).
+                PlayerController.PlayerEntity.HeldItemId = (ushort) world.Inventory.SelectedItem.ItemId;
+                DrawModel(_playerModel, PlayerController.PlayerEntity, world, uModel, uLight, uTint);
+            }
 
             RenderState.Set(new GlState {CullFace = true, DepthTest = true, DepthFunc = DepthFunction.Lequal});
         }
 
-        private static void DrawModel(RenderModel model, Entity entity, WorldClient world, int uModel, int uLight)
+        private static void DrawModel(RenderModel model, Entity entity, WorldClient world, int uModel, int uLight, int uTint)
         {
             if (model == null) return;
 
             var pos = entity.RenderPosition;
             var height = entity.Type?.Height ?? 1.8f;
             SetLight(world, pos + new Vector3(0, height * 0.5f, 0), uLight);
+
+            // Flash red briefly after taking damage so a hit reads; reset to white after so items/other models
+            // drawn later in the pass aren't tinted.
+            GL.Uniform4(uTint, HurtTint(entity));
 
             // Whole-model placement: yaw to face the heading, then translate to the entity's feet.
             var root = Matrix4.CreateRotationY(entity.Yaw) * Matrix4.CreateTranslation(pos);
@@ -217,19 +270,74 @@ namespace MinecraftClone3API.Graphics
             // entity's data (e.g. a sheared sheep) can hide it.
             if (model.Overlay != null && (entity.Data?.OverlayVisible ?? true))
                 DrawParts(model.Overlay, entity, root, uModel);
+
+            GL.Uniform4(uTint, Vector4.One);
+
+            // Players carry the main-hand item in the right arm so it swings with the body and other clients (and
+            // the third-person self) can see what's held.
+            if (model == _playerModel) DrawHeldItem(entity, root, uModel);
         }
+
+        // Draws the entity's main-hand item hanging off the right-arm bone (arm0), so it follows the arm's walk
+        // swing. Blocks use their 3D icon mesh, flat items their extruded sprite, block entities their box model.
+        private static void DrawHeldItem(Entity entity, Matrix4 root, int uModel)
+        {
+            if (entity.HeldItemId == 0) return;
+            var item = GameRegistry.GetItem(entity.HeldItemId);
+            if (item == null) return;
+
+            ModelPart arm = null;
+            foreach (var (part, _) in _playerModel.Parts)
+                if (part.Name == "arm0") { arm = part; break; }
+            if (arm == null) return;
+            var armMatrix = PartMatrix(arm, entity, root);
+
+            var block = item.GetBlock();
+            if (block != null && block.RendersAsBlockEntity &&
+                BlockEntityRenderer.GetModel(block.Id) is RenderModel beModel)
+            {
+                DrawStaticParts(beModel, HeldBlockArm * armMatrix, uModel);
+                return;
+            }
+
+            var mesh = block != null ? GetItemMesh(block.Id) : HeldItemMeshes.Get(item);
+            if (mesh == null) return;
+            var matrix = (block != null ? HeldBlockArm : HeldFlatArm) * armMatrix;
+            GL.UniformMatrix4(uModel, false, ref matrix);
+            mesh.Draw();
+        }
+
+        // Local transforms (in the right-arm bone's space, origin at the shoulder, arm hanging to ≈y=-0.62) that
+        // seat a held item in the fist. Hand-tuned against a visual check.
+        private static readonly Matrix4 HeldBlockArm =
+            Matrix4.CreateScale(0.45f) * Matrix4.CreateTranslation(0f, -0.55f, 0.05f);
+        private static readonly Matrix4 HeldFlatArm =
+            Matrix4.CreateScale(0.70f) *
+            Matrix4.CreateRotationX(MathHelper.DegreesToRadians(-90f)) *
+            Matrix4.CreateRotationZ(MathHelper.DegreesToRadians(180f)) *
+            Matrix4.CreateTranslation(0f, -0.60f, 0.10f);
+
+        // The diffuse tint for an entity: a saturated red while its hurt timer is running, white otherwise.
+        private static Vector4 HurtTint(Entity entity) =>
+            entity.HurtTime > 0 ? new Vector4(1f, 0.35f, 0.35f, 1f) : Vector4.One;
 
         private static void DrawParts(RenderModel model, Entity entity, Matrix4 root, int uModel)
         {
             foreach (var (part, vao) in model.Parts)
             {
-                var rotation = part.Rotation + PartRotation(part.Name, entity);
-                var matrix = Matrix4.CreateRotationX(rotation.X) * Matrix4.CreateRotationY(rotation.Y) *
-                             Matrix4.CreateRotationZ(rotation.Z) *
-                             Matrix4.CreateTranslation(part.Pivot) * root;
+                var matrix = PartMatrix(part, entity, root);
                 GL.UniformMatrix4(uModel, false, ref matrix);
                 vao.Draw();
             }
+        }
+
+        // The model matrix for one part: its authored rotation plus the walk-cycle animation, about its pivot.
+        private static Matrix4 PartMatrix(ModelPart part, Entity entity, Matrix4 root)
+        {
+            var rotation = part.Rotation + PartRotation(part.Name, entity);
+            return Matrix4.CreateRotationX(rotation.X) * Matrix4.CreateRotationY(rotation.Y) *
+                   Matrix4.CreateRotationZ(rotation.Z) *
+                   Matrix4.CreateTranslation(part.Pivot) * root;
         }
 
         private static void DrawItem(EntityItem item, WorldClient world, int uModel, int uLight)
@@ -310,7 +418,7 @@ namespace MinecraftClone3API.Graphics
             return mesh;
         }
 
-        private static VertexArrayObject GetItemMesh(ushort blockId)
+        internal static VertexArrayObject GetItemMesh(ushort blockId)
         {
             if (ItemMeshes.TryGetValue(blockId, out var mesh)) return mesh;
 
@@ -355,7 +463,7 @@ namespace MinecraftClone3API.Graphics
             return Vector3.Zero;
         }
 
-        private static void SetLight(WorldClient world, Vector3 worldPos, int uLight)
+        internal static void SetLight(WorldClient world, Vector3 worldPos, int uLight)
         {
             var bp = new Vector3i(BlockCoord(worldPos.X), BlockCoord(worldPos.Y), BlockCoord(worldPos.Z));
             var rgb = world.GetBlockLightLevel(bp).Vector3;
@@ -371,7 +479,7 @@ namespace MinecraftClone3API.Graphics
 
         // Builds the six textured quads of one box into the VAO. Box coords are in blocks (relative to the part
         // pivot); UVs come from the classic Minecraft box-unwrap, normalized by the texture array's layer size.
-        private static void AddBox(VertexArrayObject vao, ModelBox box, BlockTexture tex, int layerSize)
+        private static void AddBox(VertexArrayObject vao, ModelBox box, BlockTexture tex, int layerSize, bool flipUv)
         {
             // Box pixel dimensions (1 block = 16 texels) drive the unwrap rectangle widths — from the base
             // (un-inflated) size so an overlay box still maps its base texture region.
@@ -402,20 +510,25 @@ namespace MinecraftClone3API.Graphics
                 new Vector3(f.X, t.Y, f.Z), new Vector3(t.X, t.Y, f.Z),
                 new Vector3(f.X, f.Y, f.Z), new Vector3(t.X, f.Y, f.Z),
                 u + 2 * sz + sx, v + sz, u + 2 * sz + 2 * sx, v + sz + sy);
-            // Top (+Y) and Bottom (-Y). Minecraft's box-unwrap mirrors the down face vertically relative to the
-            // up face, so the bottom quad's V runs the opposite way (v+sz→v) — without it a body laid horizontal
-            // by a baked pitch shows its underside texture upside-down.
+            // Top (+Y) and Bottom (-Y), using Minecraft's raw cube unwrap: the up face takes the second top-row
+            // region (its V inverted, v+sz→v) and the down face the first. Living entities are drawn Y-flipped
+            // (LivingEntityRenderer's scale(-1,-1,1)), which we reproduce on Y-up-authored models by swapping
+            // those two regions; block-entity models (the chest) keep the raw unwrap (flipUv false).
+            int tU0 = u + sz + sx, tV0 = v + sz, tU1 = u + sz + 2 * sx, tV1 = v;
+            int bU0 = u + sz, bV0 = v, bU1 = u + sz + sx, bV1 = v + sz;
+            if (flipUv)
+                (tU0, tV0, tU1, tV1, bU0, bV0, bU1, bV1) = (bU0, bV0, bU1, bV1, tU0, tV0, tU1, tV1);
             Quad(vao, tex, layerSize, new Vector3(0, 1, 0),
                 new Vector3(t.X, t.Y, f.Z), new Vector3(f.X, t.Y, f.Z),
                 new Vector3(t.X, t.Y, t.Z), new Vector3(f.X, t.Y, t.Z),
-                u + sz, v, u + sz + sx, v + sz);
+                tU0, tV0, tU1, tV1);
             Quad(vao, tex, layerSize, new Vector3(0, -1, 0),
                 new Vector3(t.X, f.Y, t.Z), new Vector3(f.X, f.Y, t.Z),
                 new Vector3(t.X, f.Y, f.Z), new Vector3(f.X, f.Y, f.Z),
-                u + sz + sx, v + sz, u + sz + 2 * sx, v);
+                bU0, bV0, bU1, bV1);
         }
 
-        private static void Quad(VertexArrayObject vao, BlockTexture tex, int layerSize, Vector3 normal,
+        internal static void Quad(VertexArrayObject vao, BlockTexture tex, int layerSize, Vector3 normal,
             Vector3 tl, Vector3 tr, Vector3 bl, Vector3 br, int u0, int v0, int u1, int v1)
         {
             var baseVertex = vao.VertexCount;
@@ -428,7 +541,7 @@ namespace MinecraftClone3API.Graphics
             vao.AddFace(baseVertex, false, Vector3.Zero);
         }
 
-        private static Vector4 TexCoord(BlockTexture tex, int layerSize, int u, int v)
+        internal static Vector4 TexCoord(BlockTexture tex, int layerSize, int u, int v)
             => new Vector4((float) u / layerSize, (float) v / layerSize, tex.TextureId, tex.ArrayId);
     }
 }

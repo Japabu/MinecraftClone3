@@ -45,6 +45,7 @@ namespace MinecraftClone3API.Entities
 
             if (!_healthInit) { Health = Type.MaxHealth; _healthInit = true; }
             if (HurtCooldown > 0) HurtCooldown--;
+            if (HurtTime > 0) HurtTime--;
             if (_attackCooldown > 0) _attackCooldown--;
 
             ChooseGoal(world);
