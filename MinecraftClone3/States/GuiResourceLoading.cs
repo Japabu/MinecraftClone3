@@ -110,11 +110,16 @@ namespace MinecraftClone3.States
                         _text = $"{I18N.Get(state)} {plugin} ({_progress}%)";
                         Logger.Debug($"{I18N.GetOrdinal(state)} {plugin} ({_progress}%)");
                     });
+
+                // Parse every registered block's model/blockstate from the resource pack now (client only —
+                // the headless server skips this and so loads no render assets). Blocks only declared their
+                // model path during registration; this resolves them and registers their textures into the
+                // CPU arrays, which the upload below bakes to the GPU.
+                GameRegistry.LoadBlockModels();
             }
 
-            // Blocks load their models/textures in their constructors, which run while plugins
-            // register them in LoadPlugins (Load). The GPU texture arrays must therefore be built
-            // afterwards, otherwise they would be uploaded empty and every block samples as black.
+            // The GPU texture arrays must be built after the block + entity textures are registered above,
+            // otherwise they would be uploaded empty and every surface samples as black.
             _progress = 100;
             _text = $"{I18N.Get("system.loading.resources.uploadTextures")} ({_progress}%)";
             Logger.Debug($"{I18N.GetOrdinal("system.loading.resources.uploadTextures")} ({_progress}%)");

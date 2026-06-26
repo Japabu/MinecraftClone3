@@ -24,6 +24,14 @@ namespace MinecraftClone3API.Util
 
         public static List<string> GetMissingBlocks() => BlockRegistry.GetMissingBlocks();
 
+        /// <summary>Client-only: parse every registered block's model and blockstate from the resource pack
+        /// (<see cref="Block.LoadModel"/>). Run once after plugins load and before meshing. The headless server
+        /// never calls this, so it loads no render assets and needs no resource pack.</summary>
+        public static void LoadBlockModels()
+        {
+            foreach (var block in BlockRegistry.Values) block.LoadModel();
+        }
+
         public static Block GetBlock(ushort id) => BlockRegistry[id];
         public static Block GetBlock(string key) => BlockRegistry[key];
 

@@ -1,5 +1,4 @@
 using MinecraftClone3API.Blocks;
-using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
 
@@ -20,7 +19,7 @@ namespace VanillaPlugin.Blocks
         public BlockWater() : base("Water")
         {
             MinecraftId = "minecraft:water";
-            Model = ResourceReader.ReadBlockModel("Vanilla/Models/Water.json");
+            ModelPath = "Vanilla/Models/Water.json";
         }
 
         public override Color4 GetTintColor(WorldBase world, Vector3i blockPos, int tintId)

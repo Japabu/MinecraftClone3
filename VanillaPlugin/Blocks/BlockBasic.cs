@@ -1,5 +1,4 @@
 ﻿using MinecraftClone3API.Blocks;
-using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
 
 namespace VanillaPlugin.Blocks
@@ -13,7 +12,7 @@ namespace VanillaPlugin.Blocks
             _fullBlock = fullBlock;
 
             MinecraftId = Identifier.FromResourcePath(modelPath);
-            Model = ResourceReader.ReadBlockModel(modelPath);
+            ModelPath = modelPath;
         }
 
         public override bool IsFullBlock(WorldBase world, Vector3i blockPos) => _fullBlock;

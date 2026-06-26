@@ -6,7 +6,6 @@ using MinecraftClone3API.Client.Blocks;
 using MinecraftClone3API.Client.GUI;
 using MinecraftClone3API.Client.StateSystem;
 using MinecraftClone3API.Entities;
-using MinecraftClone3API.IO;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
@@ -29,8 +28,8 @@ namespace VanillaPlugin.Blocks
         public BlockFurnace() : base("Furnace")
         {
             MinecraftId = "minecraft:furnace";
-            Model = ResourceReader.ReadBlockModel("minecraft:block/furnace");
-            StateDefinition = ResourceReader.ReadBlockState("minecraft:furnace");
+            ModelPath = "minecraft:block/furnace";
+            BlockStateId = "minecraft:furnace";
         }
 
         public override bool NeedsServerTick => true;

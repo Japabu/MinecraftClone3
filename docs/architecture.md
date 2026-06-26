@@ -12,6 +12,12 @@ The engine is split into two libraries so the "server never touches GL" rule is 
 - **`MinecraftClone3API.Client`** — the GL renderer, GUI, input (`PlayerController`), the GL halves of the
   resource readers (`GlResources`/`GlTextureUploader`), and `WorldClient`. References Core.
 
+Model/texture parsing is GL-free, so it *lives* in Core — but the server still never runs it. Blocks only
+declare a `ModelPath`/`BlockStateId` string at construction; resolving them to a `BlockModel` is deferred to a
+client-only pass (`GameRegistry.LoadBlockModels`, called from `GuiResourceLoading`). So the headless server
+builds the registry without reading a single model or texture and needs no resource pack (see
+[resources.md](resources.md)).
+
 Both keep the **same root namespaces** (`MinecraftClone3API.*`); the assembly a file compiles into is
 independent of its namespace, so a type can move across the boundary with no `using` changes. Core grants
 `[InternalsVisibleTo("MinecraftClone3API.Client")]` so the renderer reuses Core internals (mesher, chunk
