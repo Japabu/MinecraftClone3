@@ -60,6 +60,13 @@ namespace MinecraftClone3API.Entities
         {
         }
 
+        /// <summary>Writes this entity's subclass-specific persisted state (the base transform — type, position,
+        /// velocity, yaw, pitch — is handled by <see cref="EntitySerializer"/>). Default: nothing.</summary>
+        internal virtual void SerializeState(System.IO.BinaryWriter writer) { }
+
+        /// <summary>Restores the state written by <see cref="SerializeState"/>. Default: nothing.</summary>
+        internal virtual void DeserializeState(System.IO.BinaryReader reader) { }
+
         /// <summary>Aims the interpolation at a freshly-received position: continue from where the entity is
         /// drawn right now, then lerp toward the new target over one server tick.</summary>
         public void SetInterpTarget(Vector3 target, float pitch, float yaw)

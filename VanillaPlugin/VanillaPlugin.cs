@@ -112,6 +112,13 @@ namespace VanillaPlugin
                     context.Register(new BlockBasic(ToPascal(color) + "Wool", "minecraft:block/" + color + "_wool", true, 0.8f));
             }
 
+            // Nether content.
+            context.Register(new BlockBasic("Netherrack", "minecraft:block/netherrack", true));
+            context.Register(new BlockBasic("SoulSand", "minecraft:block/soul_sand", true));
+            context.Register(new BlockBasic("NetherQuartzOre", "minecraft:block/nether_quartz_ore", true));
+            context.Register(new BlockLava());
+            context.Register(new BlockNetherPortal());
+
             // Standalone (non-placeable) items, rendered from their 2D resource-pack sprites.
             context.Register(new ItemSimple("Stick", "minecraft/textures/item/stick.png"));
             context.Register(new ItemSimple("Coal", "minecraft/textures/item/coal.png"));
@@ -186,6 +193,12 @@ namespace VanillaPlugin
 
             VanillaWorldGen.Register(context);
             context.Register(new OverworldDimension());
+            context.Register(new NetherDimension());
+
+            // Obsidian-portal Overworld↔Nether travel, and the flint &amp; steel that lights a frame.
+            var portals = new VanillaPortals();
+            context.RegisterPortals(portals);
+            context.Register(new ItemFlintAndSteel(portals));
 
             RegisterEntities(context);
         }

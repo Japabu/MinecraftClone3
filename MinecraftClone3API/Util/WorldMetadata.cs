@@ -10,7 +10,9 @@ namespace MinecraftClone3API.Util
     /// </summary>
     public class WorldMetadata
     {
-        private const int Version = 2;
+        // Bumped whenever the save format changes incompatibly. A world whose level.dat carries a different
+        // version is rejected (the no-back-compat clean break) rather than misread — see Load.
+        private const int Version = 3;
         public const string LevelFileName = "level.dat";
 
         public string Name;
@@ -28,7 +30,13 @@ namespace MinecraftClone3API.Util
             {
                 using (var reader = new BinaryReader(File.OpenRead(file)))
                 {
-                    reader.ReadInt32();
+                    var version = reader.ReadInt32();
+                    if (version != Version)
+                    {
+                        Logger.Warn($"World \"{file}\" is save version {version}, expected {Version} — ignoring it");
+                        return null;
+                    }
+
                     var name = reader.ReadString();
                     var seed = reader.ReadInt64();
                     var lastPlayedTicks = reader.ReadInt64();
@@ -46,13 +54,16 @@ namespace MinecraftClone3API.Util
         public static void Save(string worldDir, WorldMetadata meta)
         {
             Directory.CreateDirectory(worldDir);
-            using (var writer = new BinaryWriter(File.Create(LevelFilePath(worldDir))))
+            var path = LevelFilePath(worldDir);
+            var tmp = path + ".tmp";
+            using (var writer = new BinaryWriter(File.Create(tmp)))
             {
                 writer.Write(Version);
                 writer.Write(meta.Name);
                 writer.Write(meta.Seed);
                 writer.Write(meta.LastPlayed.Ticks);
             }
+            File.Move(tmp, path, true);
         }
 
         /// <summary>Loads the world's metadata, or mints + saves a fresh one (random seed unless given).

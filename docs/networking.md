@@ -18,6 +18,12 @@ later. **Both transports decode on the client's background apply thread, not the
 tolerates the server mutating the source chunk concurrently (a torn entry self-corrects via the next
 `BlockChanges` delta), made safe by the palette copy-on-grow rule.
 
+The TCP `Chunk.Write` payload and `ItemStack` (in `InventoryState`/`InventoryAction`/container packets) encode
+blocks/items by stable registry **name**, not numeric id (the same self-describing form as disk — see
+[world-model.md](world-model.md)); the client resolves names to its own session-local ids on decode. The
+compact `BlockChanges`/`PlaceBlockRequest` paths still carry numeric `blockId` — fine because ids are assigned
+in deterministic plugin order, so client and server agree within a session.
+
 ```
   Packets (Networking/Packets.cs)
   C→S  Login                 announce (carries the player name, used as the inventory save key)
@@ -44,7 +50,26 @@ tolerates the server mutating the source chunk concurrently (a torn entry self-c
   C→S  PlayerFall            completed fall distance (blocks); server applies fall damage (player owns position)
   C→S  SetGameModeRequest    pause-menu game-mode toggle (server-authoritative)
   C→S  RespawnRequest        death-screen respawn (honoured only while dead)
+  S→C  DimensionChange       drop the cached world + re-enter loading; carries generic visuals (HasSky, fog, ambient)
 ```
+
+**Dimensions & portals.** Each dimension is a separate `WorldServer` (see [architecture.md](architecture.md));
+every `ClientSession` carries the `World` it is in, and all streaming/relay/flush loops in `ServerNetwork` are
+scoped to it (`BroadcastTo(world, …)`, `session.World.LoadedChunks`, etc.). The engine owns no portal or
+dimension specifics: a plugin registers an **`IDimensionPortals`** (`WorldGen/IDimensionPortals.cs`,
+`GameRegistry.Portals`) defining which block is a portal, which dimension links to which, the coordinate scale,
+and how to find-or-build the destination portal. Vanilla's implementation is the obsidian frame lit with flint
+& steel and the 8:1 Overworld↔Nether scale.
+
+Transfer flow (all in `ServerNetwork.Pump`): `UpdatePortals` detects a player soaking in a portal block →
+`BeginTransfer` moves the player entity into the linked `WorldServer` at the scaled coords, clears the
+session's `SentChunks`, and sends `DimensionChange` (the destination `Dimension`'s generic visuals). The client
+parks its apply thread, drops every cached chunk/LOD/entity, switches render mode, and re-enters the loading
+screen. `ProcessPendingTransfers` waits until the destination column has **generated** (`IsChunkGenerated` —
+covers all-air chunks the open sky produces), then `EnsureDestinationPortal` builds/links the portal and the
+server **replays the join handshake** (`LoginAccept` with the new spawn, `WorldTime`, entity sync,
+`PlayerReady`) so the client finishes loading at the portal. A short post-transfer immunity (cleared when the
+player steps off a portal) stops an arrival from bouncing straight back.
 
 **Inventory is server-authoritative** (see [inventory.md](inventory.md)). The server owns each
 `ClientSession.Inventory`, persists it per player, and pushes the whole thing once via `InventoryState` on
@@ -81,8 +106,8 @@ The client mirrors the stats onto `WorldClient` (HUD, flight gate, death screen)
 so the server can apply fall damage despite the player owning its position; `SetGameModeRequest` flips the mode;
 `RespawnRequest` (only while dead) resets stats + teleports the player to spawn, after which the next
 `PlayerStats` clears the dead flag and the client snaps to the respawn point. Player **stats persist** alongside
-the inventory in `PlayerSerializer` (`<worldDir>/Players/<name>.dat`) — a save-format change, so an existing
-world (or its `Players/` folder) must be deleted.
+the inventory in `PlayerSerializer` (`<worldDir>/Players/<name>.dat`), behind a save version + atomic
+temp-and-rename write; a version mismatch resets the player rather than misreading it.
 
 **Placement metadata is computed client-side, never read on the server.** `Block.OnPlaced(world, pos,
 player, int metadata)` receives the metadata from the `PlaceBlockRequest`; the client derives it via

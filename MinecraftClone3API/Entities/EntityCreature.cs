@@ -104,6 +104,18 @@ namespace MinecraftClone3API.Entities
             if (_walking) _heading = (float) (_rng.NextDouble() * MathHelper.TwoPi);
         }
 
+        internal override void SerializeState(System.IO.BinaryWriter writer)
+        {
+            writer.Write(Health);
+            EntityData.Write(writer, Data);
+        }
+
+        internal override void DeserializeState(System.IO.BinaryReader reader)
+        {
+            Health = reader.ReadSingle();
+            Data = EntityData.Read(reader);
+        }
+
         private EntityPlayer NearestPlayer(WorldServer world)
         {
             EntityPlayer best = null;

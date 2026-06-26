@@ -61,6 +61,17 @@ functions (`SkyZenithColor`/`SkyHorizonColor`/`SkyVoidColor`/`SunsetColor`/`Star
 `DayTime`/`SunHeight`/`DayFactor` with `SunColor`/`SkyAmbient`/`SunDirection`), so retuning needs no shader
 recompile; billboard sizes are the `SunSize`/`MoonSize` consts.
 
+**Per-dimension visuals (generic — no per-dimension code).** `RenderWorld` reads three values off the client
+world each frame — `HasSky`, `FogColor`, `AmbientLight` — set from the dimension on a dimension change (see
+[networking.md](networking.md)). When `HasSky` is false (a sunless dimension like the Nether) the sky/sun
+functions short-circuit: `SunColor`/`SunsetColor`/`StarBrightness` return 0, `sunFade` is forced 0 (so the
+shadow passes are skipped), and `SkyZenith/Horizon/Void` all return `FogColor` — giving a flat coloured sky
+that the distance fog melts terrain into. `AmbientLight` is uploaded as the new `uAmbientFloor` uniform and the
+composition does `light = max(max(blockLight, skyLight), uAmbientFloor)` — a dimension-wide minimum light
+(distinct from the user `uMinLight` Brightness floor) so unlit ground in a sunless dimension isn't pitch black.
+The Overworld leaves all three at their defaults (sky on, zero fog override, zero ambient floor), so nothing
+changes there. The engine names no specific dimension; the Nether's red values live in `NetherDimension`.
+
 **Directional sun shadows — one low-res shadow map (no cascades).** `DrawShadowMap` renders a **single**
 orthographic depth map into `ShadowFramebuffer` — one `Texture2D` of `ShadowFramebuffer.ShadowMapSize`
 (1024). **The map is deliberately low-res for a soft, blurry look:** the PCF penumbra is a fixed number of

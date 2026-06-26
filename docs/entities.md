@@ -2,8 +2,17 @@
 
 Mobs, animals, dropped items, and remote players. Players are **client-authoritative** (see
 [architecture.md](architecture.md)); every *other* entity (creatures + items) is **server-authoritative** — the
-server owns its position/AI and streams it to clients, which only interpolate and render. Entities are transient:
-they live in memory while the server runs and are **not persisted** to disk.
+server owns its position/AI and streams it to clients, which only interpolate and render.
+
+**Entities persist with their chunk.** Each world entity belongs to the chunk containing its position;
+`EntitySerializer` writes it (type + transform + subclass state, all by stable registry **name**) into a
+per-chunk blob in a second `RegionStore` (`.rei`/`.red`, parallel to the chunk `.ri`/`.rd`). Saving and
+respawning run on the **tick thread** at the chunk load/unload drains (`WorldServer.SpawnSavedEntities` /
+`SaveAndDespawnChunkEntities`), so all `Entities` mutation stays single-threaded; the disk read happens off the
+tick thread on the load thread. Entities exist on disk **or** in the live world, never both, so a reload never
+duplicates them. The player is persisted separately (inventory + stats + position/look) by
+[PlayerSerializer](../MinecraftClone3API/IO/PlayerSerializer.cs). Entity persistence runs on chunk unload and
+clean shutdown (not the periodic chunk autosave), so a hard crash can lose entity motion since the last unload.
 
 ## Model
 
@@ -55,8 +64,10 @@ the client loads it (from a data file — see Rendering) and turns it into GPU b
 analog of `BlockData` (see [world-model.md](world-model.md)): an abstract `EntityData`
 ([Entities/EntityData.cs](../MinecraftClone3API/Entities/EntityData.cs)) with `Serialize`/`Deserialize`, concrete
 subclasses (`SheepData { Sheared }`) registered by type (`PluginContext.RegisterEntityData<T>`) and (de)serialized
-behind a registry-key tag. It's **wire-only** (entities aren't saved): an `EntityType.DataFactory` builds the
-instance a creature spawns with, it rides `EntitySpawnPacket`, and changes broadcast via `EntityDataPacket`. The
+behind a registry-key tag. An `EntityType.DataFactory` builds the instance a creature spawns with; it rides
+`EntitySpawnPacket`, changes broadcast via `EntityDataPacket`, and a creature persists its `Data` through
+`EntitySerializer` (so a name-based `Data` like `SheepData` survives — but a `Data` that embeds ids must store
+them by name, as `FallingBlockData` does on the disk path via the falling block's `SerializeState`). The
 base class is GL-free; `EntityData.OverlayVisible` lets it drive the renderer (hide a sheared sheep's wool)
 without the API knowing the concrete subclass. The base `Entity` stays free of per-mob flags.
 

@@ -22,6 +22,11 @@ namespace MinecraftClone3API.Blocks
         public PaletteStorage SkyStorage = new PaletteStorage(0);
         public readonly ConcurrentDictionary<Vector3iChunk, BlockData> BlockDatas = new ConcurrentDictionary<Vector3iChunk, BlockData>();
 
+        /// <summary>Raw entity blob loaded from disk on the load thread (null if none), deserialized + spawned
+        /// on the tick thread when this chunk is published — keeping all <c>WorldServer.Entities</c> mutation on
+        /// the tick thread. Not part of the chunk codec; never streamed.</summary>
+        public byte[] EntityBytes;
+
         public bool IsEmpty => Min.X == Chunk.Size;
 
         public Vector3i Min = new Vector3i(Chunk.Size);
@@ -38,7 +43,9 @@ namespace MinecraftClone3API.Blocks
             Min = new Vector3i(reader.ReadInt32(), reader.ReadInt32(), reader.ReadInt32());
             Max = new Vector3i(reader.ReadInt32(), reader.ReadInt32(), reader.ReadInt32());
 
-            BlockStorage = PaletteStorage.Read(reader);
+            // Block palette is stored by registry name; resolve each back to a runtime id, minting an inert
+            // placeholder for any name whose plugin is absent so the cell survives losslessly. Light/sky are raw.
+            BlockStorage = PaletteStorage.Read(reader, ReadBlockName);
             LightStorage = PaletteStorage.Read(reader);
             SkyStorage = PaletteStorage.Read(reader);
 
@@ -48,7 +55,7 @@ namespace MinecraftClone3API.Blocks
                 var blockDataPos = Vector3iChunk.FromBinary(reader.ReadUInt16());
                 var blockData = BlockData.ReadFromStream(reader);
 
-                BlockDatas[blockDataPos] = blockData;
+                if (blockData != null) BlockDatas[blockDataPos] = blockData;
             }
         }
 
@@ -77,6 +84,9 @@ namespace MinecraftClone3API.Blocks
 
             SkyStorage = SkyStorage.Set(index, (ushort) level);
         }
+
+        private static ushort ReadBlockName(BinaryReader reader)
+            => GameRegistry.BlockRegistry.GetOrRegisterUnknown(reader.ReadString());
 
         public Block GetBlock(int x, int y, int z)
         {

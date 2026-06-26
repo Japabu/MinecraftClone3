@@ -34,7 +34,8 @@ namespace MinecraftClone3API.Networking
         PlayerStats,
         PlayerFall,
         SetGameModeRequest,
-        RespawnRequest
+        RespawnRequest,
+        DimensionChange
     }
 
     /// <summary>
@@ -73,7 +74,8 @@ namespace MinecraftClone3API.Networking
             {PacketId.PlayerStats, () => new PlayerStatsPacket()},
             {PacketId.PlayerFall, () => new PlayerFallPacket()},
             {PacketId.SetGameModeRequest, () => new SetGameModeRequestPacket()},
-            {PacketId.RespawnRequest, () => new RespawnRequestPacket()}
+            {PacketId.RespawnRequest, () => new RespawnRequestPacket()},
+            {PacketId.DimensionChange, () => new DimensionChangePacket()}
         };
 
         public abstract PacketId Id { get; }

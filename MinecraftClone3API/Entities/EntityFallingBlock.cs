@@ -30,6 +30,17 @@ namespace MinecraftClone3API.Entities
             if (OnGround) Land(world);
         }
 
+        // Persist the falling block by stable name (not its session-local id), and rebuild the wire-facing
+        // FallingBlockData mirror on load so a respawned falling block still renders the right block.
+        internal override void SerializeState(System.IO.BinaryWriter writer)
+            => writer.Write(GameRegistry.GetBlock(BlockId).RegistryKey);
+
+        internal override void DeserializeState(System.IO.BinaryReader reader)
+        {
+            BlockId = GameRegistry.BlockRegistry.GetOrRegisterUnknown(reader.ReadString());
+            Data = new FallingBlockData {BlockId = BlockId};
+        }
+
         private void Land(WorldServer world)
         {
             Dead = true;
