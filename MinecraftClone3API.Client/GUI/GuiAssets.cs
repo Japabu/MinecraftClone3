@@ -17,6 +17,7 @@ namespace MinecraftClone3API.Client.GUI
         // individual sprite PNGs. Each is drawn whole (no sub-rect).
         public const string Hotbar = "minecraft/textures/gui/sprites/hud/hotbar.png";
         public const string HotbarSelection = "minecraft/textures/gui/sprites/hud/hotbar_selection.png";
+        public const string Crosshair = "minecraft/textures/gui/sprites/hud/crosshair.png";
         public const string HeartContainer = "minecraft/textures/gui/sprites/hud/heart/container.png";
         public const string HeartFull = "minecraft/textures/gui/sprites/hud/heart/full.png";
         public const string HeartHalf = "minecraft/textures/gui/sprites/hud/heart/half.png";
