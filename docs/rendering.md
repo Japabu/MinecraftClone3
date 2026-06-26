@@ -173,6 +173,16 @@ restore keeps RenderState's single `Blend` bool the whole description. Side effe
 writes its front pane's own normal/light instead of blending them, removing a latent `normal.w` corruption
 when glass overlapped an unlit pixel. `WorldGeometry.vs/.fs` are untouched.
 
+**Underwater murk.** When the camera's eye sits inside a liquid block (`WorldRenderer` samples the block at the
+camera position with `floor(v+0.5)`, matching `PlayerPhysics`' liquid test, so it triggers whenever the eye is
+submerged — including only half-submerged at the surface), the composition fogs the **whole scene and the
+background sky** into a water colour over a short distance (`UnderwaterFogStart`/`End` consts in
+`Composition.fs`), with a slight permanent tint right at the camera (`UnderwaterMinTint`) — Minecraft's
+"you're underwater" look, no extra pass. `WorldRenderer` uploads `uUnderwater` (0/1) and `uUnderwaterColor`
+(a deep water blue **dimmed on the CPU side by the current daylight** — sun + ambient — so it's bright blue by
+day, near-black at night or in a flooded cave); the shader applies it last, after distance fog, in both the
+sky and the geometry path. The HUD draws on top, so it stays clear.
+
 **Breaking crack overlay.** `BlockBreakRenderer` (in the overlay pass, while a survival player mines) draws a
 slightly-inflated textured cube of the `destroy_stage_0..9` sprite over the targeted block with the `BlockBreak`
 shader. Same attachment trick as above, taken further: it **masks attachments 1 (normal) and 2 (light)** with

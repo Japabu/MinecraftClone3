@@ -137,6 +137,12 @@ namespace MinecraftClone3API.Graphics
         private static Vector3 _fogColor;
         private static Vector3 _ambientFloor;
 
+        // Underwater overlay: true when the camera's eye sits inside a liquid block, plus the murk colour the
+        // scene fogs into (a deep water blue dimmed by the current daylight). Set per-frame in RenderWorld and
+        // uploaded to the composition shader, which fogs everything (and the sky) into it over a short distance.
+        private static bool _underwater;
+        private static Vector3 _underwaterColor;
+
         // Sun/moon textures from the resource pack (sun.png and the full-moon celestial texture), sampled by
         // the composition shader to draw the sky billboards.
         public static Texture SunTexture;
@@ -304,6 +310,16 @@ namespace MinecraftClone3API.Graphics
             // ambient floor only.
             var sunFade = _hasSky ? SunFade(toSun.Y) : 0f;
             var sunUp = sunFade > 0f;
+
+            // Eye-in-liquid underwater murk. Blocks are centred on integers (±0.5), so floor(v+0.5) is the
+            // block containing the camera — matching PlayerPhysics' liquid sampling. The murk colour dims with
+            // the daylight (sun + ambient) so it's bright blue by day, near-black at night or in a flooded cave.
+            var cam = PlayerController.Camera.Position;
+            _underwater = world.GetBlock((int) MathF.Floor(cam.X + 0.5f), (int) MathF.Floor(cam.Y + 0.5f),
+                (int) MathF.Floor(cam.Z + 0.5f)).IsLiquid;
+            var litTint = _hasSky ? SkyAmbient() + SunColor() * sunFade : _ambientFloor;
+            var bright = MathHelper.Clamp(MathF.Max(litTint.X, MathF.Max(litTint.Y, litTint.Z)), 0.12f, 1f);
+            _underwaterColor = new Vector3(0.05f, 0.17f, 0.40f) * bright;
 
             // Per-pass GPU timing (F3 profiler shadowMs/geomMs/compMs); no-op unless recording.
             GpuTimers.Enabled = Profiler.Recording;
@@ -750,6 +766,11 @@ namespace MinecraftClone3API.Graphics
             GL.Uniform1(comp.GetUniformLocation("uSkyDistance"), horizonDistance + 48f);
             GL.Uniform1(comp.GetUniformLocation("uFogStart"), horizonDistance * 0.72f);
             GL.Uniform1(comp.GetUniformLocation("uFogEnd"), horizonDistance * 0.97f);
+
+            // Underwater murk: fog the whole scene (and the sky) into the water colour over a short distance.
+            GL.Uniform1(comp.GetUniformLocation("uUnderwater"), _underwater ? 1f : 0f);
+            GL.Uniform3(comp.GetUniformLocation("uUnderwaterColor"), _underwaterColor.X, _underwaterColor.Y,
+                _underwaterColor.Z);
 
             GL.Uniform1(comp.GetUniformLocation("uSunTexture"), 5);
             GL.Uniform1(comp.GetUniformLocation("uMoonTexture"), 6);
