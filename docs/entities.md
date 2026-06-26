@@ -13,8 +13,11 @@ client walk-cycle accumulators (`LimbSwing`/`LimbSwingAmount`, advanced from int
 network data is needed). Subclasses:
 
 - **`EntityCreature`** — a walking animal or mob. Server `Update()` runs wander AI (random heading every few
-  seconds; a `Hostile` type instead steers toward the nearest player in `SightRange`), then gravity + block
-  collision via `EntityPhysics`, hopping 1-block steps. `ServerWorld` is the back-reference its AI reads.
+  seconds; a `Hostile` type instead steers toward the nearest player in `SightRange`; a `NeutralUntilProvoked`
+  type — the enderman — wanders until a player's look ray falls within a tight cone of its head, then latches
+  onto and chases that player until they drift past `LoseRange`, looking away no longer calming it), then
+  gravity + block collision via `EntityPhysics`, hopping 1-block steps. `ServerWorld` is the back-reference its
+  AI reads.
 - **`EntityItem`** — a dropped `ItemStack`. Falls under gravity, settles, and despawns after ~5 min; `CanPickup`
   gates a short delay so a just-broken block isn't instantly re-collected.
 - **`EntityFallingBlock`** — a block (sand, gravel) mid-fall. Spawned by `BlockFalling` via

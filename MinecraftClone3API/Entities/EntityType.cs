@@ -38,6 +38,10 @@ namespace MinecraftClone3API.Entities
         /// <summary>Hostile creatures path toward the nearest player within sight; non-hostile ones only wander.</summary>
         public readonly bool Hostile;
 
+        /// <summary>A neutral mob (the enderman): wanders peacefully until a player looks directly at it, then
+        /// chases that player until they escape. Independent of <see cref="Hostile"/> (which is chase-on-sight).</summary>
+        public readonly bool NeutralUntilProvoked;
+
         /// <summary>Wander/chase ground speed in blocks per tick.</summary>
         public readonly float MoveSpeed;
 
@@ -62,7 +66,8 @@ namespace MinecraftClone3API.Entities
 
         public EntityType(string name, EntityKind kind, float width, float height, float maxHealth,
             float moveSpeed, bool hostile, string texturePath, string modelPath,
-            string overlayModelPath = null, string overlayTexturePath = null, Func<EntityData> dataFactory = null)
+            string overlayModelPath = null, string overlayTexturePath = null, Func<EntityData> dataFactory = null,
+            bool neutralUntilProvoked = false)
             : base(name)
         {
             Kind = kind;
@@ -71,6 +76,7 @@ namespace MinecraftClone3API.Entities
             MaxHealth = maxHealth;
             MoveSpeed = moveSpeed;
             Hostile = hostile;
+            NeutralUntilProvoked = neutralUntilProvoked;
             TexturePath = texturePath;
             ModelPath = modelPath;
             OverlayModelPath = overlayModelPath;

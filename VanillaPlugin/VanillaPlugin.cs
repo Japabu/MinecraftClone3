@@ -122,12 +122,19 @@ namespace VanillaPlugin
                 "minecraft:entity/chicken/chicken_temperate", "Vanilla/Models/Entity/chicken.geo.json");
             var zombie = new EntityType("Zombie", EntityKind.Creature, 0.6f, 1.95f, 20f, 0.13f, true,
                 "minecraft:entity/zombie/zombie", "System/Models/Entity/biped.geo.json");
+            // The Enderman: a tall, fast neutral mob with the long-limbed humanoid silhouette. Its slender
+            // geometry (2x30 limbs, 8x12x4 body, 8x8x8 head) maps the official 64x32 enderman sheet directly.
+            // Neutral until provoked: it wanders peacefully until a player looks straight at it, then gives chase.
+            var enderman = new EntityType("Enderman", EntityKind.Creature, 0.6f, 2.9f, 40f, 0.17f, false,
+                "minecraft:entity/enderman/enderman", "Vanilla/Models/Entity/enderman.geo.json",
+                neutralUntilProvoked: true);
 
             context.Register(pig);
             context.Register(cow);
             context.Register(sheep);
             context.Register(chicken);
             context.Register(zombie);
+            context.Register(enderman);
             context.Register(new EntityType("Item", EntityKind.Item, 0.25f, 0.25f, 1f, 0f, false, null, null));
             context.Register(new EntityType("FallingBlock", EntityKind.FallingBlock,
                 EntityFallingBlock.Size, EntityFallingBlock.Size, 1f, 0f, false, null, null));
@@ -137,6 +144,7 @@ namespace VanillaPlugin
             context.Register(new ItemSpawnEgg(sheep, "minecraft/textures/item/sheep_spawn_egg.png"));
             context.Register(new ItemSpawnEgg(chicken, "minecraft/textures/item/chicken_spawn_egg.png"));
             context.Register(new ItemSpawnEgg(zombie, "minecraft/textures/item/zombie_spawn_egg.png"));
+            context.Register(new ItemSpawnEgg(enderman, "minecraft/textures/item/enderman_spawn_egg.png"));
         }
 
         public void PostLoad(PluginContext context)
