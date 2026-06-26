@@ -2,8 +2,17 @@
 
 Mobs, animals, dropped items, and remote players. Players are **client-authoritative** (see
 [architecture.md](architecture.md)); every *other* entity (creatures + items) is **server-authoritative** — the
-server owns its position/AI and streams it to clients, which only interpolate and render. Entities are transient:
-they live in memory while the server runs and are **not persisted** to disk.
+server owns its position/AI and streams it to clients, which only interpolate and render.
+
+**Entities persist with their chunk.** Each world entity belongs to the chunk containing its position;
+`EntitySerializer` writes it (type + transform + subclass state, all by stable registry **name**) into a
+per-chunk blob in a second `RegionStore` (`.rei`/`.red`, parallel to the chunk `.ri`/`.rd`). Saving and
+respawning run on the **tick thread** at the chunk load/unload drains (`WorldServer.SpawnSavedEntities` /
+`SaveAndDespawnChunkEntities`), so all `Entities` mutation stays single-threaded; the disk read happens off the
+tick thread on the load thread. Entities exist on disk **or** in the live world, never both, so a reload never
+duplicates them. The player is persisted separately (inventory + stats + position/look) by
+[PlayerSerializer](../MinecraftClone3API/IO/PlayerSerializer.cs). Entity persistence runs on chunk unload and
+clean shutdown (not the periodic chunk autosave), so a hard crash can lose entity motion since the last unload.
 
 ## Model
 
@@ -17,7 +26,11 @@ network data is needed). Subclasses:
   type — the enderman — wanders until a player's look ray falls within a tight cone of its head, then latches
   onto and chases that player until they drift past `LoseRange`, looking away no longer calming it), then
   gravity + block collision via `EntityPhysics`, hopping 1-block steps. `ServerWorld` is the back-reference its
-  AI reads.
+  AI reads. Carries combat state: `Health` (lazily seeded to `Type.MaxHealth` on the first tick) and a
+  `HurtCooldown` invuln counter, both mutated by `EntityCombat`. A `Hostile` type with `Type.AttackDamage > 0`
+  also deals melee **contact damage** to a player in range on its ~1 s attack cadence (`TryAttack` →
+  `PlayerSurvival.ApplyContactDamage`).
+
 - **`EntityItem`** — a dropped `ItemStack`. Falls under gravity, settles, and despawns after ~5 min; `CanPickup`
   gates a short delay so a just-broken block isn't instantly re-collected.
 - **`EntityFallingBlock`** — a block (sand, gravel) mid-fall. Spawned by `BlockFalling` via
@@ -43,7 +56,8 @@ width/height. It runs **server-side only** and reuses the same collision contrac
 ## Types & registry
 
 An `EntityType` ([Entities/EntityType.cs](../MinecraftClone3API/Entities/EntityType.cs)) is a registered species:
-collision `Width`/`Height`, AI fields (`Hostile`, `MoveSpeed`, `MaxHealth`), an `EntityKind`
+collision `Width`/`Height`, AI fields (`Hostile`, `MoveSpeed`, `MaxHealth`), combat fields (`AttackDamage` for a
+hostile mob's contact damage, an optional `LootTable` rolled on death), an `EntityKind`
 (`Creature`/`Item`/`FallingBlock`),
 and the **client-only** render data (`TexturePath` + a `ModelPath` resource key). Plugins register them with
 `context.Register(EntityType)`; the `EntityRegistry` assigns each a sequential numeric `Id` in registration order.
@@ -59,8 +73,10 @@ the client loads it (from a data file — see Rendering) and turns it into GPU b
 analog of `BlockData` (see [world-model.md](world-model.md)): an abstract `EntityData`
 ([Entities/EntityData.cs](../MinecraftClone3API/Entities/EntityData.cs)) with `Serialize`/`Deserialize`, concrete
 subclasses (`SheepData { Sheared }`) registered by type (`PluginContext.RegisterEntityData<T>`) and (de)serialized
-behind a registry-key tag. It's **wire-only** (entities aren't saved): an `EntityType.DataFactory` builds the
-instance a creature spawns with, it rides `EntitySpawnPacket`, and changes broadcast via `EntityDataPacket`. The
+behind a registry-key tag. An `EntityType.DataFactory` builds the instance a creature spawns with; it rides
+`EntitySpawnPacket`, changes broadcast via `EntityDataPacket`, and a creature persists its `Data` through
+`EntitySerializer` (so a name-based `Data` like `SheepData` survives — but a `Data` that embeds ids must store
+them by name, as `FallingBlockData` does on the disk path via the falling block's `SerializeState`). The
 base class is GL-free; `EntityData.OverlayVisible` lets it drive the renderer (hide a sheared sheep's wool)
 without the API knowing the concrete subclass. The base `Entity` stays free of per-mob flags.
 
@@ -104,6 +120,19 @@ resolves the id against its **own** `WorldServer.FindEntity` list (so it can't a
 shears a woolly sheep — flips `SheepData.Sheared` (which the client uses to drop the wool layer) and `DropItem`s
 1–3 wool.
 
+**Melee combat (attacking mobs).** A fresh left-click reuses the same `PlayerController.PickEntity` raycast: if a
+creature is hit (nearer than the targeted block) the click is an **attack**, not a block break — it sends
+`AttackEntityRequestPacket` with the entity id and swallows the rest of that hold so it doesn't also mine. The
+server resolves the id against its own `FindEntity` list and runs `EntityCombat.DamageEntity` with the held
+item's `Item.AttackDamage` (bare hand = `EntityCombat.BaseHandDamage` = 1; swords raise it). `EntityCombat`
+([Entities/EntityCombat.cs](../MinecraftClone3API/Entities/EntityCombat.cs)) is the GL-free, stateless server
+combat sink: it gates on the target's `HurtCooldown` (0.5 s invuln), subtracts `Health`, applies horizontal +
+upward knockback to the target's `Velocity`, and on death rolls the type's `LootTable`
+([Entities/LootTable.cs](../MinecraftClone3API/Entities/LootTable.cs)) — `DropItem`-ing each stack — before
+setting `Dead`. Death/despawn then streams through the existing `PendingDespawns` path, so **no new server→client
+packet is needed**. Loot is declared on the `EntityType` by item registry key (resolved lazily, like the shears'
+wool), e.g. zombie → rotten flesh, cow → beef + leather.
+
 ## Player survival
 
 Health/hunger/damage are **server-authoritative** even though the player's *position* is client-authoritative.
@@ -126,8 +155,13 @@ applies Minecraft-exact mechanics on Normal difficulty:
 Death is `Health ≤ 0`: the network layer latches `ClientSession.Dead`, broadcasts it in the stats packet, and
 holds the player until a `RespawnRequest` (the death screen) resets stats + teleports to spawn. Stats persist
 per player (see [networking.md](networking.md) / `PlayerSerializer`). Eating drives hunger back up — see
-[inventory.md](inventory.md). Mob combat (creatures dealing/taking damage) is **not** wired yet; `EntityType`
-already carries `MaxHealth` for it.
+[inventory.md](inventory.md).
+
+**Taking mob damage.** A hostile creature in melee range applies `PlayerSurvival.ApplyContactDamage`, the single
+armor-reducible damage path: worn armor (`EntityPlayer.Inventory.ArmorDefense()`) cuts the hit by 4% per defense
+point (capped 80%), then `Health` drops. It's survival-only and no-ops when dead. (Fall/drowning/void bypass
+armor, matching Minecraft, so they stay direct subtractions.) Player knockback is omitted because the client owns
+player physics. See [inventory.md](inventory.md) for armor items + slots.
 ## Rendering
 
 `EntityRenderer` ([Client/Graphics/EntityRenderer.cs](../MinecraftClone3API/Client/Graphics/EntityRenderer.cs))
@@ -140,6 +174,11 @@ layer size. (Current Minecraft splits some mob sheets by climate variant, so the
 [ItemIconRenderer](../MinecraftClone3API/Client/Graphics/ItemIconRenderer.cs) uses for the inventory). A
 projectile (the ender pearl) instead renders as a single **camera-facing billboard** quad of its item sprite —
 the quad's local axes are mapped onto the camera's `Right`/`Up`/forward each frame so it always faces the viewer.
+
+The **local player** is normally excluded from rendering (it isn't in `world.Entities`), but in a third-person
+view (F5, see [state-gameloop.md](state-gameloop.md)) `EntityRenderer.Render` also draws it with the built-in
+player model at `PlayerController.PlayerEntity`. Its walk cycle is advanced from its own physics in
+`PlayerController` (via `Entity.AdvanceWalkCycle`), not the network-interpolation path the other entities use.
 
 **Models are data, not code.** Each type's geometry is a **Bedrock-edition geometry JSON** file (the
 Blockbench-native mob format — bones with `pivot`/`rotation`, cubes with absolute `origin`/`size`/`uv`), loaded

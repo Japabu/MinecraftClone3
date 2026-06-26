@@ -36,7 +36,7 @@ namespace MinecraftClone3Server
             {
                 var start = DateTime.Now;
 
-                world.Update();
+                network.TickWorlds();
                 network.Pump();
 
                 var sleep = tickInterval - (DateTime.Now - start);
@@ -45,7 +45,7 @@ namespace MinecraftClone3Server
 
             Logger.Info("Stopping server...");
             network.Stop();
-            world.Unload();
+            network.UnloadWorlds();
         }
 
         /// <summary>

@@ -61,6 +61,17 @@ functions (`SkyZenithColor`/`SkyHorizonColor`/`SkyVoidColor`/`SunsetColor`/`Star
 `DayTime`/`SunHeight`/`DayFactor` with `SunColor`/`SkyAmbient`/`SunDirection`), so retuning needs no shader
 recompile; billboard sizes are the `SunSize`/`MoonSize` consts.
 
+**Per-dimension visuals (generic — no per-dimension code).** `RenderWorld` reads three values off the client
+world each frame — `HasSky`, `FogColor`, `AmbientLight` — set from the dimension on a dimension change (see
+[networking.md](networking.md)). When `HasSky` is false (a sunless dimension like the Nether) the sky/sun
+functions short-circuit: `SunColor`/`SunsetColor`/`StarBrightness` return 0, `sunFade` is forced 0 (so the
+shadow passes are skipped), and `SkyZenith/Horizon/Void` all return `FogColor` — giving a flat coloured sky
+that the distance fog melts terrain into. `AmbientLight` is uploaded as the new `uAmbientFloor` uniform and the
+composition does `light = max(max(blockLight, skyLight), uAmbientFloor)` — a dimension-wide minimum light
+(distinct from the user `uMinLight` Brightness floor) so unlit ground in a sunless dimension isn't pitch black.
+The Overworld leaves all three at their defaults (sky on, zero fog override, zero ambient floor), so nothing
+changes there. The engine names no specific dimension; the Nether's red values live in `NetherDimension`.
+
 **Directional sun shadows — one low-res shadow map (no cascades).** `DrawShadowMap` renders a **single**
 orthographic depth map into `ShadowFramebuffer` — one `Texture2D` of `ShadowFramebuffer.ShadowMapSize`
 (1024). **The map is deliberately low-res for a soft, blurry look:** the PCF penumbra is a fixed number of
@@ -161,6 +172,16 @@ water-flag + light **cleanly** (overwrite, not blend). This needs **no `RenderSt
 restore keeps RenderState's single `Blend` bool the whole description. Side effect (intentional): glass also
 writes its front pane's own normal/light instead of blending them, removing a latent `normal.w` corruption
 when glass overlapped an unlit pixel. `WorldGeometry.vs/.fs` are untouched.
+
+**Underwater murk.** When the camera's eye sits inside a liquid block (`WorldRenderer` samples the block at the
+camera position with `floor(v+0.5)`, matching `PlayerPhysics`' liquid test, so it triggers whenever the eye is
+submerged — including only half-submerged at the surface), the composition fogs the **whole scene and the
+background sky** into a water colour over a short distance (`UnderwaterFogStart`/`End` consts in
+`Composition.fs`), with a slight permanent tint right at the camera (`UnderwaterMinTint`) — Minecraft's
+"you're underwater" look, no extra pass. `WorldRenderer` uploads `uUnderwater` (0/1) and `uUnderwaterColor`
+(a deep water blue **dimmed on the CPU side by the current daylight** — sun + ambient — so it's bright blue by
+day, near-black at night or in a flooded cave); the shader applies it last, after distance fog, in both the
+sky and the geometry path. The HUD draws on top, so it stays clear.
 
 **Breaking crack overlay.** `BlockBreakRenderer` (in the overlay pass, while a survival player mines) draws a
 slightly-inflated textured cube of the `destroy_stage_0..9` sprite over the targeted block with the `BlockBreak`

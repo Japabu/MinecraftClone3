@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using MinecraftClone3API.Util;
+using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.WorldGen
 {
@@ -17,6 +18,15 @@ namespace MinecraftClone3API.WorldGen
         protected Dimension(string name) : base(name)
         {
         }
+
+        /// <summary>Generic per-dimension visuals the client applies when a player is in this dimension (shipped
+        /// in the dimension-change handshake). The engine has no per-dimension sky knowledge — content sets these.
+        /// <see cref="HasSky"/> false drops the sun/day-night and stars and paints a flat <see cref="FogColor"/>;
+        /// <see cref="AmbientLight"/> is a minimum light flooded everywhere so a sunless dimension isn't pitch
+        /// black. Defaults are the open-sky Overworld (sky on, no fog override, no ambient floor).</summary>
+        public bool HasSky = true;
+        public Vector3 FogColor = Vector3.Zero;
+        public Vector3 AmbientLight = Vector3.Zero;
 
         public void AddFeature(DecorationStep step, Feature feature)
         {

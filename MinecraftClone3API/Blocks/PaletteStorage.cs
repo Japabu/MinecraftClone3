@@ -158,11 +158,17 @@ namespace MinecraftClone3API.Blocks
             return bits;
         }
 
-        public void Write(BinaryWriter writer)
+        /// <summary>Serializes light/sky containers, whose palette values are raw data written as-is.</summary>
+        public void Write(BinaryWriter writer) => Write(writer, (w, v) => w.Write(v));
+
+        /// <summary>Serializes with a caller-supplied palette-entry writer. The block container passes one
+        /// that emits each value's stable registry name rather than its session-local id, so the chunk
+        /// round-trips across plugin add/remove/reorder. The packed index array is written verbatim.</summary>
+        public void Write(BinaryWriter writer, Action<BinaryWriter, ushort> writeEntry)
         {
             writer.Write((ushort) _paletteCount);
             for (var i = 0; i < _paletteCount; i++)
-                writer.Write(_palette[i]);
+                writeEntry(writer, _palette[i]);
 
             writer.Write((byte) _bitsPerEntry);
             if (_bitsPerEntry == 0) return;
@@ -172,7 +178,13 @@ namespace MinecraftClone3API.Blocks
                 writer.Write(_data[i]);
         }
 
-        public static PaletteStorage Read(BinaryReader reader)
+        /// <summary>Deserializes light/sky containers, whose palette values are raw data read as-is.</summary>
+        public static PaletteStorage Read(BinaryReader reader) => Read(reader, r => r.ReadUInt16());
+
+        /// <summary>Deserializes with a caller-supplied palette-entry reader. The block container passes one
+        /// that resolves each stored name back to a runtime id (minting a placeholder for a name whose plugin
+        /// is gone). Distinct stored names always resolve to distinct ids, so the palette stays duplicate-free.</summary>
+        public static PaletteStorage Read(BinaryReader reader, Func<BinaryReader, ushort> readEntry)
         {
             int count = reader.ReadUInt16();
             if (count < 1 || count > Capacity)
@@ -180,7 +192,7 @@ namespace MinecraftClone3API.Blocks
 
             var palette = new ushort[count];
             for (var i = 0; i < count; i++)
-                palette[i] = reader.ReadUInt16();
+                palette[i] = readEntry(reader);
 
             int bits = reader.ReadByte();
             if (bits == 0)

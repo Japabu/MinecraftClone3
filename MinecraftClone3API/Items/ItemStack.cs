@@ -37,12 +37,21 @@ namespace MinecraftClone3API.Items
 
         public void Write(BinaryWriter writer)
         {
-            writer.Write(ItemId);
+            // Reference the item by its stable registry name, not its session-local id, so a saved inventory
+            // survives items being added/removed/reordered. Empty stacks write the empty name.
+            var item = GameRegistry.GetItem(ItemId);
+            writer.Write(item == null ? "" : item.RegistryKey);
             writer.Write(Count);
             writer.Write(Metadata);
         }
 
         public static ItemStack Read(BinaryReader reader)
-            => new ItemStack(reader.ReadUInt16(), reader.ReadInt32(), reader.ReadInt32());
+        {
+            var key = reader.ReadString();
+            var count = reader.ReadInt32();
+            var metadata = reader.ReadInt32();
+            if (string.IsNullOrEmpty(key)) return new ItemStack(0, count, metadata);
+            return new ItemStack(GameRegistry.ItemRegistry.GetOrRegisterUnknown(key), count, metadata);
+        }
     }
 }

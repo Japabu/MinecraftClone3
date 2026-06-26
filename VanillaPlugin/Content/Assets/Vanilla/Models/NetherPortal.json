@@ -1,0 +1,20 @@
+{
+    "parent": "System/Models/Block",
+    "textures": {
+        "particle": "#all",
+        "all": "minecraft:block/nether_portal"
+    },
+    "elements": [
+        {   "from": [ 0, 0, 0 ],
+            "to": [ 16, 16, 16 ],
+            "faces": {
+                "down":  { "texture": "#all" },
+                "up":    { "texture": "#all" },
+                "north": { "texture": "#all" },
+                "east":  { "texture": "#all" },
+                "south": { "texture": "#all" },
+                "west":  { "texture": "#all" }
+            }
+        }
+    ]
+}

@@ -8,6 +8,7 @@ namespace MinecraftClone3API.Items
         None = 0,
         Pickaxe,
         Axe,
-        Shovel
+        Shovel,
+        Sword
     }
 }

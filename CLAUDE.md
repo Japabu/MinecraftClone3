@@ -94,8 +94,11 @@ the linked doc; this is the short "don't violate this" list.
 - **Per-`PaletteStorage`-container single writer + copy-on-grow** (full: [docs/world-model.md](docs/world-model.md)).
   A published storage's palette/bit-width are immutable; growth publishes a NEW storage via a `volatile`
   field. Each container (block ids / light / sky) has exactly one writer thread. **Never add a second writer.**
-- **Block-id agreement.** Block ids come from plugin **enumeration order** at load; client and server MUST
-  load the same `Plugins/`.
+- **Block/item ids are session-local; disk + wire identity is the registry NAME.** Numeric ids are assigned
+  at load (deterministic plugin order) and only need to agree within a session — so the client and server MUST
+  load the same `Plugins/`. Chunks/inventories persist and transmit the stable `RegistryKey` (name), remapped
+  to ids on read; a name whose plugin is gone is preserved as an inert `BlockUnknown`/`ItemUnknown` placeholder
+  (re-installing the plugin restores it). So adding/removing/reordering blocks/items never corrupts a world.
 
 **Architecture** (full: [docs/architecture.md](docs/architecture.md), [docs/world-model.md](docs/world-model.md))
 - **Storage vs. mesh are decoupled.** `Chunk` is pure GL-free storage (the headless server builds chunks);
@@ -105,13 +108,20 @@ the linked doc; this is the short "don't violate this" list.
 - **Authority:** the server owns blocks + light; the **player's** position is client-authoritative (no
   server-side *player* physics — the client runs walk gravity/collision and writes the result). Every **other**
   entity (mobs/animals/dropped items) is server-authoritative — the server runs its AI/physics and streams it
-  (see [docs/entities.md](docs/entities.md)).
+  (see [docs/entities.md](docs/entities.md)). Entities persist with their chunk and the player persists via
+  `PlayerSerializer`; all `Entities` mutation (spawn/save/despawn) stays on the **tick thread**.
 - **Chunk lifetime is client-owned.** The server streams a chunk once and never tells a client to unload; the
   client caches and releases (`ChunkRelease`).
 
 **Operational / formats**
-- **After any worldgen, on-disk, or wire-format change, delete the affected world folder** (`Worlds/<name>/`,
-  or `World/` for the dedicated server). Chunks load disk-first, so old saves mask the new generator.
+- **The save format is versioned and self-describing within its version.** `level.dat`/player files carry a
+  save version and region files a magic+version header; a mismatch is rejected and regenerated (fail-fast, no
+  back-compat). Within a version, blocks/items survive plugin churn (name-based, above). So a **worldgen**
+  change still needs the world folder deleted (chunks load disk-first, masking the new generator); a
+  **format** change should instead **bump the version** (`WorldMetadata.Version` / `WorldSerializer.RegionVersion`
+  / `PlayerSerializer.Version`) so old saves are cleanly rejected rather than misread. Writes are atomic
+  (temp + rename); region `.rd` files self-compact to reclaim re-saved chunks; dirty chunks + players autosave
+  on a timer (not only on unload/shutdown).
 - **OpenGL is capped at 4.1 Core / GLSL 4.10** (macOS limit): query uniform/sampler locations by name (no
   `layout(binding=)` on uniforms); vertex-attribute/fragment-output locations *do* use `layout(location=)`.
 - **Block code that runs on the server must not touch client/GL/window state** (server-side light sim calls

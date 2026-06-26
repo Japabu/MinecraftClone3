@@ -13,8 +13,18 @@ namespace MinecraftClone3API.Items
         public const int HotbarSize = 9;
         public const int MainSize = 27;
         public const int Size = HotbarSize + MainSize;
+        public const int ArmorSize = 4;
+
+        /// <summary>Slot-index offset used by <c>InventoryActionPacket</c> to address an armor slot (index
+        /// <see cref="ArmorActionBase"/> + armorIndex) instead of a main/hotbar slot.</summary>
+        public const int ArmorActionBase = 100;
 
         public readonly ItemStack[] Slots = new ItemStack[Size];
+
+        /// <summary>The four worn armor pieces, indexed by <see cref="ArmorSlot"/> (helmet/chest/legs/boots).
+        /// Kept separate from <see cref="Slots"/> so existing slot indexing/serialization is unaffected;
+        /// <see cref="Add"/> never auto-fills it.</summary>
+        public readonly ItemStack[] Armor = new ItemStack[ArmorSize];
 
         public int SelectedHotbar;
 
@@ -44,11 +54,25 @@ namespace MinecraftClone3API.Items
             return stack.IsEmpty;
         }
 
+        /// <summary>Total defense points from worn armor, used by survival damage reduction.</summary>
+        public int ArmorDefense()
+        {
+            var total = 0;
+            for (var i = 0; i < ArmorSize; i++)
+            {
+                var item = Armor[i].Item;
+                if (item != null) total += item.ArmorDefense;
+            }
+            return total;
+        }
+
         public void Write(BinaryWriter writer)
         {
             writer.Write(SelectedHotbar);
             for (var i = 0; i < Size; i++)
                 Slots[i].Write(writer);
+            for (var i = 0; i < ArmorSize; i++)
+                Armor[i].Write(writer);
         }
 
         public void Read(BinaryReader reader)
@@ -56,6 +80,8 @@ namespace MinecraftClone3API.Items
             SelectedHotbar = reader.ReadInt32();
             for (var i = 0; i < Size; i++)
                 Slots[i] = ItemStack.Read(reader);
+            for (var i = 0; i < ArmorSize; i++)
+                Armor[i] = ItemStack.Read(reader);
         }
     }
 }

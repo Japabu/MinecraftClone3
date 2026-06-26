@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Items;
 using OpenTK.Mathematics;
@@ -15,6 +16,28 @@ namespace MinecraftClone3API.Networking
         public int EntityId;
         public bool LoggedIn;
         public bool ReadySent;
+
+        /// <summary>The dimension world this player is currently in. Chunk streaming, entity relay, and block
+        /// deltas are all scoped to it; changed by a portal transfer.</summary>
+        public WorldServer World;
+
+        /// <summary>The position whose spawn column must be streamed before the client is told it may finish
+        /// (re)loading (<see cref="PlayerReadyPacket"/>). Set on login (world spawn) and on a portal transfer
+        /// (the destination). Null once consumed.</summary>
+        public Vector3? ReadyGate;
+
+        /// <summary>Portal transfer state. <see cref="PortalTimer"/> counts ticks the player has stood in a
+        /// portal block; <see cref="PortalImmune"/> is set right after a transfer and cleared once the player
+        /// steps off a portal, so arriving inside one doesn't bounce straight back. A non-null
+        /// <see cref="PendingPortalWorld"/> means a transfer is mid-flight: once
+        /// <see cref="PendingPortalApprox"/>'s column has streamed into that world the destination is finalized —
+        /// building/linking a portal when <see cref="PendingBuildPortal"/> (a portal transfer) or just dropping
+        /// the player there when not (a respawn back to the Overworld spawn).</summary>
+        public int PortalTimer;
+        public bool PortalImmune;
+        public WorldServer PendingPortalWorld;
+        public Vector3i PendingPortalApprox;
+        public bool PendingBuildPortal;
 
         public string PlayerName = "";
 

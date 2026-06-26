@@ -16,6 +16,7 @@ namespace MinecraftClone3API.Networking
         PlaceBlockRequest,
         UseItemRequest,
         UseItemOnEntityRequest,
+        AttackEntityRequest,
         EntityMove,
         EntitySpawn,
         EntityDespawn,
@@ -34,7 +35,8 @@ namespace MinecraftClone3API.Networking
         PlayerFall,
         SetGameModeRequest,
         RespawnRequest,
-        PlayerTeleport
+        PlayerTeleport,
+        DimensionChange
     }
 
     /// <summary>
@@ -55,6 +57,7 @@ namespace MinecraftClone3API.Networking
             {PacketId.PlaceBlockRequest, () => new PlaceBlockRequestPacket()},
             {PacketId.UseItemRequest, () => new UseItemRequestPacket()},
             {PacketId.UseItemOnEntityRequest, () => new UseItemOnEntityRequestPacket()},
+            {PacketId.AttackEntityRequest, () => new AttackEntityRequestPacket()},
             {PacketId.EntityMove, () => new EntityMovePacket()},
             {PacketId.EntitySpawn, () => new EntitySpawnPacket()},
             {PacketId.EntityDespawn, () => new EntityDespawnPacket()},
@@ -73,7 +76,8 @@ namespace MinecraftClone3API.Networking
             {PacketId.PlayerFall, () => new PlayerFallPacket()},
             {PacketId.SetGameModeRequest, () => new SetGameModeRequestPacket()},
             {PacketId.RespawnRequest, () => new RespawnRequestPacket()},
-            {PacketId.PlayerTeleport, () => new PlayerTeleportPacket()}
+            {PacketId.PlayerTeleport, () => new PlayerTeleportPacket()},
+            {PacketId.DimensionChange, () => new DimensionChangePacket()}
         };
 
         public abstract PacketId Id { get; }

@@ -1,3 +1,4 @@
+using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
 
@@ -8,6 +9,10 @@ namespace MinecraftClone3API.Entities
         public const float Width = 0.6f;
         public const float Height = 1.8f;
         public const float EyeHeight = 1.62f;
+
+        /// <summary>The server-side back-reference to this player's authoritative inventory (set at login), so
+        /// survival can read worn armor for damage reduction. Null on the client.</summary>
+        public Inventory Inventory;
 
         public static readonly Matrix4 DefaultProjection =
             Matrix4.CreatePerspectiveFieldOfView(MathHelper.DegreesToRadians(60), 16f / 9f, 0.01f, 512);

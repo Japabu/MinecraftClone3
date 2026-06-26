@@ -3,6 +3,24 @@
 This list is for *open* work only — when an item is resolved, delete it or move its rationale into the
 relevant permanent doc. Not a changelog.
 
+- **Nether is the "core, one-biome" slice.** Implemented: the dimension + generator (netherrack/lava/soul-sand/
+  glowstone/quartz-ore), obsidian portals lit with flint & steel (`VanillaPortals`), 8:1 Overworld↔Nether
+  travel with find-or-build destination portals, the multi-dimension server, and the sunless red-fog render
+  mode. **Deferred / accepted:** only one biome (no soul-sand valley / crimson-warped forests, no fortresses,
+  no nether mobs — ambient spawning is dimension-blind, so **Overworld animals can spawn in the Nether**);
+  the portal renders the pack's real axis-oriented thin pane but is **not animated** (a static texture frame);
+  **lava deals no damage** and is a pass-through fluid (no flow, no fire); the **current dimension is not
+  persisted** — a player's position/look persists (`PlayerSerializer`) and is restored only when they log back
+  into the *same* dimension they left, so a player who logged off in the Nether relogs at the **Overworld
+  spawn** (the saved dimension key doesn't match) rather than back in the Nether. Restoring into a non-Overworld
+  dimension at login would need the dimension-transfer flow run at join time. An Overworld return portal builds
+  at the floor under the scaled coords, which may be far from where you left (no surface-match beyond a local
+  floor scan / portal search radius of 16).
+- **Dimension transfer briefly stalls the client.** `WorldClient.ResetForDimensionChange` parks the apply
+  thread and tears the whole cached world down on the main thread (reusing the eviction paths), so the
+  transfer frame can hitch by up to the apply-thread park latency (~50 ms) plus the teardown. One-time per
+  portal trip; accepted.
+
 - **Player physics is the "80%" walk model.** Implemented: gravity, jump, swept per-axis AABB collision, Ctrl
   sprint, walk/fly toggle, auto-step up `StepHeight` (0.6 = MC) ledges, non-cube collision (multi-box
   `GetCollisionBoxes`, used by stairs). **Not** implemented: sprint-jump forward boost, sneaking, per-block
@@ -163,10 +181,6 @@ relevant permanent doc. Not a changelog.
   `InventoryAction`s — fine for a creative sandbox, exploitable in real MP. No survival pickup/drop, no recipe
   book; no survival item pickup/drop. (The apple is edible and mining tools work — but tools have no durability
   and broken blocks drop nothing; see the tool/survival limitations above.)
-- **Item ids aren't remapped from disk.** Like block ids, the `registry.bin` save/load path exists but is
-  unwired, so item ids are assigned by registration order — stable only for a fixed plugin set. A changed
-  plugin set shifts ids and a saved inventory would show wrong items (delete the world, per the no-back-compat
-  rule).
 - **Right-clicking a crafting table or furnace always opens it.** `Block.OnActivated` returning true suppresses
   placement, so you can't place a block against their face, and there's no sneak-to-place override.
 - **Furnaces are plain-furnace only; no XP, no blast furnace/smoker.** Smelting matches `minecraft:smelting`
@@ -193,6 +207,12 @@ relevant permanent doc. Not a changelog.
   mirrors the right-side legs and one arm/leg of the humanoid): we render those faces un-mirrored, which is
   near-invisible on the near-symmetric limb textures. Applying it means swapping the left/right face regions
   and reversing U in `EntityRenderer.AddBox`.
+- **Entity persistence runs on chunk-unload + shutdown, not the periodic autosave.** Entities save when their
+  chunk unloads and on clean shutdown (see [entities.md](entities.md)), so quitting is lossless; a hard crash
+  loses entity motion since the last unload (chunks/players are bounded by the 30 s autosave, entities aren't).
+  An entity that wanders entirely out of every loaded chunk between unload cycles ticks unchecked until it
+  void-despawns rather than being saved — bounded and rare. Adding an entity pass to the periodic autosave
+  would need it to run on the tick thread (where `Entities` lives), not the unload thread.
 - **Entities are stored/queried by linear scan — fine now, wants a spatial index eventually.** The server keeps
   a flat `WorldServer.Entities` `HashSet`; `FindEntity` (entity-targeted use), `EntityCreature.NearestPlayer`
   (every creature, every tick), and the client's `PlayerController.PickEntity` (every right-click) all scan the
@@ -213,14 +233,16 @@ relevant permanent doc. Not a changelog.
   head-on wall hit, but a dead-on hit into a **thick** wall (or a pocket where the back-off direction is also
   blocked) can still drop you inside the geometry rather than in front of it. A proper swept depenetration
   (resolve the player AABB out along the minimum-translation axis, multi-block) is the real fix; deferred.
-- **Tools — accepted limitations.** Mining tools exist (`ItemTool`: pickaxe/axe/shovel × wood/stone/iron/gold/
-  diamond) with Minecraft-exact speed/tier and the full vanilla mining formula, but **no durability** (tools
-  never wear out) and **no block drops** — a broken block vanishes, so survival can't gather resources to *craft*
-  tools yet; tools are obtainable only from the creative item picker. The block's `requires-tool` gate currently
-  only throttles mining *speed* (÷100), not drops, because there is no drop system.
+- **Tools/weapons/armor — accepted limitations.** Mining tools (`ItemTool`), swords (`ItemSword`), and armor
+  (`ItemArmor`) exist with Minecraft-exact speed/tier, attack damage, and defense points, but **none have
+  durability** (they never wear out — `ItemStack.Metadata` is free to repurpose as a damage value later). There
+  are also **no block drops** — a broken block vanishes, so survival can't gather resources to *craft* gear yet;
+  gear is obtainable only from the creative item picker (mob loot *does* drop now, via `LootTable`). The block's
+  `requires-tool` gate currently only throttles mining *speed* (÷100), not drops, because there is no drop system.
+  Armor reduces only **mob melee** damage (the armor-reducible path); fall/drown/void bypass it, matching MC.
 - **Survival MVP — accepted limitations.** Tool/hardness data is set with real Minecraft values only on
   `BlockBasic`; other block types (leaves, grass, torch, stairs, crafting table, **furnace** — its file is
   off-limits — glowstone, water) use the `1.5` hardness / no-preferred-tool defaults.
-  The survival inventory (`GuiInventory`) has the 2×2 crafting grid but **no armor, offhand, or 3D player
-  preview** (those regions of `inventory.png` are inert). Mob combat (creatures dealing/taking damage) is still
-  unwired. The breaking crack overlay assumes the deferred G-buffer attachment layout (diffuse/normal/light).
+  The survival inventory (`GuiInventory`) now has armor slots (functional), but **no offhand or 3D player
+  preview** (those regions of `inventory.png` are inert), and **armor isn't rendered on the player model**. The
+  breaking crack overlay assumes the deferred G-buffer attachment layout (diffuse/normal/light).

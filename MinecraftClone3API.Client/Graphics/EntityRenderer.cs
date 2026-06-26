@@ -159,7 +159,9 @@ namespace MinecraftClone3API.Graphics
 
         public static void Render(WorldClient world, Camera camera, Matrix4 projection)
         {
-            if (world.Entities.Count == 0) return;
+            // In a third-person view the local player draws its own body (it isn't in world.Entities).
+            var drawSelf = PlayerController.RenderSelf && PlayerController.PlayerEntity != null;
+            if (world.Entities.Count == 0 && !drawSelf) return;
 
             var shader = ClientResources.EntityGeometryShader;
             shader.Bind();
@@ -192,6 +194,9 @@ namespace MinecraftClone3API.Graphics
                 else if (CreatureModels.TryGetValue(entity.Type.Id, out var model))
                     DrawModel(model, entity, world, uModel, uLight);
             }
+
+            if (drawSelf)
+                DrawModel(_playerModel, PlayerController.PlayerEntity, world, uModel, uLight);
 
             RenderState.Set(new GlState {CullFace = true, DepthTest = true, DepthFunc = DepthFunction.Lequal});
         }

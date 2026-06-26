@@ -263,8 +263,18 @@ namespace MinecraftClone3.States
             var c = GC.GetAllocatedBytesForCurrentThread();
             _phaseTimer.Restart();
             _world.Update();
-            Profiler.AddClientTime(_phaseTimer.Elapsed.TotalMilliseconds);
             Profiler.AddClientAlloc(GC.GetAllocatedBytesForCurrentThread() - c);
+            Profiler.AddClientTime(_phaseTimer.Elapsed.TotalMilliseconds);
+
+            // A portal transfer cleared the cached world and the new spawn is streaming: drop back into the
+            // loading screen until the destination chunks arrive (same gate as the initial join).
+            if (_world.ConsumeDimensionChange())
+            {
+                _loading = true;
+                _spawnApplied = false;
+                _loadProgress = 0f;
+                _loadingTimer.Restart();
+            }
         }
 
         /// <summary>Opens the death overlay when the server reports the player died, and closes it (snapping the
@@ -316,7 +326,7 @@ namespace MinecraftClone3.States
 
             var a = GC.GetAllocatedBytesForCurrentThread();
             _phaseTimer.Restart();
-            _integratedServer?.Update();
+            _network?.TickWorlds();
             Profiler.AddServerTime(_phaseTimer.Elapsed.TotalMilliseconds);
             Profiler.AddServerAlloc(GC.GetAllocatedBytesForCurrentThread() - a);
 
@@ -340,7 +350,7 @@ namespace MinecraftClone3.States
         /// timeout is only an anti-hang safety against a dropped signal.</summary>
         private void UpdateLoading()
         {
-            _integratedServer?.Update();
+            _network?.TickWorlds();
             _network?.Pump();
             _world.Update();
 
@@ -400,10 +410,14 @@ namespace MinecraftClone3.States
             // so a huge far plane (a 96-chunk horizon reaches ~1800 blocks) keeps enough depth precision to not
             // z-fight near full-detail terrain — 0.1 still only clips when the camera is right against a block.
             var farPlane = MathF.Max(512f, _world.LodRenderDistance + LodColumn.RegionBlocks * 2);
+            // Sprinting widens the FOV (eased in PlayerController), clamped so a high base FOV can't exceed 179°.
+            var fov = MathF.Min(GraphicsSettings.Fov * PlayerController.FovScale, 179f);
             var projection = Matrix4.CreatePerspectiveFieldOfView(
-                MathHelper.DegreesToRadians(GraphicsSettings.Fov), aspect, 0.1f, farPlane);
+                MathHelper.DegreesToRadians(fov), aspect, 0.1f, farPlane);
             WorldRenderer.RenderWorld(_world, projection);
 
+            if (_window.CursorState == CursorState.Grabbed && !PlayerController.RenderSelf)
+                CrosshairRenderer.Render();
             HotbarRenderer.Render(_world.Inventory);
             SurvivalHud.Render(_world);
 
@@ -556,13 +570,12 @@ namespace MinecraftClone3.States
             _world?.Disconnect();
 
             var network = _network;
-            var server = _integratedServer;
-            if (network == null && server == null) return;
+            if (network == null) return;
 
             _pendingTeardown = new Thread(() =>
             {
-                network?.Stop();
-                server?.Unload();
+                network.Stop();
+                network.UnloadWorlds();   // saves + stops every dimension world, not just the Overworld
             }) {Name = "World Teardown"};
             _pendingTeardown.Start();
         }

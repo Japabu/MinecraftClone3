@@ -18,6 +18,12 @@ later. **Both transports decode on the client's background apply thread, not the
 tolerates the server mutating the source chunk concurrently (a torn entry self-corrects via the next
 `BlockChanges` delta), made safe by the palette copy-on-grow rule.
 
+The TCP `Chunk.Write` payload and `ItemStack` (in `InventoryState`/`InventoryAction`/container packets) encode
+blocks/items by stable registry **name**, not numeric id (the same self-describing form as disk — see
+[world-model.md](world-model.md)); the client resolves names to its own session-local ids on decode. The
+compact `BlockChanges`/`PlaceBlockRequest` paths still carry numeric `blockId` — fine because ids are assigned
+in deterministic plugin order, so client and server agree within a session.
+
 ```
   Packets (Networking/Packets.cs)
   C→S  Login                 announce (carries the player name, used as the inventory save key)
@@ -27,13 +33,14 @@ tolerates the server mutating the source chunk concurrently (a torn entry self-c
   S→C  BlockChanges          ChunkPos + (localIndex, blockId, light, sky)[]   (edits + block-light + sky-light)
   C→S  ChunkRelease          client dropped a chunk from its cache; clears its SentChunks entry
   C→S  PlaceBlockRequest     pos + block id (id 0 = break) + placement metadata (computed client-side)
+  C→S  AttackEntityRequest   entity id; left-clicked a creature to melee it (server applies held weapon damage)
   C→S/S→C  EntityMove         own player up; relayed to others down
   S→C  EntitySpawn/EntityDespawn   remote players appearing/leaving
   S→C  WorldTime             world clock in seconds (TickCount·SecondsPerTick); on join + ~1/s, drives day/night
   S→C  LodColumnData         Phase-2 distant horizon: one region of surface-only LOD columns (loopback: by ref;
                              TCP: GZip), streamed nearest-first BEYOND the chunk view distance (see rendering.md)
-  S→C  InventoryState        full 36-slot inventory + selected hotbar slot; sent once on login (see inventory.md)
-  C→S  InventoryAction       slot index + ItemStack; client edited a slot in the creative screen
+  S→C  InventoryState        full 36-slot inventory + 4 armor slots + selected hotbar; on login / after equip
+  C→S  InventoryAction       slot index + ItemStack; client edited a slot (index ≥ ArmorActionBase = armor slot)
   C→S  HeldSlot              selected hotbar index changed (number key / scroll wheel)
   C→S  DropItemRequest       drop the held hotbar item (Q); bool All = whole stack (Ctrl+Q)
   C→S  OpenContainer/CloseContainer   client opened/closed a container block (furnace) screen
@@ -44,16 +51,43 @@ tolerates the server mutating the source chunk concurrently (a torn entry self-c
   C→S  SetGameModeRequest    pause-menu game-mode toggle (server-authoritative)
   C→S  RespawnRequest        death-screen respawn (honoured only while dead)
   S→C  PlayerTeleport        relocate the owning player (landed ender pearl); client snaps + clears fall
+  S→C  DimensionChange       drop the cached world + re-enter loading; carries generic visuals (HasSky, fog, ambient)
 ```
+
+**Dimensions & portals.** Each dimension is a separate `WorldServer` (see [architecture.md](architecture.md));
+every `ClientSession` carries the `World` it is in, and all streaming/relay/flush loops in `ServerNetwork` are
+scoped to it (`BroadcastTo(world, …)`, `session.World.LoadedChunks`, etc.). The engine owns no portal or
+dimension specifics: a plugin registers an **`IDimensionPortals`** (`WorldGen/IDimensionPortals.cs`,
+`GameRegistry.Portals`) defining which block is a portal, which dimension links to which, the coordinate scale,
+and how to find-or-build the destination portal. Vanilla's implementation is the obsidian frame lit with flint
+& steel and the 8:1 Overworld↔Nether scale.
+
+Transfer flow (all in `ServerNetwork.Pump`): `UpdatePortals` detects a player soaking in a portal block →
+`BeginTransfer` moves the player entity into the linked `WorldServer` at the scaled coords, clears the
+session's `SentChunks`, and sends `DimensionChange` (the destination `Dimension`'s generic visuals). The client
+parks its apply thread, drops every cached chunk/LOD/entity, switches render mode, and re-enters the loading
+screen. `ProcessPendingTransfers` waits until the destination column has **generated** (`IsChunkGenerated` —
+covers all-air chunks the open sky produces), then `EnsureDestinationPortal` builds/links the portal and the
+server **replays the join handshake** (`LoginAccept` with the new spawn, `WorldTime`, entity sync,
+`PlayerReady`) so the client finishes loading at the portal. A short post-transfer immunity (cleared when the
+player steps off a portal) stops an arrival from bouncing straight back.
 
 **Inventory is server-authoritative** (see [inventory.md](inventory.md)). The server owns each
 `ClientSession.Inventory`, persists it per player, and pushes the whole thing once via `InventoryState` on
 join. The client mutates its local replica optimistically for responsiveness and mirrors every change up:
 `InventoryAction` (a slot edit from the creative screen) and `HeldSlot` (hotbar selection). Like placement
-metadata these are trusted, not validated — this is a creative sandbox. **Dropping** is handled fully
-server-side: `DropItemRequest` makes the server decrement its own copy of the held slot, spawn an
-`EntityItem` thrown along the player's look direction, and **re-push the whole `InventoryState`** so the
-client replica matches (the only other time `InventoryState` is sent besides login).
+metadata these are trusted, not validated — this is a creative sandbox. An armor edit reuses `InventoryAction`
+with the slot index offset by `ArmorActionBase` (the server routes it to `Inventory.Armor`). **Dropping** is
+handled fully server-side: `DropItemRequest` makes the server decrement its own copy of the held slot, spawn an
+`EntityItem` thrown along the player's look direction, and **re-push the whole `InventoryState`** so the client
+replica matches. `InventoryState` is re-pushed besides login whenever the server changes the inventory itself —
+a drop, eating, or right-click-**equipping** armor (`RefreshInventoryAfterUse`).
+
+**Entity-targeted requests** (`AttackEntityRequest`, `UseItemOnEntityRequest`) name only an entity id; the
+server resolves it against its **own** `WorldServer.FindEntity` list, so a request can't act on an arbitrary or
+out-of-range entity. Attacks apply the server's authoritative held-item `AttackDamage` and run combat
+(`EntityCombat`, see [entities.md](entities.md)); mob death/despawn streams through the normal entity path, so
+neither needs a new server→client packet.
 
 **Container blocks** (a furnace) are server-authoritative too, but their state lives in the block, not the
 player inventory. When the client opens one it sends `OpenContainer` (pos); the server records it on the
@@ -73,8 +107,8 @@ The client mirrors the stats onto `WorldClient` (HUD, flight gate, death screen)
 so the server can apply fall damage despite the player owning its position; `SetGameModeRequest` flips the mode;
 `RespawnRequest` (only while dead) resets stats + teleports the player to spawn, after which the next
 `PlayerStats` clears the dead flag and the client snaps to the respawn point. Player **stats persist** alongside
-the inventory in `PlayerSerializer` (`<worldDir>/Players/<name>.dat`) — a save-format change, so an existing
-world (or its `Players/` folder) must be deleted.
+the inventory in `PlayerSerializer` (`<worldDir>/Players/<name>.dat`), behind a save version + atomic
+temp-and-rename write; a version mismatch resets the player rather than misreading it.
 
 **Placement metadata is computed client-side, never read on the server.** `Block.OnPlaced(world, pos,
 player, int metadata)` receives the metadata from the `PlaceBlockRequest`; the client derives it via

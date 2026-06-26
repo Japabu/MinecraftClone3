@@ -128,6 +128,21 @@ namespace MinecraftClone3API.Graphics
         private const float DayLengthSeconds = 1200f;
         private static double _dayTimeSeconds;
 
+        // Per-dimension visuals, set per-frame from the client world (content provides the values via the
+        // dimension; the engine stays generic). A sunless dimension has no day-night: the sky functions return a
+        // flat _fogColor, the directional sun term is forced off (no shadow pass), and _ambientFloor (uniform
+        // uAmbientFloor) is a minimum light so unlit ground stays visible. The Overworld keeps _hasSky and a zero
+        // ambient floor, so nothing changes there.
+        private static bool _hasSky = true;
+        private static Vector3 _fogColor;
+        private static Vector3 _ambientFloor;
+
+        // Underwater overlay: true when the camera's eye sits inside a liquid block, plus the murk colour the
+        // scene fogs into (a deep water blue dimmed by the current daylight). Set per-frame in RenderWorld and
+        // uploaded to the composition shader, which fogs everything (and the sky) into it over a short distance.
+        private static bool _underwater;
+        private static Vector3 _underwaterColor;
+
         // Sun/moon textures from the resource pack (sun.png and the full-moon celestial texture), sampled by
         // the composition shader to draw the sky billboards.
         public static Texture SunTexture;
@@ -182,6 +197,7 @@ namespace MinecraftClone3API.Graphics
         /// composition shader.</summary>
         private static Vector3 SunColor()
         {
+            if (!_hasSky) return Vector3.Zero;
             var sunHeight = SunHeight();
             var day = MathHelper.Clamp((sunHeight + 0.2f) / 0.4f, 0f, 1f);
             var highness = MathHelper.Clamp(sunHeight, 0f, 1f);
@@ -200,6 +216,7 @@ namespace MinecraftClone3API.Graphics
         /// caves — those stay dark unless a block light reaches them. Tune for darker/brighter ambient.</summary>
         private static Vector3 SkyAmbient()
         {
+            if (!_hasSky) return _ambientFloor;
             var day = DayFactor();
             var moon = new Vector3(0.05f, 0.06f, 0.11f);
             var sky = new Vector3(0.12f, 0.15f, 0.20f);
@@ -210,6 +227,7 @@ namespace MinecraftClone3API.Graphics
         /// night. The composition shader blends it toward <see cref="SkyHorizonColor"/> down to the horizon.</summary>
         private static Vector3 SkyZenithColor()
         {
+            if (!_hasSky) return _fogColor;
             var day = DayFactor();
             var night = new Vector3(0.00f, 0.01f, 0.03f);
             var sky = new Vector3(0.28f, 0.50f, 0.92f);
@@ -220,6 +238,7 @@ namespace MinecraftClone3API.Graphics
         /// colour in the composition shader so terrain melts into the horizon at the render-distance edge.</summary>
         private static Vector3 SkyHorizonColor()
         {
+            if (!_hasSky) return _fogColor;
             var day = DayFactor();
             var night = new Vector3(0.01f, 0.02f, 0.05f);
             var sky = new Vector3(0.66f, 0.78f, 0.93f);
@@ -229,6 +248,7 @@ namespace MinecraftClone3API.Graphics
         /// <summary>Colour below the horizon (the void): a dim grey-blue by day, near-black at night.</summary>
         private static Vector3 SkyVoidColor()
         {
+            if (!_hasSky) return _fogColor;
             var day = DayFactor();
             var night = new Vector3(0.00f, 0.00f, 0.01f);
             var voidColor = new Vector3(0.18f, 0.22f, 0.28f);
@@ -240,13 +260,14 @@ namespace MinecraftClone3API.Graphics
         /// sun's azimuth.</summary>
         private static Vector3 SunsetColor()
         {
+            if (!_hasSky) return Vector3.Zero;
             var band = MathHelper.Clamp(1f - MathF.Abs(SunHeight()) / 0.30f, 0f, 1f);
             return new Vector3(0.85f, 0.42f, 0.16f) * band;
         }
 
         /// <summary>Star brightness (0 by day, up to 1 at night), faded by the same day factor as everything
         /// else so the stars come out smoothly as the sky darkens.</summary>
-        private static float StarBrightness() => MathHelper.Clamp(1f - DayFactor(), 0f, 1f);
+        private static float StarBrightness() => _hasSky ? MathHelper.Clamp(1f - DayFactor(), 0f, 1f) : 0f;
 
         /// <summary>Unit vector pointing from the world toward the sun, animated by the same day/night
         /// clock as <see cref="SunColor"/> so the brightest sun aligns with the highest sun. Drives the
@@ -272,6 +293,9 @@ namespace MinecraftClone3API.Graphics
             // Server-authoritative time of day; sampled once so every sun term this frame is consistent. The
             // benchmark pins it (FixedTimeOfDay) for reproducible sun/shadow conditions.
             _dayTimeSeconds = FixedTimeOfDay ?? world.WorldTimeSeconds;
+            _hasSky = world.HasSky;
+            _fogColor = world.FogColor;
+            _ambientFloor = world.AmbientLight;
 
             var viewProjection = PlayerController.Camera.View * projection;
             var viewProjectionInv = viewProjection.Inverted();
@@ -282,8 +306,20 @@ namespace MinecraftClone3API.Graphics
             // The directional sun term -- and with it the shadows -- fade out together as the sun nears the
             // horizon, so dusk converges smoothly to ambient instead of the sun term popping when the shadow
             // pass cuts off. sunUp (term present) is exactly sunFade > 0.
-            var sunFade = SunFade(toSun.Y);
+            // A sunless dimension has no directional sun (so no shadow pass); it is lit by block light + the
+            // ambient floor only.
+            var sunFade = _hasSky ? SunFade(toSun.Y) : 0f;
             var sunUp = sunFade > 0f;
+
+            // Eye-in-liquid underwater murk. Blocks are centred on integers (±0.5), so floor(v+0.5) is the
+            // block containing the camera — matching PlayerPhysics' liquid sampling. The murk colour dims with
+            // the daylight (sun + ambient) so it's bright blue by day, near-black at night or in a flooded cave.
+            var cam = PlayerController.Camera.Position;
+            _underwater = world.GetBlock((int) MathF.Floor(cam.X + 0.5f), (int) MathF.Floor(cam.Y + 0.5f),
+                (int) MathF.Floor(cam.Z + 0.5f)).IsLiquid;
+            var litTint = _hasSky ? SkyAmbient() + SunColor() * sunFade : _ambientFloor;
+            var bright = MathHelper.Clamp(MathF.Max(litTint.X, MathF.Max(litTint.Y, litTint.Z)), 0.12f, 1f);
+            _underwaterColor = new Vector3(0.05f, 0.17f, 0.40f) * bright;
 
             // Per-pass GPU timing (F3 profiler shadowMs/geomMs/compMs); no-op unless recording.
             GpuTimers.Enabled = Profiler.Recording;
@@ -686,6 +722,9 @@ namespace MinecraftClone3API.Graphics
             GL.Uniform1(comp.GetUniformLocation("uDebugShadow"), RenderDebug.ShadowFactor ? 1f : 0f);
             GL.Uniform3(comp.GetUniformLocation("uMinLight"), GraphicsSettings.Brightness,
                 GraphicsSettings.Brightness, GraphicsSettings.Brightness);
+            // Minimum light a dimension floods everywhere (0 in the Overworld; a small glow in a sunless one so
+            // unlit ground isn't pitch black). Applied generically in the composition shader.
+            GL.Uniform3(comp.GetUniformLocation("uAmbientFloor"), _ambientFloor.X, _ambientFloor.Y, _ambientFloor.Z);
             var sun = SunColor();
             GL.Uniform3(comp.GetUniformLocation("uSunColor"), sun.X, sun.Y, sun.Z);
             var skyAmbient = SkyAmbient();
@@ -727,6 +766,11 @@ namespace MinecraftClone3API.Graphics
             GL.Uniform1(comp.GetUniformLocation("uSkyDistance"), horizonDistance + 48f);
             GL.Uniform1(comp.GetUniformLocation("uFogStart"), horizonDistance * 0.72f);
             GL.Uniform1(comp.GetUniformLocation("uFogEnd"), horizonDistance * 0.97f);
+
+            // Underwater murk: fog the whole scene (and the sky) into the water colour over a short distance.
+            GL.Uniform1(comp.GetUniformLocation("uUnderwater"), _underwater ? 1f : 0f);
+            GL.Uniform3(comp.GetUniformLocation("uUnderwaterColor"), _underwaterColor.X, _underwaterColor.Y,
+                _underwaterColor.Z);
 
             GL.Uniform1(comp.GetUniformLocation("uSunTexture"), 5);
             GL.Uniform1(comp.GetUniformLocation("uMoonTexture"), 6);

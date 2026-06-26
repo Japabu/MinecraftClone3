@@ -60,6 +60,13 @@ namespace MinecraftClone3API.Entities
         {
         }
 
+        /// <summary>Writes this entity's subclass-specific persisted state (the base transform — type, position,
+        /// velocity, yaw, pitch — is handled by <see cref="EntitySerializer"/>). Default: nothing.</summary>
+        internal virtual void SerializeState(System.IO.BinaryWriter writer) { }
+
+        /// <summary>Restores the state written by <see cref="SerializeState"/>. Default: nothing.</summary>
+        internal virtual void DeserializeState(System.IO.BinaryReader reader) { }
+
         /// <summary>Aims the interpolation at a freshly-received position: continue from where the entity is
         /// drawn right now, then lerp toward the new target over one server tick.</summary>
         public void SetInterpTarget(Vector3 target, float pitch, float yaw)
@@ -81,11 +88,18 @@ namespace MinecraftClone3API.Entities
             if (_interpAlpha < 1f)
                 _interpAlpha = MathHelper.Min(1f, _interpAlpha + dt / PlayerPhysics.TickSeconds);
 
-            // Advance the walk cycle and ease the swing strength toward the current speed. The phase speed and
-            // decay are tuned to read as a natural gait at the ~4 blocks/s a wandering creature moves.
-            var target = MathHelper.Clamp(_moveSpeed * 0.5f, 0f, 1f);
+            AdvanceWalkCycle(_moveSpeed, dt);
+        }
+
+        /// <summary>Advances the limb-swing walk cycle for a horizontal <paramref name="speed"/> (blocks/s),
+        /// easing the swing strength toward it. Remote entities drive this from interpolated network motion;
+        /// the local player drives it from its own physics (it isn't in the interpolation set). The phase
+        /// speed and decay are tuned to read as a natural gait at the ~4 blocks/s walking speed.</summary>
+        public void AdvanceWalkCycle(float speed, float dt)
+        {
+            var target = MathHelper.Clamp(speed * 0.5f, 0f, 1f);
             LimbSwingAmount += (target - LimbSwingAmount) * MathHelper.Min(1f, dt * 8f);
-            LimbSwing += _moveSpeed * dt * 2f;
+            LimbSwing += speed * dt * 2f;
         }
 
         public void Rotate(float pitch, float yaw)

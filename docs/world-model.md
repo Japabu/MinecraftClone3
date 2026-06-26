@@ -48,6 +48,26 @@ only flat shading on rotated faces is mildly off.) Chunk serialization (`Chunk.W
 reused for both disk saves (`WorldSerializer`) and the `ChunkData` packet; both go through
 `PaletteStorage.Write`/`Read`.
 
+**The block palette is self-describing — stored by registry NAME, not numeric id.** `PaletteStorage.Write`/`Read`
+take a palette-entry (de)serializer; the **block** container passes one that emits each value's stable
+`RegistryKey` and resolves it back on read, while light/sky pass the raw-`ushort` default (those are raw data,
+not registry ids — never name-translate them). A name whose plugin is absent resolves through
+`BlockRegistry.GetOrRegisterUnknown` to an inert `BlockUnknown` that keeps the name verbatim, so the cell
+round-trips losslessly (re-installing the plugin restores the real block). Items persist the same way
+(`ItemStack` ↔ item name, `ItemUnknown` placeholder). This makes numeric ids a session-local detail and lets
+blocks/items be added/removed/reordered without corrupting a saved world. Block ids are still assigned in
+**deterministic plugin order** so a client and server (or two machines) agree on the wire.
+
+**On-disk durability** (`WorldSerializer` over `RegionStore`): region files carry a magic+version header
+(mismatch → regenerate); the index is written atomically (temp + rename, no torn index on crash); each blob is
+an independent GZip member in the data file, so a region **self-compacts** (copying live members verbatim) once
+dead bytes from re-saved blobs dominate. `RegionStore` is the shared region-file engine — `WorldSerializer`
+runs two of them, one for chunk block data (`.ri`/`.rd`) and one for per-chunk entity blobs (`.rei`/`.red`,
+see [entities.md](entities.md)). Still-loaded dirty chunks **autosave** on a timer (`WorldServer.AutosaveInterval`) on
+the unload thread, not only at unload/shutdown, so a crash loses at most one interval. `BlockData` reads are
+per-entry resilient: an unknown/corrupt entry is skipped (its length prefix is consumed first) rather than
+discarding the whole chunk.
+
 **Paletted storage is concurrency-safe by a single-writer + copy-on-grow rule** (see `PaletteStorage`'s
 class doc). A published storage's palette and bit-width are immutable; a `Set` reusing an existing value
 rewrites one packed entry in place (a benign single-entry torn read, as the old dense `ushort[]` already

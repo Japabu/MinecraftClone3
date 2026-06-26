@@ -32,6 +32,10 @@ namespace MinecraftClone3API.Client.GUI
         /// meaning is the owning screen's; <see cref="ContainerScreen.SlotsInGroup"/> filters by it.</summary>
         public int Group;
 
+        /// <summary>Optional gate restricting what may be placed here (e.g. a helmet slot only accepts helmets);
+        /// null accepts anything. Checked by <see cref="ContainerScreen"/> on every placement path.</summary>
+        public Func<ItemStack, bool> CanAccept;
+
         public Slot(Rectangle bounds, Func<ItemStack> get, Action<ItemStack> set)
         {
             Bounds = bounds;

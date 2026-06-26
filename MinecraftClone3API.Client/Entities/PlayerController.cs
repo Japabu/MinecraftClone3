@@ -21,10 +21,38 @@ namespace MinecraftClone3API.Entities
         private const float FlySpeed = 16f;
         private const float SprintMultiplier = 3f;
         private const float DoubleTapSeconds = 0.3f;
+        // How far the third-person camera trails the eye, and the gap it keeps when a block clips the view.
+        private const float ThirdPersonDistance = 4f;
+        private const float ThirdPersonClearance = 0.2f;
+
+        /// <summary>The F5 camera cycle: first-person, third-person behind, third-person facing the player.</summary>
+        public enum CameraPerspective { FirstPerson, ThirdBack, ThirdFront }
+
+        public static CameraPerspective Perspective = CameraPerspective.FirstPerson;
+
+        /// <summary>True when the local player's own body should be drawn (any third-person view).</summary>
+        public static bool RenderSelf => Perspective != CameraPerspective.FirstPerson;
+
+        // Sprinting (survival + creative walk): started by holding the Sprint key or double-tapping Forward
+        // while moving forward, and (in survival) only while not too hungry. Sticky once started — it keeps
+        // going on held Forward alone — until Forward is released, hunger runs low, or a wall is hit. Boosts
+        // walk speed (PlayerPhysics.SprintMultiplier) and widens the FOV like Minecraft.
+        private const float SprintFovScale = 1.15f;
+        private const float ForwardDoubleTapSeconds = 0.3f;
+        private const float SprintHungerThreshold = 6f;
+        private static bool _sprinting;
+        private static bool _horizontalCollision;
+        private static readonly Stopwatch _forwardTapTimer = Stopwatch.StartNew();
+        // Eased multiplier on the configured FOV: 1 normally, easing toward SprintFovScale while sprinting.
+        public static float FovScale = 1f;
+        private static readonly Stopwatch _fovTimer = Stopwatch.StartNew();
 
         private static BlockRaytraceResult _blockRaytrace;
         private static bool _skipMouseDelta;
         private static readonly Stopwatch _spaceTapTimer = Stopwatch.StartNew();
+        // Wall-clock between frames, for advancing the local player's walk cycle (it isn't in the entity
+        // interpolation set, so nothing else drives its limb swing for the third-person view).
+        private static readonly Stopwatch _walkTimer = Stopwatch.StartNew();
 
         // Accumulated downward travel (blocks) since leaving the ground; reported to the server on landing so it
         // can apply fall damage (the player is position-authoritative, so the client measures the fall).
@@ -34,6 +62,9 @@ namespace MinecraftClone3API.Entities
         // wall-clock timer so mining accrues at the display rate (UpdateFrame runs per frame, not per tick).
         private static Vector3i? _miningTarget;
         private static float _miningProgress;
+        // True while a left-click that landed on a creature (an attack) is still held, so the same hold doesn't
+        // also break/mine. Cleared on release.
+        private static bool _attacking;
         private static readonly Stopwatch _frameTimer = Stopwatch.StartNew();
 
         public static void SetEntity(EntityPlayer playerEntity)
@@ -74,6 +105,8 @@ namespace MinecraftClone3API.Entities
                 _spaceTapTimer.Restart();
             }
 
+            UpdateSprint(ks);
+
             if (world is WorldClient client)
             {
                 UpdateHotbarSelection(client, ks, ms);
@@ -87,12 +120,37 @@ namespace MinecraftClone3API.Entities
             if (ks.IsKeyPressed(Keys.F7)) RenderDebug.ShadowFactor = !RenderDebug.ShadowFactor;
             if (ks.IsKeyPressed(Keys.F10)) Profiler.Toggle();
             if (ks.IsKeyPressed(Keys.F2)) WorldRenderer.FixedTimeOfDay = WorldRenderer.FixedTimeOfDay == null ? 220.0 : 0;
+            if (ks.IsKeyPressed(Keys.F5)) Perspective = (CameraPerspective) (((int) Perspective + 1) % 3);
 
             HandleBreaking(world, ms);
             if (ms.IsButtonDown(MouseButton.Right) && !ms.WasButtonDown(MouseButton.Right) && !TryActivateBlock(world))
                 PlaceBlock(world);
 
-            Camera.Update();
+            UpdateCamera(world);
+        }
+
+        /// <summary>Drives the camera from the player each frame. First-person follows the eye directly; the
+        /// third-person views trail (or face) the eye, pulled in if a block would clip the line of sight. The
+        /// local player's walk cycle is advanced here too so its limbs swing when its body is visible.</summary>
+        private static void UpdateCamera(WorldBase world)
+        {
+            var walkDt = (float) _walkTimer.Elapsed.TotalSeconds;
+            _walkTimer.Restart();
+            var speed = (PlayerEntity.Position.Xz - PlayerEntity.PrevPosition.Xz).Length / PlayerPhysics.TickSeconds;
+            PlayerEntity.AdvanceWalkCycle(speed, walkDt);
+
+            if (Perspective == CameraPerspective.FirstPerson)
+            {
+                Camera.Update();
+                return;
+            }
+
+            var eye = PlayerEntity.RenderPosition + PlayerEntity.EyeOffset;
+            var lookForward = Perspective == CameraPerspective.ThirdFront ? -PlayerEntity.Forward : PlayerEntity.Forward;
+            var distance = ThirdPersonDistance;
+            var hit = world.BlockRaytrace(eye, -lookForward, ThirdPersonDistance);
+            if (hit != null) distance = MathF.Max(0f, hit.Distance - ThirdPersonClearance);
+            Camera.UpdateThirdPerson(eye, lookForward, distance);
         }
 
         /// <summary>One fixed 20 tps simulation step (one walk physics step, or one fly move). Records
@@ -173,10 +231,40 @@ namespace MinecraftClone3API.Entities
             if (wish.LengthSquared > 1f) wish = wish.Normalized();
 
             var jump = Keybinds.IsDown(ks, GameAction.Jump);
-            var sprint = Keybinds.IsDown(ks, GameAction.Sprint) && inputZ > 0;
 
-            PlayerPhysics.Tick(world, PlayerEntity, wish, jump, sprint);
+            _horizontalCollision = PlayerPhysics.Tick(world, PlayerEntity, wish, jump, _sprinting);
         }
+
+        /// <summary>Sprint state machine (Minecraft-style). Engages on a held Sprint key or a Forward
+        /// double-tap while pushing forward and (in survival) not too hungry; stays engaged on held Forward
+        /// alone until Forward is released, hunger drops, or a wall is hit. Also eases the sprint FOV. Idle
+        /// while flying — creative free-flight has its own fast modifier.</summary>
+        private static void UpdateSprint(KeyboardState ks)
+        {
+            var forwardDown = Keybinds.IsDown(ks, GameAction.Forward);
+
+            if (Keybinds.IsPressed(ks, GameAction.Forward))
+            {
+                if (_forwardTapTimer.Elapsed.TotalSeconds < ForwardDoubleTapSeconds && forwardDown && CanSprint())
+                    _sprinting = true;
+                _forwardTapTimer.Restart();
+            }
+
+            if (Keybinds.IsDown(ks, GameAction.Sprint) && forwardDown && CanSprint())
+                _sprinting = true;
+
+            if (!forwardDown || !CanSprint() || _horizontalCollision || PlayerEntity.Flying)
+                _sprinting = false;
+
+            var dt = (float) _fovTimer.Elapsed.TotalSeconds;
+            _fovTimer.Restart();
+            var target = _sprinting ? SprintFovScale : 1f;
+            FovScale += (target - FovScale) * MathF.Min(1f, dt * 12f);
+        }
+
+        // Survival can't sprint while too hungry (Minecraft: hunger must be above 6); creative always can.
+        private static bool CanSprint()
+            => PlayerEntity.GameMode != GameMode.Survival || PlayerEntity.Hunger > SprintHungerThreshold;
 
         private static void BreakBlock(WorldBase world)
         {
@@ -195,6 +283,20 @@ namespace MinecraftClone3API.Entities
             if (dt > 0.25f) dt = 0.25f;
 
             var leftDown = ms.IsButtonDown(MouseButton.Left);
+
+            // A fresh left-press on a creature (nearer than any block) is a melee attack; swallow the rest of
+            // this hold so it doesn't also break/mine. PickEntity already clamps to be nearer than the block.
+            if (leftDown && !ms.WasButtonDown(MouseButton.Left) && world is WorldClient attackClient)
+            {
+                var entity = PickEntity(attackClient);
+                if (entity != null && entity.Type != null && entity.Type.Kind == EntityKind.Creature)
+                {
+                    attackClient.SendAttackEntity(entity.EntityId);
+                    _attacking = true;
+                }
+            }
+            if (!leftDown) _attacking = false;
+            if (_attacking) { _miningTarget = null; _miningProgress = 0f; return; }
 
             if (PlayerEntity.GameMode == GameMode.Creative)
             {

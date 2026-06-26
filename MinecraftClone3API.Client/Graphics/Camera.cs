@@ -47,6 +47,18 @@ namespace MinecraftClone3API.Graphics
             View = Matrix4.LookAt(Position, Position + Forward, Vector3.UnitY);
         }
 
+        /// <summary>Places the camera for a third-person view: it looks along <paramref name="lookForward"/>
+        /// (the player's look vector for the over-the-shoulder view, its reverse for the front view) and is
+        /// pulled back from <paramref name="eye"/> by <paramref name="distance"/> (already clamped against
+        /// blocks by the caller).</summary>
+        public void UpdateThirdPerson(Vector3 eye, Vector3 lookForward, float distance)
+        {
+            Forward = lookForward;
+            Right = Vector3.Cross(Forward, Vector3.UnitY).Normalized();
+            Position = eye - lookForward * distance;
+            View = Matrix4.LookAt(Position, Position + Forward, Vector3.UnitY);
+        }
+
         public void Rotate(float pitch, float yaw)
         {
             Pitch += pitch;

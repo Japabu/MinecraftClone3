@@ -25,6 +25,10 @@ namespace MinecraftClone3API.Blocks
         public double WorldTimeSeconds => TickCount * SecondsPerTick;
 
         public static readonly TimeSpan ChunkLifetime = TimeSpan.FromSeconds(30);
+        // Flush still-loaded dirty chunks this often so a crash loses at most one interval of edits, not the
+        // whole session (chunks otherwise persist only on unload/shutdown). Runs on the unload thread.
+        public static readonly TimeSpan AutosaveInterval = TimeSpan.FromSeconds(30);
+        private DateTime _lastAutosave = DateTime.Now;
         private readonly Dictionary<Vector3i, CachedChunk> _chunksReadyToAdd = new Dictionary<Vector3i, CachedChunk>();
         private readonly HashSet<Vector3i> _chunksReadyToRemove = new HashSet<Vector3i>();
 
@@ -156,8 +160,11 @@ namespace MinecraftClone3API.Blocks
         public readonly HashSet<Entity> Entities = new HashSet<Entity>();
 
         // Entity-id allocator shared by players (ServerNetwork.Login) and world entities (SpawnEntity), so
-        // every networked entity has a unique id. Entities are transient, so ids are session-local.
-        private int _nextEntityId = 1;
+        // every networked entity has a unique id. Static so ids stay unique ACROSS dimensions (each dimension is
+        // its own WorldServer; a per-instance counter would collide a Nether mob's id with an Overworld one).
+        // All NextEntityId calls run on the single server tick thread, so a plain increment is safe. Entities are
+        // transient, so ids are process-local and reset on restart.
+        private static int _nextEntityId = 1;
 
         // Spawns/despawns the network layer hasn't broadcast yet, drained each Pump by ServerNetwork. Mob/item
         // entities are server-authoritative: the world owns their lifetime, the network only relays it.
@@ -177,6 +184,10 @@ namespace MinecraftClone3API.Blocks
 
         // Ambient creature spawning: every so often try to drop a small group near a random player.
         private readonly Random _spawnRng = new Random();
+
+        /// <summary>Shared server-side RNG for spawn jitter and loot rolls (combat). Touched only from the
+        /// tick/network threads, like the drop-scatter it already drives.</summary>
+        public Random SpawnRng => _spawnRng;
         private int _spawnCooldown = SpawnIntervalTicks;
         private const int SpawnIntervalTicks = 20 * 8;   // ~8 s between spawn attempts
         private const int CreatureCap = 40;              // soft cap on live creatures
@@ -190,20 +201,30 @@ namespace MinecraftClone3API.Blocks
         private volatile int _stageQueueDepth;
         public int StageQueueDepth => _stageQueueDepth;
 
-        private const string OverworldDimensionKey = "Vanilla:Overworld";
+        public const string OverworldDimensionKey = "Vanilla:Overworld";
 
         public Vector3 SpawnPosition => _generator.Spawn().ToVector3();
 
         public readonly string WorldDir;
 
-        public WorldServer(long seed, string worldDir)
+        /// <summary>The world seed and the dimension this server simulates. Each dimension is a separate
+        /// <see cref="WorldServer"/> over its own directory; <see cref="Seed"/> lets the network layer spin up
+        /// a sibling dimension (the Nether) with the same seed.</summary>
+        public readonly long Seed;
+        public readonly string DimensionKey;
+
+        public WorldServer(long seed, string worldDir) : this(seed, worldDir, OverworldDimensionKey) { }
+
+        public WorldServer(long seed, string worldDir, string dimensionKey)
         {
+            Seed = seed;
+            DimensionKey = dimensionKey;
             WorldDir = worldDir;
             _serializer = new WorldSerializer(worldDir);
 
-            _generator = GameRegistry.TryGetDimension(OverworldDimensionKey, out var dimension)
+            _generator = GameRegistry.TryGetDimension(dimensionKey, out var dimension)
                 ? dimension.CreateGenerator(seed)
-                : CreateFallbackGenerator();
+                : CreateFallbackGenerator(dimensionKey);
 
             _loadSort = (v0, v1) =>
                 (int) (v0.ToVector3() - _loadSortOrigin.ToVector3()).LengthSquared -
@@ -220,14 +241,19 @@ namespace MinecraftClone3API.Blocks
             _lodThread.Start();
         }
 
-        private static IChunkGenerator CreateFallbackGenerator()
+        private static IChunkGenerator CreateFallbackGenerator(string dimensionKey)
         {
-            Logger.Error($"Dimension \"{OverworldDimensionKey}\" is not registered — generating an empty " +
+            Logger.Error($"Dimension \"{dimensionKey}\" is not registered — generating an empty " +
                          "world. Is the Vanilla plugin loaded?");
             return new FlatChunkGenerator();
         }
 
         public int ChunksLoadedCount => LoadedChunks.Count;
+
+        /// <summary>True once the load thread has generated (or loaded) the chunk at <paramref name="chunkPos"/>,
+        /// including all-air chunks that are never published to <see cref="WorldBase.LoadedChunks"/>. Used by the
+        /// portal transfer to know the destination column is ready before building into it.</summary>
+        public bool IsChunkGenerated(Vector3i chunkPos) => _populatedChunks.ContainsKey(chunkPos);
 
         public override void SetBlock(int x, int y, int z, Block block, bool update, bool lowPriority)
         {
@@ -443,6 +469,56 @@ namespace MinecraftClone3API.Blocks
         /// <summary>Convenience: spawns one entity of the given registered type.</summary>
         public Entity SpawnEntity(EntityType type, Vector3 position) => SpawnEntity(type.CreateEntity(), position);
 
+        // Reused on the tick thread to collect a chunk's entities before saving + despawning them.
+        private readonly List<Entity> _entitySaveScratch = new List<Entity>();
+
+        /// <summary>Tick-thread: deserialize and spawn a chunk's saved entities as it is published. Each record
+        /// is length-prefixed, so one unknown/corrupt entity is dropped without losing the rest.</summary>
+        private void SpawnSavedEntities(byte[] bytes)
+        {
+            if (bytes == null || bytes.Length == 0) return;
+
+            try
+            {
+                using (var ms = new System.IO.MemoryStream(bytes))
+                using (var reader = new System.IO.BinaryReader(ms))
+                {
+                    var count = reader.ReadInt32();
+                    for (var i = 0; i < count; i++)
+                    {
+                        var entity = EntitySerializer.Read(reader);
+                        if (entity != null) SpawnEntity(entity, entity.Position);
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Logger.Error($"Failed to load entities for a chunk, dropping them: {e.Message}");
+            }
+        }
+
+        /// <summary>Tick-thread: persist the entities currently in <paramref name="chunkPos"/> (so they reload
+        /// with the chunk) and remove them from the live world. An entity belongs to the chunk containing its
+        /// position.</summary>
+        private void SaveAndDespawnChunkEntities(Vector3i chunkPos)
+        {
+            _entitySaveScratch.Clear();
+            foreach (var entity in Entities)
+                if (ChunkInWorld(FloorToInt(entity.Position)) == chunkPos)
+                    _entitySaveScratch.Add(entity);
+
+            _serializer.SaveChunkEntities(chunkPos, _entitySaveScratch);
+
+            foreach (var entity in _entitySaveScratch)
+            {
+                Entities.Remove(entity);
+                PendingDespawns.Enqueue(entity.EntityId);
+            }
+        }
+
+        private static Vector3i FloorToInt(Vector3 v) => new Vector3i(
+            (int) MathF.Floor(v.X), (int) MathF.Floor(v.Y), (int) MathF.Floor(v.Z));
+
         /// <summary>Finds a live world entity by id (used to resolve an entity-targeted item use), or null.
         /// Tick-thread only.</summary>
         public Entity FindEntity(int entityId)
@@ -516,6 +592,7 @@ namespace MinecraftClone3API.Blocks
             {
                 foreach (var chunkPos in _chunksReadyToRemove)
                 {
+                    SaveAndDespawnChunkEntities(chunkPos);
                     if (LoadedChunks.TryRemove(chunkPos, out _))
                         _populatedChunks.TryRemove(chunkPos, out _);
                     UnregisterTickingBlocks(chunkPos);
@@ -538,6 +615,7 @@ namespace MinecraftClone3API.Blocks
                         var chunk = new Chunk(entry.Value);
                         LoadedChunks[entry.Key] = chunk;
                         RegisterTickingBlocks(entry.Key, chunk);
+                        SpawnSavedEntities(entry.Value.EntityBytes);
                     }
                     _populatedChunks[entry.Key] = 0;
                     ChunkTracer.Published(entry.Key);
@@ -660,6 +738,21 @@ namespace MinecraftClone3API.Blocks
             Logger.Info("Saving world...");
             foreach (var entry in LoadedChunks)
                 _serializer.SaveChunk(entry.Value);
+
+            // Threads are stopped, so Entities is quiescent: bucket every live entity by its owning chunk and
+            // persist each chunk's set (chunks that lost all their entities get an empty save to clear them).
+            var byChunk = new Dictionary<Vector3i, List<Entity>>();
+            foreach (var entity in Entities)
+            {
+                var chunkPos = ChunkInWorld(FloorToInt(entity.Position));
+                if (!byChunk.TryGetValue(chunkPos, out var list))
+                    byChunk[chunkPos] = list = new List<Entity>();
+                list.Add(entity);
+            }
+            var empty = new List<Entity>();
+            foreach (var entry in LoadedChunks)
+                _serializer.SaveChunkEntities(entry.Key,
+                    byChunk.TryGetValue(entry.Key, out var list) ? list : empty);
             Logger.Info("World saved");
         }
 
@@ -709,6 +802,13 @@ namespace MinecraftClone3API.Blocks
                         if (!_chunksReadyToRemove.Add(chunk.Position)) continue;
 
                     _serializer.SaveChunk(chunk);
+                }
+
+                if (now - _lastAutosave > AutosaveInterval)
+                {
+                    _lastAutosave = now;
+                    foreach (var pair in LoadedChunks)
+                        _serializer.SaveChunk(pair.Value);
                 }
 
                 Profiler.AddUnloadAlloc(GC.GetAllocatedBytesForCurrentThread() - allocStart);
@@ -1210,6 +1310,9 @@ namespace MinecraftClone3API.Blocks
             {
                 Profiler.IncFromDisk();
                 ChunkTracer.Loaded(position, ChunkSource.Disk);
+                // Read the chunk's saved entities here (off the tick thread); the tick-thread publish drain
+                // deserializes + spawns them.
+                chunk.EntityBytes = _serializer.LoadChunkEntities(position);
                 return chunk;
             }
 

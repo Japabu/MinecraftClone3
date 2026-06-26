@@ -72,6 +72,22 @@ distance sort, dedup); resident chunk count grows (tune `TerrainRadius`/`ChunkLi
 **Spawn** comes from `NoiseChunkGenerator.Spawn()` (spiral out from origin for the first land column);
 `ServerNetwork` caches it and seeds `LoginAccept`.
 
+**Dimensions beyond the Overworld.** A `Dimension` is just a `RegistryEntry` whose `CreateGenerator(seed)`
+returns any `IChunkGenerator` — it need not be the `NoiseChunkGenerator`. Vanilla's `NetherDimension`
+(`VanillaPlugin/WorldGen/`) wires a bespoke `NetherChunkGenerator`: a 128-tall netherrack slab between a
+bedrock floor (y 0) and ceiling (y 127), hollowed by 3D-noise caverns, with a lava sea below `LavaLevel` (31),
+soul-sand cavern floors, and glowstone clusters on cavern ceilings. It is pure/thread-safe like the noise
+generator (read-only noise + per-cell decisions, no neighbour reads — decoration samples the pure `BaseAt`).
+Crucially it **never seeds sky light**, so the sealed slab stays dark (lit only by lava/glowstone/portals);
+the bedrock shell stops the sky-light scan from leaking in. Each dimension is its own `WorldServer`
+(see [architecture.md](architecture.md)); the Nether spins up lazily on first portal travel.
+
+`Dimension` also carries **generic client visuals** — `HasSky`, `FogColor`, `AmbientLight` — that the engine
+ships to the client on a dimension change (the engine knows no dimension specifics; content sets these).
+`HasSky=false` drops the sun/day-night/stars and paints a flat `FogColor`; `AmbientLight` is a minimum light
+flooded everywhere so a sunless dimension isn't pitch black (see [rendering.md](rendering.md)). The Nether sets
+a dark red fog + a dim red ambient; the Overworld keeps the defaults (sky on, no overrides).
+
 **Server LOD generation.** For the distant horizon (the `LodColumn`/`LodColumnStore` data model lives in
 [world-model.md](world-model.md)), the server fills a region surface-only — no full 16³ chunk, no carving, no
 light. `NoiseChunkGenerator.GetLodColumn` computes one column's topmost visible surface (land `TopBlock` /
