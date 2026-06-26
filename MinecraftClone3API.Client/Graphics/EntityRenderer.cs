@@ -427,8 +427,9 @@ namespace MinecraftClone3API.Graphics
 
             mesh = new VertexArrayObject();
             // Mesh the block's model centred at the origin in the void icon world (all faces, full light), the
-            // same geometry the inventory icon uses; the entity shader replaces the baked light with uLight.
-            ChunkMesher.AddBlockToVao(IconWorld.Instance, Vector3i.Zero, 0, 0, 0, block, mesh, mesh);
+            // same geometry the inventory icon uses; the entity shader replaces the baked light with uLight. The
+            // -0.5 origin offset re-centres the [0,1] cell mesh so the held/dropped/icon poses spin about it.
+            ChunkMesher.AddBlockToVao(IconWorld.Instance, Vector3i.Zero, 0, 0, 0, block, mesh, mesh, new Vector3(-0.5f));
             mesh.Upload();
             ItemMeshes[blockId] = mesh;
             return mesh;
@@ -475,7 +476,7 @@ namespace MinecraftClone3API.Graphics
         // blocks around them.
         private static float Brightness(float level) => MathF.Pow(0.8f, MathF.Max(15f - level, 0f));
 
-        private static int BlockCoord(float v) => (int) MathF.Floor(v + 0.5f);
+        private static int BlockCoord(float v) => (int) MathF.Floor(v);
 
         // Builds the six textured quads of one box into the VAO. Box coords are in blocks (relative to the part
         // pivot); UVs come from the classic Minecraft box-unwrap, normalized by the texture array's layer size.
