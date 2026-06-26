@@ -60,9 +60,16 @@ namespace MinecraftClone3API.Entities
         /// wool state), or null for types that need none.</summary>
         public readonly Func<EntityData> DataFactory;
 
+        /// <summary>Melee damage (half-hearts) a hostile creature deals on contact; 0 for passive animals.</summary>
+        public readonly float AttackDamage;
+
+        /// <summary>What this creature drops when killed, or null for none.</summary>
+        public readonly LootTable Loot;
+
         public EntityType(string name, EntityKind kind, float width, float height, float maxHealth,
             float moveSpeed, bool hostile, string texturePath, string modelPath,
-            string overlayModelPath = null, string overlayTexturePath = null, Func<EntityData> dataFactory = null)
+            string overlayModelPath = null, string overlayTexturePath = null, Func<EntityData> dataFactory = null,
+            float attackDamage = 0f, LootTable loot = null)
             : base(name)
         {
             Kind = kind;
@@ -76,6 +83,8 @@ namespace MinecraftClone3API.Entities
             OverlayModelPath = overlayModelPath;
             OverlayTexturePath = overlayTexturePath;
             DataFactory = dataFactory;
+            AttackDamage = attackDamage;
+            Loot = loot;
         }
 
         /// <summary>Creates a server-side instance of this type (used by <c>WorldServer.SpawnEntity</c>).</summary>

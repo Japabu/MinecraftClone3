@@ -188,6 +188,17 @@ namespace MinecraftClone3API.Networking
         public override void Read(BinaryReader reader) => EntityId = reader.ReadInt32();
     }
 
+    /// <summary>Client → server: left-clicked an entity to attack it. The server resolves the target from its
+    /// own entity list and applies the held weapon's damage; mob health/death are server-authoritative.</summary>
+    public class AttackEntityRequestPacket : Packet
+    {
+        public int EntityId;
+
+        public override PacketId Id => PacketId.AttackEntityRequest;
+        public override void Write(BinaryWriter writer) => writer.Write(EntityId);
+        public override void Read(BinaryReader reader) => EntityId = reader.ReadInt32();
+    }
+
     /// <summary>Server → client: an entity's <see cref="EntityData"/> changed (e.g. a sheep was sheared), so the
     /// client replaces its copy. The data is type-tagged, so any registered subclass round-trips.</summary>
     public class EntityDataPacket : Packet

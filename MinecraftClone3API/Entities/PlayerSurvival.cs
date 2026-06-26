@@ -70,6 +70,20 @@ namespace MinecraftClone3API.Entities
             if (damage > 0) p.Health -= damage;
         }
 
+        /// <summary>Applies melee contact damage from a hostile mob (the armor-reducible damage path). Survival
+        /// only; ignored when already dead. Worn armor reduces the damage (Minecraft: each defense point cuts
+        /// 4%, so 20 points = −80%). Player knockback is omitted because the client owns player physics.</summary>
+        public static void ApplyContactDamage(EntityPlayer p, float amount)
+        {
+            if (p.GameMode != GameMode.Survival || p.Health <= 0f || amount <= 0f) return;
+
+            var defense = p.Inventory != null ? p.Inventory.ArmorDefense() : 0;
+            if (defense > 0)
+                amount *= 1f - MathF.Min(20, defense) / 25f;
+
+            p.Health -= amount;
+        }
+
         /// <summary>Eating a food item: refills hunger and adds saturation (MC: gain = nutrition · modifier · 2,
         /// capped at the new hunger level).</summary>
         public static void Eat(EntityPlayer p, float nutrition, float saturationModifier)

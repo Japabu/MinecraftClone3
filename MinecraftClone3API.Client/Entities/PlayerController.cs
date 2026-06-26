@@ -34,6 +34,9 @@ namespace MinecraftClone3API.Entities
         // wall-clock timer so mining accrues at the display rate (UpdateFrame runs per frame, not per tick).
         private static Vector3i? _miningTarget;
         private static float _miningProgress;
+        // True while a left-click that landed on a creature (an attack) is still held, so the same hold doesn't
+        // also break/mine. Cleared on release.
+        private static bool _attacking;
         private static readonly Stopwatch _frameTimer = Stopwatch.StartNew();
 
         public static void SetEntity(EntityPlayer playerEntity)
@@ -191,6 +194,20 @@ namespace MinecraftClone3API.Entities
             if (dt > 0.25f) dt = 0.25f;
 
             var leftDown = ms.IsButtonDown(MouseButton.Left);
+
+            // A fresh left-press on a creature (nearer than any block) is a melee attack; swallow the rest of
+            // this hold so it doesn't also break/mine. PickEntity already clamps to be nearer than the block.
+            if (leftDown && !ms.WasButtonDown(MouseButton.Left) && world is WorldClient attackClient)
+            {
+                var entity = PickEntity(attackClient);
+                if (entity != null && entity.Type != null && entity.Type.Kind == EntityKind.Creature)
+                {
+                    attackClient.SendAttackEntity(entity.EntityId);
+                    _attacking = true;
+                }
+            }
+            if (!leftDown) _attacking = false;
+            if (_attacking) { _miningTarget = null; _miningProgress = 0f; return; }
 
             if (PlayerEntity.GameMode == GameMode.Creative)
             {

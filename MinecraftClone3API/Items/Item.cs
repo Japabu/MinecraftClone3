@@ -51,9 +51,23 @@ namespace MinecraftClone3API.Items
         /// food). False for reusable items like spawn eggs.</summary>
         public virtual bool ConsumesOnUse => false;
 
+        /// <summary>Whether <see cref="OnUseServer"/> changes the inventory without consuming (e.g. equipping
+        /// armor swaps it into an armor slot), so the server re-syncs the inventory to the client afterwards.</summary>
+        public virtual bool RefreshInventoryAfterUse => false;
+
+        /// <summary>The armor slot this item equips into when right-clicked, or null for non-armor.</summary>
+        public virtual ArmorSlot? ArmorSlot => null;
+
+        /// <summary>Armor defense points (half-armor-icons) this piece grants while worn; 0 for non-armor.</summary>
+        public virtual int ArmorDefense => 0;
+
         /// <summary>Server-side gate deciding whether <see cref="OnUseServer"/> may run for this player right now
         /// (e.g. food only when in survival with hunger to refill). True by default.</summary>
         public virtual bool CanUseServer(EntityPlayer player) => true;
+
+        /// <summary>Melee damage (in half-hearts) dealt when left-clicking an entity while holding this item.
+        /// Defaults to <see cref="EntityCombat.BaseHandDamage"/>; swords and other weapons raise it.</summary>
+        public virtual float AttackDamage => EntityCombat.BaseHandDamage;
 
         /// <summary>The tool category this item acts as, or <see cref="ToolType.None"/> for non-tools. A held
         /// tool mines a block faster when this matches the block's <see cref="Block.PreferredTool"/>.</summary>

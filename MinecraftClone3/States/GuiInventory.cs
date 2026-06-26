@@ -12,10 +12,10 @@ namespace MinecraftClone3.States
 {
     /// <summary>
     /// The survival player inventory (opened with the Inventory key in survival): the 2×2 crafting grid + result,
-    /// the 3×9 main inventory, and the hotbar, over the official <c>container/inventory.png</c>. The 2×2 grid is
-    /// scratch (returns to the inventory on close). Full vanilla slot interaction (pick/place/split/drag,
-    /// shift-click quick-move) comes from <see cref="ContainerScreen"/>. Armor / offhand / the 3D player preview
-    /// are not modelled, so those regions of the background are inert.
+    /// the 3×9 main inventory, the hotbar, and the four armor slots, over the official
+    /// <c>container/inventory.png</c>. The 2×2 grid is scratch (returns to the inventory on close). Full vanilla
+    /// slot interaction (pick/place/split/drag, shift-click quick-move) comes from <see cref="ContainerScreen"/>.
+    /// The offhand slot and the 3D player preview are not modelled, so those regions of the background are inert.
     /// </summary>
     internal class GuiInventory : ContainerScreen
     {
@@ -29,6 +29,8 @@ namespace MinecraftClone3.States
         private const int InvX = 8;
         private const int InvY = 84;
         private const int HotbarY = 142;
+        private const int ArmorX = 8;
+        private const int ArmorY = 8;
         private const int SlotStride = 18;
         private const int SlotSize = 16;
         private const int Scale = 2;
@@ -36,6 +38,7 @@ namespace MinecraftClone3.States
         private const int GridGroup = 1;
         private const int MainGroup = 2;
         private const int HotbarGroup = 3;
+        private const int ArmorGroup = 4;
 
         private readonly WorldClient _world;
         private readonly CraftingState _crafting;
@@ -79,6 +82,11 @@ namespace MinecraftClone3.States
 
             for (var col = 0; col < 9; col++)
                 AddInventorySlot(col, InvX + col * SlotStride, HotbarY, HotbarGroup);
+
+            // Four stacked armor slots (helmet→boots), each gated to its piece type. The wire index is offset
+            // by ArmorActionBase so the server routes it to Inventory.Armor instead of the main slot array.
+            for (var i = 0; i < Inventory.ArmorSize; i++)
+                AddArmorSlot(i, ArmorX, ArmorY + i * SlotStride, (ArmorSlot) i);
         }
 
         private void AddInventorySlot(int index, int texX, int texY, int group)
@@ -88,6 +96,19 @@ namespace MinecraftClone3.States
                 _world.Inventory.Slots[index] = v;
                 _world.SendInventoryAction(index, v);
             }) { Group = group });
+        }
+
+        private void AddArmorSlot(int index, int texX, int texY, ArmorSlot slot)
+        {
+            _slots.Add(new Slot(SlotRect(texX, texY), () => _world.Inventory.Armor[index], v =>
+            {
+                _world.Inventory.Armor[index] = v;
+                _world.SendInventoryAction(Inventory.ArmorActionBase + index, v);
+            })
+            {
+                Group = ArmorGroup,
+                CanAccept = stack => stack.Item?.ArmorSlot == slot
+            });
         }
 
         protected override void OnShiftClick(Slot slot)
@@ -102,9 +123,9 @@ namespace MinecraftClone3.States
                 return;
             }
 
-            // Grid → inventory; within the inventory, main ↔ hotbar (vanilla quick-move).
+            // Grid/armor → inventory; within the inventory, main ↔ hotbar (vanilla quick-move).
             IReadOnlyList<Slot> targets;
-            if (slot.Group == GridGroup)
+            if (slot.Group == GridGroup || slot.Group == ArmorGroup)
             {
                 var inv = new List<Slot>(SlotsInGroup(MainGroup));
                 inv.AddRange(SlotsInGroup(HotbarGroup));

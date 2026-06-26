@@ -220,6 +220,11 @@ namespace MinecraftClone3API.Client.GUI
                 : item.WithCount(1);
         }
 
+        /// <summary>Whether <paramref name="stack"/> may be placed into <paramref name="slot"/> (a slot's
+        /// optional <see cref="Slot.CanAccept"/> gate, e.g. armor slots). An empty stack is always allowed.</summary>
+        private static bool Accepts(Slot slot, ItemStack stack)
+            => slot.CanAccept == null || stack.IsEmpty || slot.CanAccept(stack);
+
         private void LeftClick(Slot slot)
         {
             var s = slot.Get();
@@ -230,6 +235,7 @@ namespace MinecraftClone3API.Client.GUI
             }
             else if (s.IsEmpty)
             {
+                if (!Accepts(slot, Cursor)) return;
                 slot.Set(Cursor);
                 Cursor = ItemStack.Empty;
             }
@@ -242,6 +248,7 @@ namespace MinecraftClone3API.Client.GUI
             }
             else
             {
+                if (!Accepts(slot, Cursor)) return;
                 slot.Set(Cursor);
                 Cursor = s;
             }
@@ -259,6 +266,7 @@ namespace MinecraftClone3API.Client.GUI
             }
             else if (s.IsEmpty)
             {
+                if (!Accepts(slot, Cursor)) return;
                 slot.Set(Cursor.WithCount(1));
                 Cursor = Dec(Cursor);
             }
@@ -331,6 +339,7 @@ namespace MinecraftClone3API.Client.GUI
         private bool IsDragEligible(Slot slot)
         {
             if (slot.Set == null || slot.IsOutput || slot.IsSource) return false;
+            if (!Accepts(slot, Cursor)) return false;
             var s = slot.Get();
             return s.IsEmpty || (s.SameItem(Cursor) && s.Count < MaxStack(s));
         }
@@ -354,7 +363,7 @@ namespace MinecraftClone3API.Client.GUI
             for (var i = 0; i < targets.Count; i++)
             {
                 var t = targets[i];
-                if (t.Set == null || t.IsOutput || t.IsSource) continue;
+                if (t.Set == null || t.IsOutput || t.IsSource || !Accepts(t, stack)) continue;
                 var d = t.Get();
                 if (d.IsEmpty || !d.SameItem(stack)) continue;
                 var cap = MaxStack(d) - d.Count;
@@ -368,7 +377,7 @@ namespace MinecraftClone3API.Client.GUI
             for (var i = 0; i < targets.Count; i++)
             {
                 var t = targets[i];
-                if (t.Set == null || t.IsOutput || t.IsSource) continue;
+                if (t.Set == null || t.IsOutput || t.IsSource || !Accepts(t, stack)) continue;
                 if (!t.Get().IsEmpty) continue;
                 t.Set(stack);
                 return ItemStack.Empty;

@@ -166,6 +166,10 @@ namespace MinecraftClone3API.Blocks
 
         // Ambient creature spawning: every so often try to drop a small group near a random player.
         private readonly Random _spawnRng = new Random();
+
+        /// <summary>Shared server-side RNG for spawn jitter and loot rolls (combat). Touched only from the
+        /// tick/network threads, like the drop-scatter it already drives.</summary>
+        public Random SpawnRng => _spawnRng;
         private int _spawnCooldown = SpawnIntervalTicks;
         private const int SpawnIntervalTicks = 20 * 8;   // ~8 s between spawn attempts
         private const int CreatureCap = 40;              // soft cap on live creatures

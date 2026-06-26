@@ -27,13 +27,14 @@ tolerates the server mutating the source chunk concurrently (a torn entry self-c
   S→C  BlockChanges          ChunkPos + (localIndex, blockId, light, sky)[]   (edits + block-light + sky-light)
   C→S  ChunkRelease          client dropped a chunk from its cache; clears its SentChunks entry
   C→S  PlaceBlockRequest     pos + block id (id 0 = break) + placement metadata (computed client-side)
+  C→S  AttackEntityRequest   entity id; left-clicked a creature to melee it (server applies held weapon damage)
   C→S/S→C  EntityMove         own player up; relayed to others down
   S→C  EntitySpawn/EntityDespawn   remote players appearing/leaving
   S→C  WorldTime             world clock in seconds (TickCount·SecondsPerTick); on join + ~1/s, drives day/night
   S→C  LodColumnData         Phase-2 distant horizon: one region of surface-only LOD columns (loopback: by ref;
                              TCP: GZip), streamed nearest-first BEYOND the chunk view distance (see rendering.md)
-  S→C  InventoryState        full 36-slot inventory + selected hotbar slot; sent once on login (see inventory.md)
-  C→S  InventoryAction       slot index + ItemStack; client edited a slot in the creative screen
+  S→C  InventoryState        full 36-slot inventory + 4 armor slots + selected hotbar; on login / after equip
+  C→S  InventoryAction       slot index + ItemStack; client edited a slot (index ≥ ArmorActionBase = armor slot)
   C→S  HeldSlot              selected hotbar index changed (number key / scroll wheel)
   C→S  DropItemRequest       drop the held hotbar item (Q); bool All = whole stack (Ctrl+Q)
   C→S  OpenContainer/CloseContainer   client opened/closed a container block (furnace) screen
@@ -49,10 +50,18 @@ tolerates the server mutating the source chunk concurrently (a torn entry self-c
 `ClientSession.Inventory`, persists it per player, and pushes the whole thing once via `InventoryState` on
 join. The client mutates its local replica optimistically for responsiveness and mirrors every change up:
 `InventoryAction` (a slot edit from the creative screen) and `HeldSlot` (hotbar selection). Like placement
-metadata these are trusted, not validated — this is a creative sandbox. **Dropping** is handled fully
-server-side: `DropItemRequest` makes the server decrement its own copy of the held slot, spawn an
-`EntityItem` thrown along the player's look direction, and **re-push the whole `InventoryState`** so the
-client replica matches (the only other time `InventoryState` is sent besides login).
+metadata these are trusted, not validated — this is a creative sandbox. An armor edit reuses `InventoryAction`
+with the slot index offset by `ArmorActionBase` (the server routes it to `Inventory.Armor`). **Dropping** is
+handled fully server-side: `DropItemRequest` makes the server decrement its own copy of the held slot, spawn an
+`EntityItem` thrown along the player's look direction, and **re-push the whole `InventoryState`** so the client
+replica matches. `InventoryState` is re-pushed besides login whenever the server changes the inventory itself —
+a drop, eating, or right-click-**equipping** armor (`RefreshInventoryAfterUse`).
+
+**Entity-targeted requests** (`AttackEntityRequest`, `UseItemOnEntityRequest`) name only an entity id; the
+server resolves it against its **own** `WorldServer.FindEntity` list, so a request can't act on an arbitrary or
+out-of-range entity. Attacks apply the server's authoritative held-item `AttackDamage` and run combat
+(`EntityCombat`, see [entities.md](entities.md)); mob death/despawn streams through the normal entity path, so
+neither needs a new server→client packet.
 
 **Container blocks** (a furnace) are server-authoritative too, but their state lives in the block, not the
 player inventory. When the client opens one it sends `OpenContainer` (pos); the server records it on the

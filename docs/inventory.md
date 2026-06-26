@@ -18,6 +18,14 @@ others.
   consumes-on-use, and `CanUseServer` only true in survival with hunger to refill;
   `ServerNetwork.ApplyUseRequest` checks `CanUseServer`, runs `OnUseServer` (`PlayerSurvival.Eat`), then
   decrements the slot and re-pushes `InventoryState`. Right-click already routes here, so no new packet.
+  `Item` also carries combat/equip data: `AttackDamage` (melee damage left-clicking an entity — default
+  `EntityCombat.BaseHandDamage`, see [entities.md](entities.md)); `ArmorSlot?`/`ArmorDefense` (an armor piece's
+  slot + defense points); and `RefreshInventoryAfterUse`, a sibling of `ConsumesOnUse` that re-pushes the
+  inventory after a non-consuming `OnUseServer` (used by armor's right-click-equip).
+- **Weapons & armor** — Vanilla's `ItemSword` (per-material `AttackDamage`, `ToolType.Sword`) and `ItemArmor`
+  (a `slot` + `defense`, registered per material as helmet/chestplate/leggings/boots). `ItemArmor` is usable:
+  right-clicking **equips** it — `OnUseServer` swaps the held piece into `Inventory.Armor[slot]` and re-syncs.
+  Both don't stack. Recipes load from the pack automatically (correct `MinecraftId`).
 - **`ItemBlock`** (`Items/ItemBlock.cs`) — the auto-generated item form of a block. Registering a block
   (`PluginContext.Register(Block)`) also registers an `ItemBlock` for it under the same registry key, so every
   block is an item: placeable (`GetBlock()` returns the block) and rendered as a 3D isometric icon.
@@ -30,7 +38,11 @@ others.
 - **`ItemStack`** (`Items/ItemStack.cs`) — value type: `ItemId` (ushort, `0` = empty), `Count`, `Metadata`
   (placement metadata: stair facing, glass tint). `Item` resolves the registered item. Being a struct means
   assignment is a deep copy — relied on when cloning inventories across the loopback transport.
-- **`Inventory`** — `Slots[36]` (hotbar `0..8`, main `9..35`) + `SelectedHotbar`. `Write`/`Read` serialize it.
+- **`Inventory`** — `Slots[36]` (hotbar `0..8`, main `9..35`) + `SelectedHotbar`, plus a separate `Armor[4]`
+  array (indexed by `ArmorSlot`: helmet/chest/legs/boots). Armor is kept **out of** `Slots` so existing slot
+  indexing/serialization is untouched and `Add` never auto-fills it; `Write`/`Read` append the 4 armor slots,
+  and `ArmorDefense()` sums the worn pieces' defense for survival damage reduction. A client→server armor edit
+  reuses `InventoryActionPacket` with the slot index offset by `ArmorActionBase` (100).
 
 **Minecraft identity & display names.** Each block/item carries a `MinecraftId` (e.g. `"minecraft:stone"`,
 `"minecraft:stick"`) — `BlockBasic` derives it from the model path and `ItemSimple` from the texture path;
@@ -122,6 +134,8 @@ inventory slot, a crafting result, or a creative infinite source):
   a matching cursor.
 - **Source slot** (creative item list) — left-click takes a full stack, right-click one; dropping a held stack
   onto it discards it (vanilla trash behavior).
+- **Gated slot** — a `Slot.CanAccept` predicate restricts what may be placed (the armor slots only take their
+  matching `ArmorSlot` piece). `ContainerScreen` checks it on every placement path (click, drag, shift-merge).
 
 Clicks resolve on button release so a press-move-release can become a drag; a press+release on one slot is a
 normal click. Inventory `Slot.Set` closures write the replica and call `SendInventoryAction`, so every edit
@@ -161,8 +175,9 @@ optimistically, and sends `InventoryAction` / `HeldSlot` on changes. Inputs are 
   `creative_inventory/tab_items.png`, a cursor-held stack, and the clickable hotbar row.
 - **`GuiInventory`** (overlay, **E** in survival) — the survival player inventory over
   `container/inventory.png`: a 2×2 crafting grid + result (scratch, returns to the inventory on close), the 3×9
-  main inventory, and the hotbar. Same `ContainerScreen` interaction as the crafting table; armor / offhand /
-  the 3D player preview are not modelled.
+  main inventory, the hotbar, and the four **armor slots** (each gated to its piece type via `Slot.CanAccept`,
+  written through the `ArmorActionBase` wire convention; shift-click moves a worn piece back to the inventory).
+  Same `ContainerScreen` interaction as the crafting table; the offhand slot / 3D player preview are not modelled.
 - **`GuiTooltip`** (`Client/GUI/GuiTooltip.cs`) — the item-name tooltip drawn next to the cursor when hovering
   a non-empty slot; used by both container screens.
 

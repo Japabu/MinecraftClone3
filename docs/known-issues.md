@@ -206,14 +206,16 @@ relevant permanent doc. Not a changelog.
   colour. And there's no grass-eating, so a sheared sheep stays bare. Both deferred — the wiring (a per-sheep
   `SheepData`, the overlay layer) is in place, so colour is a tint on the overlay draw + a colour field in
   `SheepData`, and regrow is a server-side timer flipping `Sheared` back.
-- **Tools — accepted limitations.** Mining tools exist (`ItemTool`: pickaxe/axe/shovel × wood/stone/iron/gold/
-  diamond) with Minecraft-exact speed/tier and the full vanilla mining formula, but **no durability** (tools
-  never wear out) and **no block drops** — a broken block vanishes, so survival can't gather resources to *craft*
-  tools yet; tools are obtainable only from the creative item picker. The block's `requires-tool` gate currently
-  only throttles mining *speed* (÷100), not drops, because there is no drop system.
+- **Tools/weapons/armor — accepted limitations.** Mining tools (`ItemTool`), swords (`ItemSword`), and armor
+  (`ItemArmor`) exist with Minecraft-exact speed/tier, attack damage, and defense points, but **none have
+  durability** (they never wear out — `ItemStack.Metadata` is free to repurpose as a damage value later). There
+  are also **no block drops** — a broken block vanishes, so survival can't gather resources to *craft* gear yet;
+  gear is obtainable only from the creative item picker (mob loot *does* drop now, via `LootTable`). The block's
+  `requires-tool` gate currently only throttles mining *speed* (÷100), not drops, because there is no drop system.
+  Armor reduces only **mob melee** damage (the armor-reducible path); fall/drown/void bypass it, matching MC.
 - **Survival MVP — accepted limitations.** Tool/hardness data is set with real Minecraft values only on
   `BlockBasic`; other block types (leaves, grass, torch, stairs, crafting table, **furnace** — its file is
   off-limits — glowstone, water) use the `1.5` hardness / no-preferred-tool defaults.
-  The survival inventory (`GuiInventory`) has the 2×2 crafting grid but **no armor, offhand, or 3D player
-  preview** (those regions of `inventory.png` are inert). Mob combat (creatures dealing/taking damage) is still
-  unwired. The breaking crack overlay assumes the deferred G-buffer attachment layout (diffuse/normal/light).
+  The survival inventory (`GuiInventory`) now has armor slots (functional), but **no offhand or 3D player
+  preview** (those regions of `inventory.png` are inert), and **armor isn't rendered on the player model**. The
+  breaking crack overlay assumes the deferred G-buffer attachment layout (diffuse/normal/light).

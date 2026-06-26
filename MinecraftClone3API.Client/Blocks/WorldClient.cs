@@ -571,6 +571,9 @@ namespace MinecraftClone3API.Client.Blocks
         public void SendUseItemOnEntity(int entityId)
             => _connection.Send(new UseItemOnEntityRequestPacket {EntityId = entityId});
 
+        public void SendAttackEntity(int entityId)
+            => _connection.Send(new AttackEntityRequestPacket {EntityId = entityId});
+
         /// <summary>Reports a completed fall (distance in blocks) so the server can apply fall damage.</summary>
         public void SendFall(float distance)
             => _connection.Send(new PlayerFallPacket {FallDistance = distance});
@@ -659,6 +662,8 @@ namespace MinecraftClone3API.Client.Blocks
                     Inventory.SelectedHotbar = inv.Inventory.SelectedHotbar;
                     for (var i = 0; i < Inventory.Size; i++)
                         Inventory.Slots[i] = inv.Inventory.Slots[i];
+                    for (var i = 0; i < Inventory.ArmorSize; i++)
+                        Inventory.Armor[i] = inv.Inventory.Armor[i];
                     break;
                 case ContainerStatePacket state:
                     ApplyContainerState(state);

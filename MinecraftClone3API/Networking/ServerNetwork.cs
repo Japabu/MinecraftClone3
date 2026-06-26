@@ -271,7 +271,12 @@ namespace MinecraftClone3API.Networking
                     Login(session, login.Name);
                     break;
                 case InventoryActionPacket action when session.LoggedIn:
-                    if (action.SlotIndex >= 0 && action.SlotIndex < Inventory.Size)
+                    if (action.SlotIndex >= Inventory.ArmorActionBase)
+                    {
+                        var armorIdx = action.SlotIndex - Inventory.ArmorActionBase;
+                        if (armorIdx < Inventory.ArmorSize) session.Inventory.Armor[armorIdx] = action.Stack;
+                    }
+                    else if (action.SlotIndex >= 0 && action.SlotIndex < Inventory.Size)
                         session.Inventory.Slots[action.SlotIndex] = action.Stack;
                     break;
                 case HeldSlotPacket held when session.LoggedIn:
@@ -298,6 +303,9 @@ namespace MinecraftClone3API.Networking
                     break;
                 case UseItemOnEntityRequestPacket useOn when session.LoggedIn:
                     ApplyUseOnEntityRequest(session, useOn);
+                    break;
+                case AttackEntityRequestPacket attack when session.LoggedIn:
+                    ApplyAttackRequest(session, attack);
                     break;
                 case PlayerFallPacket fall when session.LoggedIn:
                     PlayerSurvival.ApplyFallDamage(session.Player, fall.FallDistance);
@@ -409,7 +417,10 @@ namespace MinecraftClone3API.Networking
             session.EntityId = _world.NextEntityId();
             session.PlayerName = name ?? "";
             session.Player = new EntityPlayer
-                {Position = SpawnPosition, LastTickPosition = SpawnPosition, EntityId = session.EntityId};
+            {
+                Position = SpawnPosition, LastTickPosition = SpawnPosition, EntityId = session.EntityId,
+                Inventory = session.Inventory
+            };
             session.LoggedIn = true;
             _world.AddPlayer(session.Player);
 
@@ -504,6 +515,8 @@ namespace MinecraftClone3API.Networking
                     held.Count - 1 <= 0 ? ItemStack.Empty : held.WithCount(held.Count - 1);
                 session.Connection.Send(new InventoryStatePacket {Inventory = session.Inventory});
             }
+            else if (item.RefreshInventoryAfterUse)
+                session.Connection.Send(new InventoryStatePacket {Inventory = session.Inventory});
         }
 
         /// <summary>Runs the held item's server-side action against the targeted entity (shears on a sheep). The
@@ -518,6 +531,19 @@ namespace MinecraftClone3API.Networking
 
             item.OnUseOnEntity(_world, session.Player, target);
             Broadcast(new EntityDataPacket {EntityId = target.EntityId, Data = target.Data}, null);
+        }
+
+        /// <summary>Applies a melee attack against a creature: the target is resolved from the server's own
+        /// entity list (the request only names an id, so it can't act on an arbitrary one), and damage comes
+        /// from the player's authoritative held item. Death (loot + despawn) is handled by
+        /// <see cref="EntityCombat"/>; the resulting despawn already streams to clients.</summary>
+        private void ApplyAttackRequest(ClientSession session, AttackEntityRequestPacket attack)
+        {
+            if (!(_world.FindEntity(attack.EntityId) is EntityCreature target)) return;
+
+            var held = session.Inventory.SelectedItem.Item;
+            var damage = held?.AttackDamage ?? EntityCombat.BaseHandDamage;
+            EntityCombat.DamageEntity(_world, target, damage, session.Player.Position);
         }
 
         /// <summary>Drops the player's held hotbar item (one, or the whole stack on Ctrl+Q): decrements the
