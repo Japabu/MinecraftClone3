@@ -22,6 +22,12 @@ namespace VanillaPlugin
         {
         }
 
+        private static readonly string[] StainedGlassColors =
+        {
+            "white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
+            "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black"
+        };
+
         public void Load(PluginContext context)
         {
             // Hardness, preferred tool, and harvest tier match Minecraft (drive survival mining time); bedrock
@@ -53,6 +59,11 @@ namespace VanillaPlugin
             context.Register(new BlockFurnace());
             context.Register(new BlockGlowstone());
             context.Register(new BlockBasic("WhiteWool", "minecraft:block/white_wool", true));
+            context.Register(new BlockGlass());
+
+            // One block per Minecraft dye colour; each auto-gets a creative item via its ItemBlock.
+            foreach (var color in StainedGlassColors)
+                context.Register(new BlockStainedGlass(color));
 
             // Nether content.
             context.Register(new BlockBasic("Netherrack", "minecraft:block/netherrack", true));
@@ -60,10 +71,6 @@ namespace VanillaPlugin
             context.Register(new BlockBasic("NetherQuartzOre", "minecraft:block/nether_quartz_ore", true));
             context.Register(new BlockLava());
             context.Register(new BlockNetherPortal());
-            // BlockGlass stays disabled: this resource pack's block/glass.json stores textures.all as an
-            // object, which BlockModel.Parse can't read (the reason it was never enabled).
-            //context.Register(new BlockGlass());
-            //context.Register(new BlockTintedGlass());
 
             // Standalone (non-placeable) items, rendered from their 2D resource-pack sprites.
             context.Register(new ItemSimple("Stick", "minecraft/textures/item/stick.png"));

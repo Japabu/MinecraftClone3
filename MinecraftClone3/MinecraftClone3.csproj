@@ -22,7 +22,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\MinecraftClone3API\MinecraftClone3API.csproj" />
+    <ProjectReference Include="..\MinecraftClone3API.Client\MinecraftClone3API.Client.csproj" />
     <!-- Build VanillaPlugin before us, but don't link or copy its assembly into our root;
          CopyVanillaPlugin assembles it into Plugins\VanillaPlugin\ instead. -->
     <ProjectReference Include="..\VanillaPlugin\VanillaPlugin.csproj"

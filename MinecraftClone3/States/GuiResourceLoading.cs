@@ -37,9 +37,9 @@ namespace MinecraftClone3.States
             EntityRenderer.Load();
             ChunkBorderRenderer.Load();
 
-            _background = ResourceReader.ReadTexture("System/Textures/Gui/ResourceLoadingBackground.png");
-            _progressBar = ResourceReader.ReadTexture("System/Textures/Gui/Progressbar.png");
-            _progressBarFull = ResourceReader.ReadTexture("System/Textures/Gui/ProgressbarFull.png");
+            _background = GlResources.ReadTexture("System/Textures/Gui/ResourceLoadingBackground.png");
+            _progressBar = GlResources.ReadTexture("System/Textures/Gui/Progressbar.png");
+            _progressBarFull = GlResources.ReadTexture("System/Textures/Gui/ProgressbarFull.png");
 
             Start(false);
         }
@@ -111,11 +111,16 @@ namespace MinecraftClone3.States
                         _text = $"{I18N.Get(state)} {plugin} ({_progress}%)";
                         Logger.Debug($"{I18N.GetOrdinal(state)} {plugin} ({_progress}%)");
                     });
+
+                // Parse every registered block's model/blockstate from the resource pack now (client only —
+                // the headless server skips this and so loads no render assets). Blocks only declared their
+                // model path during registration; this resolves them and registers their textures into the
+                // CPU arrays, which the upload below bakes to the GPU.
+                GameRegistry.LoadBlockModels();
             }
 
-            // Blocks load their models/textures in their constructors, which run while plugins
-            // register them in LoadPlugins (Load). The GPU texture arrays must therefore be built
-            // afterwards, otherwise they would be uploaded empty and every block samples as black.
+            // The GPU texture arrays must be built after the block + entity textures are registered above,
+            // otherwise they would be uploaded empty and every surface samples as black.
             _progress = 100;
             _text = $"{I18N.Get("system.loading.resources.uploadTextures")} ({_progress}%)";
             Logger.Debug($"{I18N.GetOrdinal("system.loading.resources.uploadTextures")} ({_progress}%)");
@@ -125,7 +130,7 @@ namespace MinecraftClone3.States
             // the same arrays, so they must be indexed before BlockTextureManager.Upload bakes them to the GPU.
             EntityRenderer.LoadModels();
 
-            BlockTextureManager.Upload();
+            GlTextureUploader.Upload();
 
             // The font comes from the Minecraft resource pack (minecraft/font/default.json), which is only
             // indexed by AddResourcePacks above — so the font must load here, after the pack, not in the

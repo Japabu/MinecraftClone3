@@ -1,5 +1,4 @@
 using MinecraftClone3API.Blocks;
-using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
 
 namespace VanillaPlugin.Blocks
@@ -9,7 +8,7 @@ namespace VanillaPlugin.Blocks
         public BlockTorch() : base("Torch")
         {
             MinecraftId = "minecraft:torch";
-            Model = ResourceReader.ReadBlockModel("minecraft:block/torch");
+            ModelPath = "minecraft:block/torch";
         }
 
         public override bool IsFullBlock(WorldBase world, Vector3i blockPos) => false;

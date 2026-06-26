@@ -4,9 +4,6 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using MinecraftClone3API.Blocks;
-using MinecraftClone3API.Client.Blocks;
-using MinecraftClone3API.Entities;
-using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Networking;
 using OpenTK.Mathematics;
@@ -21,9 +18,6 @@ namespace MinecraftClone3API.Util
     public static class Profiler
     {
         public static bool Recording { get; private set; }
-
-        /// <summary>Set by the active world state so the profiler can sample chunk/entity counts.</summary>
-        public static WorldClient World;
 
         /// <summary>Set by the active world state (singleplayer only) so the profiler can split the
         /// server Pump's per-tick cost into chunk streaming vs block-change flushing.</summary>
@@ -120,7 +114,7 @@ namespace MinecraftClone3API.Util
             _lastGen1 = GC.CollectionCount(1);
             _lastGen2 = GC.CollectionCount(2);
             _lastAlloc = GC.GetTotalAllocatedBytes();
-            _lastPlayerChunk = PlayerChunk();
+            _lastPlayerChunk = Vector3i.Zero;
             _rowsSinceFlush = 0;
 
             // The phase accumulators run every Update tick regardless of recording, so without this the
@@ -165,7 +159,7 @@ namespace MinecraftClone3API.Util
         }
 
         public static void Record(double frameSeconds, double updateMs, double renderMs, double swapMs,
-            double gapMs, double gpuMs, int updateCalls, long renderAllocBytes)
+            double gapMs, double gpuMs, int updateCalls, long renderAllocBytes, ClientFrameStats stats)
         {
             if (!Recording) return;
 
@@ -186,7 +180,7 @@ namespace MinecraftClone3API.Util
 
             var heapMB = GC.GetTotalMemory(false) / (1024.0 * 1024.0);
 
-            var chunk = PlayerChunk();
+            var chunk = stats.PlayerChunk;
             var borderCross = chunk != _lastPlayerChunk ? 1 : 0;
             _lastPlayerChunk = chunk;
 
@@ -202,9 +196,9 @@ namespace MinecraftClone3API.Util
             Field(swapMs, "0.00");
             Field(gapMs, "0.00");
             Field(gpuMs, "0.00");
-            Field(GpuTimers.Ms(GpuTimers.Pass.Shadow), "0.00");
-            Field(GpuTimers.Ms(GpuTimers.Pass.Geometry), "0.00");
-            Field(GpuTimers.Ms(GpuTimers.Pass.Composition), "0.00");
+            Field(stats.ShadowMs, "0.00");
+            Field(stats.GeometryMs, "0.00");
+            Field(stats.CompositionMs, "0.00");
             Field((long) updateCalls);
             Field(gen0);
             Field(gen1);
@@ -223,10 +217,10 @@ namespace MinecraftClone3API.Util
             Field(System.Threading.Interlocked.Exchange(ref _bgUnload, 0) / mb, "0.000");
             Field(System.Threading.Interlocked.Exchange(ref _bgMesh, 0) / mb, "0.000");
             Field(System.Threading.Interlocked.Exchange(ref _bgApply, 0) / mb, "0.000");
-            Field(World?.LoadedChunkCount ?? 0);
-            Field(World?.RenderList.Count ?? 0);
-            Field(World?.MeshQueueDepth ?? 0);
-            Field(World?.Entities.Count ?? 0);
+            Field(stats.LoadedChunkCount);
+            Field(stats.RenderListCount);
+            Field(stats.MeshQueueDepth);
+            Field(stats.EntityCount);
             Field(chunk.X);
             Field(chunk.Y);
             Field(chunk.Z);
@@ -239,13 +233,13 @@ namespace MinecraftClone3API.Util
             Field((long) (Network?.LastChunksStreamed ?? 0));
             Field((long) (Network?.LastChangesDrained ?? 0));
             Field((long) (Network?.LastChangesPackets ?? 0));
-            Field(World?.LastPacketMs ?? 0, "0.00");
-            Field(World?.LastDrainMs ?? 0, "0.00");
-            Field(World?.LastUploadMs ?? 0, "0.00");
-            Field(World?.LastEvictMs ?? 0, "0.00");
-            Field((long) (World?.LastUploadChunks ?? 0));
-            Field((long) (World?.LastUploadIndices ?? 0));
-            Field((long) (World?.UploadQueueDepth ?? 0));
+            Field(stats.LastPacketMs, "0.00");
+            Field(stats.LastDrainMs, "0.00");
+            Field(stats.LastUploadMs, "0.00");
+            Field(stats.LastEvictMs, "0.00");
+            Field(stats.LastUploadChunks);
+            Field(stats.LastUploadIndices);
+            Field(stats.UploadQueueDepth);
             var msPerTick = 1000.0 / Stopwatch.Frequency;
             Field(System.Threading.Interlocked.Exchange(ref _tDisk, 0) * msPerTick, "0.00");
             Field(System.Threading.Interlocked.Exchange(ref _tGen, 0) * msPerTick, "0.00");
@@ -258,10 +252,10 @@ namespace MinecraftClone3API.Util
             Field(System.Threading.Interlocked.Exchange(ref _cMeshed, 0));
             Field(_cDrainedAdd);
             Field((long) (Server?.StageQueueDepth ?? 0));
-            Field((long) (World?.ApplyQueueDepth ?? 0));
-            Field((long) (World?.RenderReadyQueueDepth ?? 0));
-            Field((long) (World?.DisposeQueueDepth ?? 0));
-            Field((long) RenderDebug.DrawnChunks);
+            Field(stats.ApplyQueueDepth);
+            Field(stats.RenderReadyQueueDepth);
+            Field(stats.DisposeQueueDepth);
+            Field(stats.DrawnChunks);
             _writer.WriteLine(_row);
 
             _phServer = 0;
@@ -278,12 +272,6 @@ namespace MinecraftClone3API.Util
                 _writer.Flush();
                 _rowsSinceFlush = 0;
             }
-        }
-
-        private static Vector3i PlayerChunk()
-        {
-            var entity = PlayerController.PlayerEntity;
-            return entity == null ? Vector3i.Zero : WorldBase.ChunkInWorld(entity.Position.ToVector3i());
         }
 
         private static void Field(double value, string format)

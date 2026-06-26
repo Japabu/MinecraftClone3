@@ -110,7 +110,6 @@ holds the player until a `RespawnRequest` (the death screen) resets stats + tele
 per player (see [networking.md](networking.md) / `PlayerSerializer`). Eating drives hunger back up — see
 [inventory.md](inventory.md). Mob combat (creatures dealing/taking damage) is **not** wired yet; `EntityType`
 already carries `MaxHealth` for it.
-
 ## Rendering
 
 `EntityRenderer` ([Client/Graphics/EntityRenderer.cs](../MinecraftClone3API/Client/Graphics/EntityRenderer.cs))

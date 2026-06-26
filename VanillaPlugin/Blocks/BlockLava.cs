@@ -1,5 +1,4 @@
 using MinecraftClone3API.Blocks;
-using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
 
@@ -15,7 +14,7 @@ namespace VanillaPlugin.Blocks
         public BlockLava() : base("Lava")
         {
             MinecraftId = "minecraft:lava";
-            Model = ResourceReader.ReadBlockModel("Vanilla/Models/Lava.json");
+            ModelPath = "Vanilla/Models/Lava.json";
         }
 
         public override bool IsFullBlock(WorldBase world, Vector3i blockPos) => false;

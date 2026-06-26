@@ -83,7 +83,7 @@ namespace MinecraftClone3API.Graphics
             for (var i = 0; i < Stages; i++)
             {
                 var path = "minecraft/textures/block/destroy_stage_" + i + ".png";
-                if (ResourceReader.Exists(path)) _stages[i] = ResourceReader.ReadTexture(path);
+                if (ResourceReader.Exists(path)) _stages[i] = GlResources.ReadTexture(path);
             }
         }
 

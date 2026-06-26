@@ -32,6 +32,11 @@ namespace MinecraftClone3API.Graphics
         public int VertexCount => (Positions?.Count).GetValueOrDefault();
         public int IndicesCount => (Indices?.Count).GetValueOrDefault();
 
+        /// <summary>Whether the mesher should emit this buffer's faces back-to-front sorted (the transparent
+        /// path). Overridden by the GL <c>SortedVertexArrayObject</c>; lets the Core mesher branch on sorting
+        /// without referencing the client-only VAO type.</summary>
+        public virtual bool Sorted => false;
+
         public virtual void Add(Vector3 position, Vector4 texCoord, Vector4 normal, Vector3 color, Vector4 light)
         {
             if (Positions == null)

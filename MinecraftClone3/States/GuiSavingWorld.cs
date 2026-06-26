@@ -28,7 +28,7 @@ namespace MinecraftClone3.States
         {
             _window = window;
             if (_background == null)
-                _background = ResourceReader.ReadTexture("System/Textures/Gui/ResourceLoadingBackground.png");
+                _background = GlResources.ReadTexture("System/Textures/Gui/ResourceLoadingBackground.png");
         }
 
         public override void Update(bool focused)

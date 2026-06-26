@@ -30,7 +30,7 @@ namespace MinecraftClone3.States
             _window.CursorState = CursorState.Normal;
 
             if (_background == null)
-                _background = ResourceReader.ReadTexture("System/Textures/Gui/ResourceLoadingBackground.png");
+                _background = GlResources.ReadTexture("System/Textures/Gui/ResourceLoadingBackground.png");
 
             var x = ((int) ScaledResolution.GuiResolution.X - ButtonWidth) / 2;
             var y = (int) ScaledResolution.GuiResolution.Y / 2 - (4 * ButtonHeight + 3 * ButtonGap) / 2;
@@ -48,8 +48,32 @@ namespace MinecraftClone3.States
 
         public override void Update(bool focused) => base.Update(focused);
 
+        private int _diagFrames;
+
         public override void Render()
         {
+            // TEMP FREEZE DIAG: dump the real GL state for the first handful of menu frames so a frozen/black
+            // window after quitting a world reveals what state the world renderer left behind (bound FBO,
+            // color/depth masks, enabled caps, viewport vs framebuffer size, pending GL error).
+            if (_diagFrames < 5)
+            {
+                _diagFrames++;
+                var err = GL.GetError();
+                GL.GetInteger(GetPName.DrawFramebufferBinding, out int drawFbo);
+                GL.GetInteger(GetPName.ReadFramebufferBinding, out int readFbo);
+                var vp = new int[4];
+                GL.GetInteger(GetPName.Viewport, vp);
+                var colorMask = new bool[4];
+                GL.GetBoolean(GetPName.ColorWritemask, colorMask);
+                GL.GetBoolean(GetPName.DepthWritemask, out bool depthMask);
+                var fb = _window.FramebufferSize;
+                Logger.Info($"FREEZE-DIAG menu frame {_diagFrames}: glError={err} drawFbo={drawFbo} readFbo={readFbo} " +
+                            $"viewport=[{vp[0]},{vp[1]},{vp[2]},{vp[3]}] fbSize={fb.X}x{fb.Y} " +
+                            $"colorMask=[{colorMask[0]},{colorMask[1]},{colorMask[2]},{colorMask[3]}] depthMask={depthMask} " +
+                            $"depthTest={GL.IsEnabled(EnableCap.DepthTest)} blend={GL.IsEnabled(EnableCap.Blend)} " +
+                            $"cull={GL.IsEnabled(EnableCap.CullFace)} scissor={GL.IsEnabled(EnableCap.ScissorTest)}");
+            }
+
             RenderState.Set(new GlState
             {
                 Blend = true,

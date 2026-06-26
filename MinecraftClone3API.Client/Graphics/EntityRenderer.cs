@@ -75,7 +75,7 @@ namespace MinecraftClone3API.Graphics
         private static BlockTexture LoadPlayerSkin()
         {
             var skin = ResourceReader.ReadBlockTexture(PlayerSkinPath);
-            if (skin == ClientResources.MissingTexture) skin = ResourceReader.ReadBlockTexture(PlayerSkinPathLegacy);
+            if (skin == CommonResources.MissingTexture) skin = ResourceReader.ReadBlockTexture(PlayerSkinPathLegacy);
             return skin;
         }
 
@@ -162,7 +162,7 @@ namespace MinecraftClone3API.Graphics
             GL.Uniform1(shader.GetUniformLocation("uTextures256"), 2);
             GL.Uniform1(shader.GetUniformLocation("uTextures1024"), 3);
 
-            BlockTextureManager.Bind();
+            GlTextureUploader.Bind();
             Samplers.BindBlockTextureSampler();
 
             // Box models emit all six faces of every box; drawing them with culling on would drop the

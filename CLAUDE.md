@@ -21,26 +21,39 @@ in-process server over a loopback connection; multiplayer connects to a dedicate
 
 ```
 MinecraftClone3.sln
-├── MinecraftClone3API      Shared library — ALL engine logic lives here.
-│   ├── Blocks/             WorldBase, WorldServer, Chunk (storage), CachedChunk, Block, LightLevel, PaletteStorage
-│   ├── Client/             Client-only code (needs a GL context)
-│   │   ├── Blocks/         WorldClient (client world replica)
-│   │   ├── Graphics/       WorldRenderer, ChunkRenderData, EntityRenderer, VAOs, Camera, RenderDebug
-│   │   ├── GUI/            GuiBase, GuiButton, GuiSlider, GuiTextInput, Font, widgets
-│   │   └── StateSystem/    StateEngine, StateBase, GuiBase
-│   ├── Entities/           Entity, EntityPlayer, PlayerController, PlayerPhysics
-│   ├── IO/                 GamePaths, WorldManager (+WorldInfo), FileSystem*, ResourceReader, CommonResources
-│   ├── Networking/         IConnection, Packet(s), Loopback/Tcp connections, ServerNetwork, ClientSession
-│   ├── Plugins/            PluginManager, IPlugin, PluginContext
-│   ├── WorldGen/           Dimension, Biome, Feature, Carver, BiomeSource, NoiseChunkGenerator, region, RNG
-│   └── Util/               GameRegistry, BlockRegistry, ChunkMesher, WorldSerializer, OpenSimplexNoise, Profiler
-├── MinecraftClone3         Client executable (OpenTK GameWindow, ~120 Hz). Owns Program + States/.
-├── MinecraftClone3Server   Dedicated headless server executable (no GL).
-└── VanillaPlugin           Content plugin: blocks (Stone, Sand, OakLog, Water, ores, ...) + the Overworld
-                            dimension, biomes, ore/tree features (VanillaPlugin/WorldGen/).
+├── MinecraftClone3API        Core engine library — GL-FREE. The headless server links only this.
+│   ├── Blocks/               WorldBase, WorldServer, Chunk (storage), CachedChunk, Block, LightLevel, PaletteStorage
+│   ├── Entities/             Entity, EntityPlayer, PlayerPhysics (NOT PlayerController — that's client input)
+│   ├── Graphics/             GL-free CPU model/mesh data: BlockModel, BlockStateDefinition, BlockTexture,
+│   │                         TextureData, MeshBuffer, BlockTextureManager (CPU half), VaoBufferPool
+│   ├── IO/                   GamePaths, WorldManager (+WorldInfo), FileSystem*, ResourceReader (GL-free), CommonResources
+│   ├── Networking/           IConnection, Packet(s), Loopback/Tcp connections, ServerNetwork, ClientSession
+│   ├── Plugins/              PluginManager, IPlugin, PluginContext
+│   ├── WorldGen/             Dimension, Biome, Feature, Carver, BiomeSource, NoiseChunkGenerator, region, RNG
+│   └── Util/                 GameRegistry, BlockRegistry, ChunkMesher, WorldSerializer, OpenSimplexNoise, Profiler, ClientFrameStats
+├── MinecraftClone3API.Client Client renderer library (needs a GL context). References Core.
+│   ├── Blocks/               WorldClient (client world replica)
+│   ├── Graphics/             WorldRenderer, ChunkRenderData, EntityRenderer, VAOs, Camera, RenderDebug,
+│   │                         GlResources/GlTextureUploader (GL halves of the resource readers)
+│   ├── GUI/                  GuiBase, GuiButton, GuiSlider, GuiTextInput, Font, widgets
+│   ├── StateSystem/          StateEngine, StateBase, GuiBase
+│   ├── Entities/             PlayerController (client input/camera), ClientProfiling (per-frame sampler)
+│   └── Util/                 Benchmark, Inspect
+├── MinecraftClone3           Client executable (OpenTK GameWindow, ~120 Hz). Owns Program + States/. Links Client.
+├── MinecraftClone3Server     Dedicated headless server executable (no GL). Links Core only.
+└── VanillaPlugin             Content plugin: blocks (Stone, Sand, OakLog, Water, ores, ...) + the Overworld
+                              dimension, biomes, ore/tree features (VanillaPlugin/WorldGen/). Links Client (GUI blocks).
 ```
 
-`MinecraftClone3` and `MinecraftClone3Server` are thin shells; nearly everything is in the API library.
+`MinecraftClone3` and `MinecraftClone3Server` are thin shells; nearly everything is in the two API libraries.
+**The Core/Client split makes the "server code must not touch GL" rule compiler-enforced**: Core is GL-free
+(OpenTK *math* only), the GL renderer lives in `MinecraftClone3API.Client`, and the server links only Core —
+so a server-reachable path that reaches for GL/window state now fails to compile rather than crashing at run
+time. Core grants `[InternalsVisibleTo("MinecraftClone3API.Client")]` so the renderer keeps using Core
+internals (mesher, chunk codec); this is one-way (Core never sees Client, the server never gets the grant).
+Both API assemblies keep the **same root namespaces** (`MinecraftClone3API.*`, incl. `MinecraftClone3API.Graphics`
+for the model-data types that physically moved to Core) — the assembly a file lives in is decoupled from its
+namespace, so moving a file across the boundary needs no `using` changes.
 Target framework **net10.0**. `<Nullable>` and `<ImplicitUsings>` are **disabled** — write explicit `using`s
 and don't rely on nullable annotations.
 
@@ -102,7 +115,11 @@ the linked doc; this is the short "don't violate this" list.
 - **OpenGL is capped at 4.1 Core / GLSL 4.10** (macOS limit): query uniform/sampler locations by name (no
   `layout(binding=)` on uniforms); vertex-attribute/fragment-output locations *do* use `layout(location=)`.
 - **Block code that runs on the server must not touch client/GL/window state** (server-side light sim calls
-  `Block.GetLightLevel`; reading the keyboard there crashed `BlockTorch`).
+  `Block.GetLightLevel`; reading the keyboard there crashed `BlockTorch`). Mostly **compiler-enforced** now:
+  Core (which the server links) cannot reference the GL renderer or the ambient input/window/`RenderDebug`
+  statics — those live only in `MinecraftClone3API.Client`. The one residual gap is `Block`'s two client-only
+  virtuals (`GetPlacementMetadata(KeyboardState …)`, `OnActivated(GameWindow …)`), whose OpenTK *input* param
+  types Core still references; the server never invokes them.
 
 ---
 

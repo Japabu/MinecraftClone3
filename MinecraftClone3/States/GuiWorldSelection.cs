@@ -38,7 +38,7 @@ namespace MinecraftClone3.States
             _window.CursorState = CursorState.Normal;
 
             if (_background == null)
-                _background = ResourceReader.ReadTexture("System/Textures/Gui/ResourceLoadingBackground.png");
+                _background = GlResources.ReadTexture("System/Textures/Gui/ResourceLoadingBackground.png");
 
             var width = (int) ScaledResolution.GuiResolution.X;
             var height = (int) ScaledResolution.GuiResolution.Y;

@@ -89,8 +89,8 @@ namespace MinecraftClone3API.Entities
             if (ks.IsKeyPressed(Keys.F2)) WorldRenderer.FixedTimeOfDay = WorldRenderer.FixedTimeOfDay == null ? 220.0 : 0;
 
             HandleBreaking(world, ms);
-            if (ms.IsButtonDown(MouseButton.Right) && !ms.WasButtonDown(MouseButton.Right) && !TryActivateBlock(window, world))
-                PlaceBlock(world, ks);
+            if (ms.IsButtonDown(MouseButton.Right) && !ms.WasButtonDown(MouseButton.Right) && !TryActivateBlock(world))
+                PlaceBlock(world);
 
             Camera.Update();
         }
@@ -257,15 +257,15 @@ namespace MinecraftClone3API.Entities
 
         /// <summary>Right-click interaction: if the player is looking at an interactable block (e.g. a crafting
         /// table) let it handle the click (open its GUI) and report that placement should be suppressed.</summary>
-        private static bool TryActivateBlock(GameWindow window, WorldBase world)
+        private static bool TryActivateBlock(WorldBase world)
         {
             if (_blockRaytrace == null) return false;
             var pos = _blockRaytrace.BlockPos;
             var block = world.GetBlock(pos.X, pos.Y, pos.Z);
-            return block != null && block.OnActivated(window, world, pos, PlayerEntity);
+            return block != null && block.OnActivated(world, pos, PlayerEntity);
         }
 
-        private static void PlaceBlock(WorldBase world, KeyboardState ks)
+        private static void PlaceBlock(WorldBase world)
         {
             if (!(world is WorldClient client)) return;
 
@@ -288,7 +288,7 @@ namespace MinecraftClone3API.Entities
             if (block != null)
             {
                 world.PlaceBlock(PlayerEntity, target, block,
-                    block.GetPlacementMetadata(ks, PlayerEntity, _blockRaytrace));
+                    block.GetPlacementMetadata(PlayerEntity, _blockRaytrace));
                 return;
             }
 

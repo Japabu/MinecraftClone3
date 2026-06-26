@@ -284,7 +284,7 @@ namespace MinecraftClone3API.Util
         /// continuous movement (the "walk far → horizon goes coarse/empty" regression) — surfaced in the report.</summary>
         private static void SampleLodHealth(Vector3 p)
         {
-            var world = Profiler.World;
+            var world = ClientProfiling.World;
             if (world == null) return;
             var list = world.LodRenderList;
             var drawSq = world.LodRenderDistance * world.LodRenderDistance;
@@ -343,7 +343,7 @@ namespace MinecraftClone3API.Util
 
             if (_recording && rt <= DurationSeconds)
             {
-                var loaded = Profiler.World?.LoadedChunkCount ?? 0;
+                var loaded = ClientProfiling.World?.LoadedChunkCount ?? 0;
                 if (loaded > _peakLoadedChunks) _peakLoadedChunks = loaded;
 
                 _samples.Add(new Sample

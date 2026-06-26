@@ -1,13 +1,10 @@
 ﻿using System.Collections.Generic;
-using MinecraftClone3API.Client;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
-using OpenTK.Windowing.Desktop;
-using OpenTK.Windowing.GraphicsLibraryFramework;
 
 namespace MinecraftClone3API.Blocks
 {
@@ -41,7 +38,12 @@ namespace MinecraftClone3API.Blocks
         public static readonly AxisAlignedBoundingBox DefaultAlignedBoundingBox =
             new AxisAlignedBoundingBox(new Vector3(-0.5f), new Vector3(0.5f));
         
-        public BlockModel Model = ClientResources.MissingModel;
+        public BlockModel Model = CommonResources.MissingModel;
+
+        /// <summary>Resource-pack path of this block's model, declared in the constructor. It is parsed into
+        /// <see cref="Model"/> by the client's load pass (<see cref="LoadModel"/>) — the headless server never
+        /// resolves it, so it reads no models or textures. Null for blocks with no model (e.g. air).</summary>
+        public string ModelPath { get; protected set; }
 
         public Block(string name) : base(name)
         {
@@ -112,6 +114,11 @@ namespace MinecraftClone3API.Blocks
         /// <see cref="GetBlockState"/> from this definition instead of using the single <see cref="Model"/>.</summary>
         public BlockStateDefinition StateDefinition;
 
+        /// <summary>Content id whose <c>blockstates/&lt;name&gt;.json</c> drives this block's per-state model
+        /// selection (e.g. a furnace's facing/lit), declared in the constructor; null for blocks without one.
+        /// Resolved into <see cref="StateDefinition"/> by <see cref="LoadModel"/> on the client.</summary>
+        public string BlockStateId { get; protected set; }
+
         /// <summary>This block's current blockstate property values (e.g. <c>facing=east, lit=true</c>) derived
         /// from its stored block data, used to pick a variant from <see cref="StateDefinition"/>. Null/empty for
         /// stateless blocks (matches the unconditional <c>""</c> variant).</summary>
@@ -129,6 +136,16 @@ namespace MinecraftClone3API.Blocks
                 if (variant != null) return (variant.Model, variant.Rotation);
             }
             return (Model, GetModelTransform(world, blockPos));
+        }
+
+        /// <summary>Client load step (single-threaded, before any meshing): parse this block's
+        /// <see cref="ModelPath"/> into <see cref="Model"/> and its <see cref="BlockStateId"/> into
+        /// <see cref="StateDefinition"/> from the resource pack. The headless server never calls it, so it
+        /// reads no render assets and needs no resource pack. Override to build a model some other way.</summary>
+        public virtual void LoadModel()
+        {
+            if (ModelPath != null) Model = ResourceReader.ReadBlockModel(ModelPath);
+            if (BlockStateId != null) StateDefinition = ResourceReader.ReadBlockState(BlockStateId);
         }
 
         /// <summary>True for blocks whose <see cref="OnServerTick"/> must run every server tick (e.g. a smelting
@@ -153,15 +170,17 @@ namespace MinecraftClone3API.Blocks
         {
         }
 
-        /// <summary>Client-side: derive the metadata to carry in the place request (e.g. a tint from held
-        /// keys, or a stair's facing from the placing player's look + clicked face). Runs on the client so
-        /// the server — which may be headless — never reads input.</summary>
-        public virtual int GetPlacementMetadata(KeyboardState ks, EntityPlayer player, BlockRaytraceResult ray) => 0;
+        /// <summary>Client-side: derive the metadata to carry in the place request (e.g. a stair's facing from
+        /// the placing player's look + clicked face). Runs on the client; takes only Core types so the headless
+        /// server never depends on input/windowing.</summary>
+        public virtual int GetPlacementMetadata(EntityPlayer player, BlockRaytraceResult ray) => 0;
 
         /// <summary>Client-side: the player right-clicked this block while looking at it. Return true if the
         /// block handled the interaction (e.g. opened a GUI), which suppresses placing the held item. Runs
-        /// only on the client (the headless server never calls it), so it may touch window/GUI state.</summary>
-        public virtual bool OnActivated(GameWindow window, WorldBase world, Vector3i blockPos, EntityPlayer player) => false;
+        /// only on the client (the headless server never calls it), so it may touch window/GUI state via the
+        /// client globals (<c>ClientResources.Window</c>, <c>StateEngine</c>) — not passed in, so Core's
+        /// signature stays free of windowing types.</summary>
+        public virtual bool OnActivated(WorldBase world, Vector3i blockPos, EntityPlayer player) => false;
 
         public virtual int OnLightPassThrough(WorldBase world, Vector3i blockPos, int lightLevel, int color)
             => lightLevel - 1;

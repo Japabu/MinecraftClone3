@@ -1,5 +1,4 @@
 ﻿using MinecraftClone3API.Blocks;
-using MinecraftClone3API.IO;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 
@@ -23,7 +22,7 @@ namespace VanillaPlugin.Blocks
             _requiresTool = requiresTool;
 
             MinecraftId = Identifier.FromResourcePath(modelPath);
-            Model = ResourceReader.ReadBlockModel(modelPath);
+            ModelPath = modelPath;
         }
 
         public override bool IsFullBlock(WorldBase world, Vector3i blockPos) => _fullBlock;

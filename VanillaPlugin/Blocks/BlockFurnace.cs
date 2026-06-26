@@ -1,16 +1,14 @@
 using System;
 using System.Collections.Generic;
 using MinecraftClone3API.Blocks;
+using MinecraftClone3API.Client;
 using MinecraftClone3API.Client.Blocks;
 using MinecraftClone3API.Client.GUI;
 using MinecraftClone3API.Client.StateSystem;
 using MinecraftClone3API.Entities;
-using MinecraftClone3API.IO;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
-using OpenTK.Windowing.Desktop;
-using OpenTK.Windowing.GraphicsLibraryFramework;
 using VanillaPlugin.BlockDatas;
 
 namespace VanillaPlugin.Blocks
@@ -30,8 +28,8 @@ namespace VanillaPlugin.Blocks
         public BlockFurnace() : base("Furnace")
         {
             MinecraftId = "minecraft:furnace";
-            Model = ResourceReader.ReadBlockModel("minecraft:block/furnace");
-            StateDefinition = ResourceReader.ReadBlockState("minecraft:furnace");
+            ModelPath = "minecraft:block/furnace";
+            BlockStateId = "minecraft:furnace";
         }
 
         public override bool NeedsServerTick => true;
@@ -55,7 +53,7 @@ namespace VanillaPlugin.Blocks
             };
         }
 
-        public override int GetPlacementMetadata(KeyboardState ks, EntityPlayer player, BlockRaytraceResult ray)
+        public override int GetPlacementMetadata(EntityPlayer player, BlockRaytraceResult ray)
         {
             // The front faces the placing player: take the player's horizontal look direction and use its
             // opposite (north<->south, east<->west), exactly like vanilla's horizontal-facing blocks.
@@ -70,10 +68,10 @@ namespace VanillaPlugin.Blocks
         public override void OnPlaced(WorldBase world, Vector3i blockPos, EntityPlayer player, int metadata)
             => world.SetBlockData(blockPos, new BlockDataFurnace((byte) (metadata & 0x3)));
 
-        public override bool OnActivated(GameWindow window, WorldBase world, Vector3i blockPos, EntityPlayer player)
+        public override bool OnActivated(WorldBase world, Vector3i blockPos, EntityPlayer player)
         {
             if (!(world is WorldClient client)) return false;
-            StateEngine.AddOverlay(new GuiFurnace(window, client, blockPos));
+            StateEngine.AddOverlay(new GuiFurnace(ClientResources.Window, client, blockPos));
             return true;
         }
 

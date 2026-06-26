@@ -127,7 +127,7 @@ namespace MinecraftClone3.States
             _world = new WorldClient(connection);
             _world.Login();
 
-            Profiler.World = _world;
+            ClientProfiling.World = _world;
             Profiler.Network = _network;
             Profiler.Server = _integratedServer;
             ChunkTracer.Multiplayer = multiplayer;
@@ -399,6 +399,8 @@ namespace MinecraftClone3.States
                 MathHelper.DegreesToRadians(GraphicsSettings.Fov), aspect, 0.1f, farPlane);
             WorldRenderer.RenderWorld(_world, projection);
 
+            if (_window.CursorState == CursorState.Grabbed)
+                CrosshairRenderer.Render();
             HotbarRenderer.Render(_world.Inventory);
             SurvivalHud.Render(_world);
 
@@ -426,9 +428,9 @@ namespace MinecraftClone3.States
 
         private void RenderLoading()
         {
-            _loadingBackground ??= ResourceReader.ReadTexture("System/Textures/Gui/ResourceLoadingBackground.png");
-            _loadingProgressBar ??= ResourceReader.ReadTexture("System/Textures/Gui/Progressbar.png");
-            _loadingProgressBarFull ??= ResourceReader.ReadTexture("System/Textures/Gui/ProgressbarFull.png");
+            _loadingBackground ??= GlResources.ReadTexture("System/Textures/Gui/ResourceLoadingBackground.png");
+            _loadingProgressBar ??= GlResources.ReadTexture("System/Textures/Gui/Progressbar.png");
+            _loadingProgressBarFull ??= GlResources.ReadTexture("System/Textures/Gui/ProgressbarFull.png");
 
             GuiRenderer.DrawTexture(_loadingBackground,
                 new Rectangle(0, 0, (int)ScaledResolution.GuiResolution.X, (int)ScaledResolution.GuiResolution.Y), null);
@@ -538,7 +540,7 @@ namespace MinecraftClone3.States
         public override void Exit()
         {
             Profiler.Stop();
-            Profiler.World = null;
+            ClientProfiling.World = null;
             Profiler.Network = null;
             Profiler.Server = null;
 

@@ -3,9 +3,16 @@
 `GuiResourceLoading` (client) and `MinecraftClone3Server/Program.LoadPlugins` (server) mirror each other:
 `CommonResources.Load()` → add the `System` plugin → add every dir/zip in `Plugins/` →
 **`PluginManager.AddResourcePacks()`** (cascade user packs) → `PluginManager.LoadResources` → `LoadPlugins`.
-**The server stops there; the client additionally does the GL-only steps** (`ClientResources.Load`,
-`BoundingBoxRenderer.Load`, `EntityRenderer.Load`, `BlockTextureManager.Upload`). Plugin model JSON and PNGs
-are read CPU-side via StbImage, so they load fine headless; only the texture-array *upload* is GL.
+That builds the block/item/entity **registry** (ids, recipes, worldgen) with no render assets touched —
+blocks only declare a `ModelPath`/`BlockStateId` string in their constructor.
+
+**The server stops there.** It reads **no models or textures** and needs no resource pack: parsing them is a
+client-only step. **The client additionally does the GL + asset steps** — `ClientResources.Load`,
+`BoundingBoxRenderer.Load`, `EntityRenderer.Load`, then **`GameRegistry.LoadBlockModels()`** (parses every
+block's declared model/blockstate from the pack, single-threaded, registering its textures into the CPU
+arrays), `EntityRenderer.LoadModels`, and finally `BlockTextureManager.Upload` (the only GL step). Model JSON
+and PNGs are read CPU-side via StbImage; deferring the parse to this pass — rather than the block
+constructors — is what keeps the headless server render-asset-free.
 
 **Animated textures (frame strips).** A texture whose height is a whole multiple of its width is a Minecraft
 animation sheet (e.g. `water_still` = 16×512, 32 frames; also lava/fire). `ResourceReader.ReadBlockTexture`

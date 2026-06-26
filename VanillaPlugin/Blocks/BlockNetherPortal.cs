@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using MinecraftClone3API.Blocks;
-using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
 using VanillaPlugin.BlockDatas;
@@ -32,8 +31,8 @@ namespace VanillaPlugin.Blocks
         public BlockNetherPortal() : base("NetherPortal")
         {
             MinecraftId = "minecraft:nether_portal";
-            Model = ResourceReader.ReadBlockModel("minecraft:block/nether_portal_ns");
-            StateDefinition = ResourceReader.ReadBlockState("minecraft:nether_portal");
+            ModelPath = "minecraft:block/nether_portal_ns";
+            BlockStateId = "minecraft:nether_portal";
         }
 
         public override bool IsFullBlock(WorldBase world, Vector3i blockPos) => false;
