@@ -596,14 +596,14 @@ namespace MinecraftClone3API.Networking
             {
                 if (slot >= Inventory.HotbarSize) break;
                 if (!item.IsUsable && !item.UsableOnEntity) continue;
-                inventory.Slots[slot++] = new ItemStack(item.Id, ItemStack.MaxStackSize);
+                inventory.Slots[slot++] = new ItemStack(item.Id, item.MaxStackSize);
             }
 
             foreach (var item in GameRegistry.Items)
             {
                 if (slot >= Inventory.HotbarSize) break;
                 if (item.GetBlock() == null) continue;
-                inventory.Slots[slot++] = new ItemStack(item.Id, ItemStack.MaxStackSize);
+                inventory.Slots[slot++] = new ItemStack(item.Id, item.MaxStackSize);
             }
         }
 
