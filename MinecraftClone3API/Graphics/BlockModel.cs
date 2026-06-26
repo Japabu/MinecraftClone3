@@ -2,10 +2,10 @@
 using System.Collections.Generic;
 using System.Linq;
 using MinecraftClone3API.Blocks;
-using MinecraftClone3API.Client;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using OpenTK.Mathematics;
 // ReSharper disable InconsistentNaming
 
@@ -112,7 +112,7 @@ namespace MinecraftClone3API.Graphics
                         if (filename == null)
                         {
                             Logger.Error($"Texture \"{entry.Value}\" could not be found in {path}!");
-                            loadedTextures.Add(entry.Key, ClientResources.MissingTexture);
+                            loadedTextures.Add(entry.Key, CommonResources.MissingTexture);
                             continue;
                         }
 
@@ -212,7 +212,7 @@ namespace MinecraftClone3API.Graphics
             public int TintIndex = -1;
 
             [JsonIgnore]
-            public BlockTexture LoadedTexture = ClientResources.MissingTexture;
+            public BlockTexture LoadedTexture = CommonResources.MissingTexture;
 
             [JsonIgnore]
             private Vector2[] _texCoords;
@@ -232,12 +232,38 @@ namespace MinecraftClone3API.Graphics
         public string Parent;
         public bool AmbientOcclusion = true;
         public Dictionary<string, DisplayEntry> Display;
+        [JsonConverter(typeof(TextureMapConverter))]
         public Dictionary<string, string> Textures;
         public Element[] Elements;
 
         public BlockModel()
         {
             //Default json constructor
+        }
+
+        /// <summary>A texture entry is either a plain sprite path (<c>"all": "minecraft:block/stone"</c>) or,
+        /// since the 26.x format, an object carrying the path under <c>sprite</c> plus flags
+        /// (<c>"all": { "sprite": "...", "force_translucent": true }</c>). We only need the path — the engine
+        /// drives translucency off the block's <see cref="Block.IsTransparent"/>, not the model flag — so both
+        /// forms collapse to the sprite string and variable references (<c>"#all"</c>) pass through unchanged.</summary>
+        private class TextureMapConverter : JsonConverter<Dictionary<string, string>>
+        {
+            public override Dictionary<string, string> ReadJson(JsonReader reader, System.Type objectType,
+                Dictionary<string, string> existingValue, bool hasExistingValue, JsonSerializer serializer)
+            {
+                var result = existingValue ?? new Dictionary<string, string>();
+                foreach (var prop in JObject.Load(reader).Properties())
+                {
+                    var value = prop.Value;
+                    result[prop.Name] = value.Type == JTokenType.Object
+                        ? value["sprite"]?.Value<string>()
+                        : value.Value<string>();
+                }
+                return result;
+            }
+
+            public override void WriteJson(JsonWriter writer, Dictionary<string, string> value, JsonSerializer serializer)
+                => throw new System.NotSupportedException();
         }
     }
 }

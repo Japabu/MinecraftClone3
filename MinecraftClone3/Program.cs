@@ -146,7 +146,7 @@ namespace MinecraftClone3
             // but update/render/swap are small, gapMs vs gpuMs says whether it's present/event overhead
             // or the GPU itself — the two stalls a CPU sampler can't see.
             Profiler.Record(e.Time, _lastUpdateMs, renderMs, _lastSwapMs, _lastGapMs, _lastGpuMs,
-                _updateCalls, renderAlloc);
+                _updateCalls, renderAlloc, ClientProfiling.SampleFrame());
             if (Inspect.Active)
             {
                 Inspect.Tick(FramebufferSize.X, FramebufferSize.Y);

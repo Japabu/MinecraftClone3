@@ -36,8 +36,10 @@ namespace MinecraftClone3.States
             Elements.Add(new GuiButton(Rectangle.FromSize(x, y + step, ButtonWidth, ButtonHeight), "Options",
                 () => StateEngine.AddOverlay(new GuiOptions(_window))));
             Elements.Add(new GuiButton(Rectangle.FromSize(x, y + 2 * step, ButtonWidth, ButtonHeight),
-                "Save and Quit to Title", () => StateEngine.ReplaceState(new GuiMainMenu(_window))));
+                "Save and Quit to Title", () => StateEngine.ReplaceState(new GuiSavingWorld(_window))));
         }
+
+        public override bool PausesWorld => true;
 
         public override void Update(bool focused)
         {

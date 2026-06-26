@@ -289,7 +289,7 @@ namespace MinecraftClone3API.Util
 
             if (texCoords.Length != 4) throw new Exception($"\"{block}\" invalid texture coords array length!");
 
-            var sorted = vao is SortedVertexArrayObject;
+            var sorted = vao.Sorted;
             var faceMiddle = Vector3.Zero;
 
             //per vertex light value interpolation (smooth lighting + free ambient occlusion); the four

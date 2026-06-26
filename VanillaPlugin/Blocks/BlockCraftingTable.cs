@@ -1,11 +1,11 @@
 using MinecraftClone3API.Blocks;
+using MinecraftClone3API.Client;
 using MinecraftClone3API.Client.Blocks;
 using MinecraftClone3API.Client.GUI;
 using MinecraftClone3API.Client.StateSystem;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
-using OpenTK.Windowing.Desktop;
 
 namespace VanillaPlugin.Blocks
 {
@@ -17,10 +17,10 @@ namespace VanillaPlugin.Blocks
         {
         }
 
-        public override bool OnActivated(GameWindow window, WorldBase world, Vector3i blockPos, EntityPlayer player)
+        public override bool OnActivated(WorldBase world, Vector3i blockPos, EntityPlayer player)
         {
             if (!(world is WorldClient client)) return false;
-            StateEngine.AddOverlay(new GuiCraftingTable(window, client));
+            StateEngine.AddOverlay(new GuiCraftingTable(ClientResources.Window, client));
             return true;
         }
     }

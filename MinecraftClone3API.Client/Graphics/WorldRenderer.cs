@@ -163,7 +163,7 @@ namespace MinecraftClone3API.Graphics
                 return null;
             }
 
-            try { return ResourceReader.ReadTexture(key); }
+            try { return GlResources.ReadTexture(key); }
             catch (Exception e)
             {
                 Logger.Error($"Failed to load sky texture \"{key}\".");
@@ -522,7 +522,7 @@ namespace MinecraftClone3API.Graphics
             GL.Uniform1(shader.GetUniformLocation("uFadeStart"), fadeActive ? RenderDistance - FadeBandWidth : 1e9f);
             GL.Uniform1(shader.GetUniformLocation("uFadeEnd"), fadeActive ? RenderDistance : 1e9f + 1f);
 
-            BlockTextureManager.Bind();
+            GlTextureUploader.Bind();
             Samplers.BindBlockTextureSampler();
 
             // Draw all opaque chunk geometry (incl. the opaque faces of transparent chunks) front-to-back in

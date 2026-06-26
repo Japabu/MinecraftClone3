@@ -37,9 +37,6 @@ namespace MinecraftClone3API.Client
         public static Texture LoadingTexture;
         public static Texture WhitePixel;
 
-        public static BlockModel MissingModel;
-        public static BlockTexture MissingTexture;
-
         public static readonly Dictionary<Keys, string> Keybindings = new Dictionary<Keys, string>();
 
         public static void Load(GameWindow window)
@@ -49,15 +46,15 @@ namespace MinecraftClone3API.Client
             ResizeFrameBuffers();
             Window.Resize += args => ResizeFrameBuffers();
 
-            WorldGeometryShader = ResourceReader.ReadShader(PluginDir + "Shaders/WorldGeometry");
-            EntityGeometryShader = ResourceReader.ReadShader(PluginDir + "Shaders/EntityGeometry");
-            CompositionShader = ResourceReader.ReadShader(PluginDir + "Shaders/Composition");
-            PointLightShader = ResourceReader.ReadShader(PluginDir + "Shaders/PointLight");
-            BlockOutlineShader = ResourceReader.ReadShader(PluginDir + "Shaders/BlockOutline");
-            SpriteShader = ResourceReader.ReadShader(PluginDir + "Shaders/Sprite");
-            ItemIconShader = ResourceReader.ReadShader(PluginDir + "Shaders/ItemIcon");
-            ShadowDepthShader = ResourceReader.ReadShader(PluginDir + "Shaders/ShadowDepth");
-            ShadowResolveShader = ResourceReader.ReadShader(PluginDir + "Shaders/ShadowResolve");
+            WorldGeometryShader = GlResources.ReadShader(PluginDir + "Shaders/WorldGeometry");
+            EntityGeometryShader = GlResources.ReadShader(PluginDir + "Shaders/EntityGeometry");
+            CompositionShader = GlResources.ReadShader(PluginDir + "Shaders/Composition");
+            PointLightShader = GlResources.ReadShader(PluginDir + "Shaders/PointLight");
+            BlockOutlineShader = GlResources.ReadShader(PluginDir + "Shaders/BlockOutline");
+            SpriteShader = GlResources.ReadShader(PluginDir + "Shaders/Sprite");
+            ItemIconShader = GlResources.ReadShader(PluginDir + "Shaders/ItemIcon");
+            ShadowDepthShader = GlResources.ReadShader(PluginDir + "Shaders/ShadowDepth");
+            ShadowResolveShader = GlResources.ReadShader(PluginDir + "Shaders/ShadowResolve");
 
             // Fixed-size shadow map (not window-sized), so created once here rather than in ResizeFrameBuffers.
             ShadowFramebuffer = new ShadowFramebuffer(ShadowFramebuffer.ShadowMapSize);
@@ -74,8 +71,8 @@ namespace MinecraftClone3API.Client
 
             WhitePixel = new Texture(new TextureData(new byte[] {255, 255, 255, 255}, 1, 1));
 
-            MissingModel = ResourceReader.ReadBlockModel("System/Models/MissingModel.json");
-            MissingTexture = ResourceReader.ReadBlockTexture("System/Textures/Blocks/MissingTexture.png");
+            CommonResources.MissingModel = ResourceReader.ReadBlockModel("System/Models/MissingModel.json");
+            CommonResources.MissingTexture = ResourceReader.ReadBlockTexture("System/Textures/Blocks/MissingTexture.png");
 
             //TODO: Remove
 

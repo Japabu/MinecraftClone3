@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Net.Sockets;
+using System.Threading;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Client;
 using MinecraftClone3API.Client.Blocks;
@@ -43,6 +44,10 @@ namespace MinecraftClone3.States
 
         private readonly bool _connectionFailed;
 
+        // The previous world's async teardown (see Exit), if it is still saving. A newly opened world and the
+        // app-exit path join it first so a save never races the next world on disk or gets cut off at exit.
+        private static Thread _pendingTeardown;
+
         private bool _loading = true;
         private bool _spawnApplied;
         private int _lastRenderDistanceChunks = -1;
@@ -79,6 +84,10 @@ namespace MinecraftClone3.States
             _window = window;
             _multiplayer = multiplayer;
             _benchmark = benchmark;
+
+            // Don't open a world while the previous one is still saving on its teardown thread (Exit) — it would
+            // race the same region files on disk. In practice the save is long done by the time the menu is navigated.
+            WaitForPendingTeardown();
 
             // Grab the cursor so relative mouse movement drives the camera (FPS-style). The benchmark drives the
             // camera itself and runs unattended, so it must NOT grab the cursor (that would trap the user's mouse).
@@ -117,7 +126,7 @@ namespace MinecraftClone3.States
             _world = new WorldClient(connection);
             _world.Login();
 
-            Profiler.World = _world;
+            ClientProfiling.World = _world;
             Profiler.Network = _network;
             Profiler.Server = _integratedServer;
             ChunkTracer.Multiplayer = multiplayer;
@@ -200,9 +209,11 @@ namespace MinecraftClone3.States
                 active = false;
             }
 
-            // Singleplayer freezes the world while paused; multiplayer can't pause a shared server. The
-            // benchmark always pumps so chunks keep streaming/regenerating even with the window unfocused.
-            var simulate = focused || _multiplayer || _benchmark;
+            // The world keeps simulating whenever it isn't explicitly paused: only the singleplayer Esc menu
+            // pauses it (StateEngine.WorldPaused), so a container/inventory screen leaves furnaces smelting and
+            // mobs moving, exactly as vanilla. Multiplayer can't pause a shared server, and the benchmark always
+            // pumps so chunks keep streaming with the window unfocused. Player input still needs full focus.
+            var simulate = _multiplayer || _benchmark || !StateEngine.WorldPaused;
             if (simulate)
             {
                 var dt = _simTimer.Elapsed.TotalSeconds;
@@ -368,9 +379,9 @@ namespace MinecraftClone3.States
 
         private void RenderLoading()
         {
-            _loadingBackground ??= ResourceReader.ReadTexture("System/Textures/Gui/ResourceLoadingBackground.png");
-            _loadingProgressBar ??= ResourceReader.ReadTexture("System/Textures/Gui/Progressbar.png");
-            _loadingProgressBarFull ??= ResourceReader.ReadTexture("System/Textures/Gui/ProgressbarFull.png");
+            _loadingBackground ??= GlResources.ReadTexture("System/Textures/Gui/ResourceLoadingBackground.png");
+            _loadingProgressBar ??= GlResources.ReadTexture("System/Textures/Gui/Progressbar.png");
+            _loadingProgressBarFull ??= GlResources.ReadTexture("System/Textures/Gui/ProgressbarFull.png");
 
             GuiRenderer.DrawTexture(_loadingBackground,
                 new Rectangle(0, 0, (int)ScaledResolution.GuiResolution.X, (int)ScaledResolution.GuiResolution.Y), null);
@@ -480,12 +491,42 @@ namespace MinecraftClone3.States
         public override void Exit()
         {
             Profiler.Stop();
-            Profiler.World = null;
+            ClientProfiling.World = null;
             Profiler.Network = null;
             Profiler.Server = null;
+
+            // GL teardown must run here, on the main/GL thread. Stopping the server network and joining +
+            // saving the world is GL-free but can take seconds when many chunks are dirty (a burning furnace
+            // floods light, dirtying every chunk it touches). Doing it here would block the render loop for the
+            // whole save; on macOS the window then goes unresponsive and its drawable surface wedges, so the
+            // screen freezes on the last frame even though the game has already moved to the menu. Run it on a
+            // background thread instead; the next world open and app exit gate on it via WaitForPendingTeardown.
             _world?.Disconnect();
-            _network?.Stop();
-            _integratedServer?.Unload();
+
+            var network = _network;
+            var server = _integratedServer;
+            if (network == null && server == null) return;
+
+            _pendingTeardown = new Thread(() =>
+            {
+                network?.Stop();
+                server?.Unload();
+            }) {Name = "World Teardown"};
+            _pendingTeardown.Start();
         }
+
+        /// <summary>Blocks until the previous world's async teardown (<see cref="Exit"/>) has finished saving.
+        /// The teardown thread is foreground, so the process already won't exit mid-save; this also lets a
+        /// freshly opened world wait so it never races the old save on disk.</summary>
+        public static void WaitForPendingTeardown()
+        {
+            var pending = _pendingTeardown;
+            if (pending != null && pending.IsAlive) pending.Join();
+            _pendingTeardown = null;
+        }
+
+        /// <summary>True while the async world teardown (<see cref="Exit"/>) is still saving — drives the
+        /// "Saving world..." screen, which keeps drawing until this clears and then reveals the title.</summary>
+        public static bool IsTearingDown => _pendingTeardown != null && _pendingTeardown.IsAlive;
     }
 }

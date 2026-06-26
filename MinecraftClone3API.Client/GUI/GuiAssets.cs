@@ -24,7 +24,7 @@ namespace MinecraftClone3API.Client.GUI
         public static Texture Get(string path)
         {
             if (Cache.TryGetValue(path, out var tex)) return tex;
-            tex = ResourceReader.Exists(path) ? ResourceReader.ReadTexture(path) : null;
+            tex = ResourceReader.Exists(path) ? GlResources.ReadTexture(path) : null;
             Cache[path] = tex;
             return tex;
         }

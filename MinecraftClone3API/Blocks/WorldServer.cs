@@ -245,7 +245,34 @@ namespace MinecraftClone3API.Blocks
 
             EnqueueBlockChange(chunkInWorld, blockInChunk, block.Id, chunk.GetLightLevel(blockInChunk).Binary,
                 (ushort) chunk.GetSkyLight(blockInChunk));
+
+            NotifyNeighbors(worldPos);
         }
+
+        private static readonly Vector3i[] NeighborOffsets =
+        {
+            new Vector3i(-1, 0, 0), new Vector3i(1, 0, 0),
+            new Vector3i(0, -1, 0), new Vector3i(0, 1, 0),
+            new Vector3i(0, 0, -1), new Vector3i(0, 0, 1)
+        };
+
+        // Tells each face-adjacent block its neighbour at changedPos changed, so reactive blocks (falling
+        // sand/gravel) can respond. Only the server propagates updates; the client world replays deltas.
+        private void NotifyNeighbors(Vector3i changedPos)
+        {
+            foreach (var offset in NeighborOffsets)
+            {
+                var pos = changedPos + offset;
+                GetBlock(pos.X, pos.Y, pos.Z).OnNeighborChanged(this, pos, changedPos);
+            }
+        }
+
+        /// <summary>Schedules a position to receive <see cref="Block.OnServerTick"/> on the next tick and onward
+        /// until it deregisters. Used by falling blocks to begin falling once their support is removed.</summary>
+        public void ScheduleBlockTick(Vector3i pos) => _tickingBlocks[pos] = 0;
+
+        /// <summary>Stops a position from ticking. A falling block calls this once it has come to rest.</summary>
+        public void UnscheduleBlockTick(Vector3i pos) => _tickingBlocks.TryRemove(pos, out _);
 
         public override Block GetBlock(int x, int y, int z)
         {
@@ -404,6 +431,15 @@ namespace MinecraftClone3API.Blocks
 
         /// <summary>Convenience: spawns one entity of the given registered type.</summary>
         public Entity SpawnEntity(EntityType type, Vector3 position) => SpawnEntity(type.CreateEntity(), position);
+
+        /// <summary>Finds a live world entity by id (used to resolve an entity-targeted item use), or null.
+        /// Tick-thread only.</summary>
+        public Entity FindEntity(int entityId)
+        {
+            foreach (var entity in Entities)
+                if (entity.EntityId == entityId) return entity;
+            return null;
+        }
 
         /// <summary>Spawns a dropped-item entity carrying <paramref name="stack"/>, given a registered item
         /// entity type (the first <see cref="EntityKind.Item"/> type). No-op if none is registered.</summary>

@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using MinecraftClone3API.Client;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.Util;
 using Newtonsoft.Json.Linq;
@@ -33,16 +32,13 @@ namespace MinecraftClone3API.IO
             return new TextureData(image.Data, image.Width, image.Height);
         }
 
-        public static Texture ReadTexture(string path)
-            => new Texture(ReadTextureData(path));
-
         public static BlockTexture ReadBlockTexture(string path)
         {
             var resolved = BlockModel.GetRelativePaths(path, path, ".png").FirstOrDefault(Exists);
             if (resolved == null)
             {
                 Logger.Error($"Texture \"{path}\" could not be found!");
-                return ClientResources.MissingTexture;
+                return CommonResources.MissingTexture;
             }
 
             if (_cachedTextures.TryGetValue(resolved, out var tex)) return tex;
@@ -78,15 +74,13 @@ namespace MinecraftClone3API.IO
             }
         }
 
-        public static Shader ReadShader(string path) => new Shader(path);
-
         public static BlockModel ReadBlockModel(string path)
         {
             var resolved = BlockModel.GetRelativePaths(path, path, ".json").FirstOrDefault(Exists);
             if (resolved == null)
             {
                 Logger.Error($"Block model \"{path}\" could not be found!");
-                return ClientResources.MissingModel;
+                return CommonResources.MissingModel;
             }
 
             if (_cachedModels.TryGetValue(resolved, out var model)) return model;

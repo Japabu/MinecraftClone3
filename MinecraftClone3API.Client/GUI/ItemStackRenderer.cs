@@ -64,7 +64,7 @@ namespace MinecraftClone3API.Client.GUI
         {
             if (Sprites.TryGetValue(item.Id, out var tex)) return tex;
             tex = item.TexturePath != null && ResourceReader.Exists(item.TexturePath)
-                ? ResourceReader.ReadTexture(item.TexturePath)
+                ? GlResources.ReadTexture(item.TexturePath)
                 : null;
             Sprites[item.Id] = tex;
             return tex;

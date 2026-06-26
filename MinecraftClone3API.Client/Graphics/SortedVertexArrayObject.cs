@@ -9,6 +9,8 @@ namespace MinecraftClone3API.Graphics
 {
     public class SortedVertexArrayObject : VertexArrayObject
     {
+        public override bool Sorted => true;
+
         private struct FaceInfo : IComparable<FaceInfo>
         {
             public Vector3 Position;

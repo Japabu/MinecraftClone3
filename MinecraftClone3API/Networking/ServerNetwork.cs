@@ -240,7 +240,8 @@ namespace MinecraftClone3API.Networking
             Stack = entity is EntityItem item ? item.Stack : ItemStack.Empty,
             Position = entity.Position,
             Pitch = entity.Pitch,
-            Yaw = entity.Yaw
+            Yaw = entity.Yaw,
+            Data = entity.Data
         };
 
         // Once the spawn column (the spawn chunk and the one below it, which the player stands on) has
@@ -293,6 +294,9 @@ namespace MinecraftClone3API.Networking
                     break;
                 case UseItemRequestPacket use when session.LoggedIn:
                     ApplyUseRequest(session, use);
+                    break;
+                case UseItemOnEntityRequestPacket useOn when session.LoggedIn:
+                    ApplyUseOnEntityRequest(session, useOn);
                     break;
                 case DropItemRequestPacket drop when session.LoggedIn:
                     ApplyDropRequest(session, drop);
@@ -391,7 +395,7 @@ namespace MinecraftClone3API.Networking
             foreach (var item in GameRegistry.Items)
             {
                 if (slot >= Inventory.HotbarSize) break;
-                if (!item.IsUsable) continue;
+                if (!item.IsUsable && !item.UsableOnEntity) continue;
                 inventory.Slots[slot++] = new ItemStack(item.Id, ItemStack.MaxStackSize);
             }
 
@@ -426,6 +430,20 @@ namespace MinecraftClone3API.Networking
             var item = session.Inventory.SelectedItem.Item;
             if (item == null || !item.IsUsable) return;
             item.OnUseServer(_world, session.Player, use.Position.ToVector3() + new Vector3(0.5f, 0f, 0.5f));
+        }
+
+        /// <summary>Runs the held item's server-side action against the targeted entity (shears on a sheep). The
+        /// target is resolved from the server's own entity list (not the request), and any resulting
+        /// <see cref="EntityData"/> change is broadcast so every client's copy stays in step.</summary>
+        private void ApplyUseOnEntityRequest(ClientSession session, UseItemOnEntityRequestPacket useOn)
+        {
+            var item = session.Inventory.SelectedItem.Item;
+            if (item == null || !item.UsableOnEntity) return;
+            var target = _world.FindEntity(useOn.EntityId);
+            if (target == null) return;
+
+            item.OnUseOnEntity(_world, session.Player, target);
+            Broadcast(new EntityDataPacket {EntityId = target.EntityId, Data = target.Data}, null);
         }
 
         /// <summary>Drops the player's held hotbar item (one, or the whole stack on Ctrl+Q): decrements the

@@ -142,7 +142,7 @@ namespace MinecraftClone3API.Util
         public static void Tick(int fbWidth, int fbHeight)
         {
             if (!Active) return;
-            var world = Profiler.World;
+            var world = ClientProfiling.World;
             if (world == null) return;
 
             // The Stream state must wait for the world to stream in FULLY: the server finished loading (loaded

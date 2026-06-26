@@ -32,6 +32,7 @@ namespace MinecraftClone3API.Plugins
 
         public void Register(CraftingRecipe recipe) => GameRegistry.RecipeRegistry.Register(PluginAttribute.Id, recipe);
         public void Register<T>() where T : BlockData => GameRegistry.BlockDataRegistry.Register(PluginAttribute.Id, new BlockDataRegistryEntry(typeof(T)));
+        public void RegisterEntityData<T>() where T : EntityData => GameRegistry.EntityDataRegistry.Register(PluginAttribute.Id, new EntityDataRegistryEntry(typeof(T)));
         public void Register(Biome biome) => GameRegistry.BiomeRegistry.Register(PluginAttribute.Id, biome);
         public void Register(Feature feature) => GameRegistry.FeatureRegistry.Register(PluginAttribute.Id, feature);
         public void Register(Dimension dimension) => GameRegistry.DimensionRegistry.Register(PluginAttribute.Id, dimension);

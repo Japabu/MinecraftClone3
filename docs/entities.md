@@ -38,6 +38,15 @@ The in-memory model (`EntityModel`/`ModelPart`/`ModelBox`,
 list of parts, each a group of texture-offset boxes that pivots for animation. The server never builds it; only
 the client loads it (from a data file — see Rendering) and turns it into GPU buffers.
 
+**Per-entity state (`EntityData`).** Mob-specific state lives in one nullable `Entity.Data` slot — the entity
+analog of `BlockData` (see [world-model.md](world-model.md)): an abstract `EntityData`
+([Entities/EntityData.cs](../MinecraftClone3API/Entities/EntityData.cs)) with `Serialize`/`Deserialize`, concrete
+subclasses (`SheepData { Sheared }`) registered by type (`PluginContext.RegisterEntityData<T>`) and (de)serialized
+behind a registry-key tag. It's **wire-only** (entities aren't saved): an `EntityType.DataFactory` builds the
+instance a creature spawns with, it rides `EntitySpawnPacket`, and changes broadcast via `EntityDataPacket`. The
+base class is GL-free; `EntityData.OverlayVisible` lets it drive the renderer (hide a sheared sheep's wool)
+without the API knowing the concrete subclass. The base `Entity` stays free of per-mob flags.
+
 ## Networking
 
 `EntitySpawnPacket` carries `TypeId` (+ an `ItemStack` for items); `EntityMovePacket`/`EntityDespawnPacket` are
@@ -59,6 +68,14 @@ holding the `EntityType` to spawn and the official spawn-egg sprite). Right-clic
 `UseItemRequestPacket` with the targeted cell; the server reads the held item from its own authoritative
 inventory copy (so the request can't spoof the item) and calls `Item.OnUseServer`, which spawns the creature.
 Fresh players are seeded the spawn eggs on the first hotbar slots (then blocks) so entities are testable at once.
+
+**Item use on an entity (shears).** An `Item` with `UsableOnEntity = true` (the shears) takes precedence on
+right-click: `PlayerController.PickEntity` ray-casts the held look direction against each entity's collision AABB
+(nearer than the targeted block), and a hit sends `UseItemOnEntityRequestPacket` with the entity id. The server
+resolves the id against its **own** `WorldServer.FindEntity` list (so it can't act on an arbitrary id), runs
+`Item.OnUseOnEntity`, then broadcasts the entity's (possibly changed) `EntityData`. `ItemShears.OnUseOnEntity`
+shears a woolly sheep — flips `SheepData.Sheared` (which the client uses to drop the wool layer) and `DropItem`s
+1–3 wool.
 
 ## Rendering
 
@@ -84,6 +101,13 @@ coordinates into our +Z-facing convention (`z → −z`) and rebases each cube's
 it honors per-cube `uv`/`inflate` and X-axis bone rotation (the quadruped body pitch), but not bone parenting,
 cube `mirror`, or Y/Z rotation conventions (unused by the built-in models). Bone names drive animation, so author
 them `head`/`body`/`leg0..3`/`arm0..1`/`wing0..1`.
+
+**Overlay layers.** An `EntityType` may name a second model + texture (`OverlayModelPath`/`OverlayTexturePath`) —
+the sheep's wool. It's built as a separate `RenderModel` (its own texture indexes into the array, so each VAO's
+vertices already reference the right layer — no extra bind) and drawn over the base with the **same** per-part
+matrices, since the overlay reuses the base bone names/pivots. The renderer skips it when the entity's
+`EntityData.OverlayVisible` is false (a sheared sheep). The player's hat/jacket layer is instead baked into
+`player.geo.json` because it shares the player's one skin texture.
 
 Some humanoid sheets (e.g. the zombie) use the **legacy single-layer layout**: the left arm/leg regions are
 blank and the right-limb texels serve both sides. At model-build time `MirrorEmptyLimbs` detects a fully

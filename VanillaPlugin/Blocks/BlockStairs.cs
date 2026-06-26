@@ -5,7 +5,6 @@ using MinecraftClone3API.Entities;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
-using OpenTK.Windowing.GraphicsLibraryFramework;
 using VanillaPlugin.BlockDatas;
 
 namespace VanillaPlugin.Blocks
@@ -33,7 +32,7 @@ namespace VanillaPlugin.Blocks
 
         public override bool IsFullBlock(WorldBase world, Vector3i blockPos) => false;
 
-        public override int GetPlacementMetadata(KeyboardState ks, EntityPlayer player, BlockRaytraceResult ray)
+        public override int GetPlacementMetadata(EntityPlayer player, BlockRaytraceResult ray)
         {
             // Facing = the player's horizontal look direction (the tall step rises toward where you look).
             // Forward = (sin yaw, _, cos yaw): yaw 0 looks +Z (south). Flip this mapping if placement feels

@@ -36,9 +36,9 @@ namespace MinecraftClone3.States
             EntityRenderer.Load();
             ChunkBorderRenderer.Load();
 
-            _background = ResourceReader.ReadTexture("System/Textures/Gui/ResourceLoadingBackground.png");
-            _progressBar = ResourceReader.ReadTexture("System/Textures/Gui/Progressbar.png");
-            _progressBarFull = ResourceReader.ReadTexture("System/Textures/Gui/ProgressbarFull.png");
+            _background = GlResources.ReadTexture("System/Textures/Gui/ResourceLoadingBackground.png");
+            _progressBar = GlResources.ReadTexture("System/Textures/Gui/Progressbar.png");
+            _progressBarFull = GlResources.ReadTexture("System/Textures/Gui/ProgressbarFull.png");
 
             Start(false);
         }
@@ -124,7 +124,7 @@ namespace MinecraftClone3.States
             // the same arrays, so they must be indexed before BlockTextureManager.Upload bakes them to the GPU.
             EntityRenderer.LoadModels();
 
-            BlockTextureManager.Upload();
+            GlTextureUploader.Upload();
 
             // The font comes from the Minecraft resource pack (minecraft/font/default.json), which is only
             // indexed by AddResourcePacks above — so the font must load here, after the pack, not in the

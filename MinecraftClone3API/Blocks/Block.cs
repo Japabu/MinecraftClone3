@@ -1,12 +1,9 @@
 ﻿using System.Collections.Generic;
-using MinecraftClone3API.Client;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
-using OpenTK.Windowing.Desktop;
-using OpenTK.Windowing.GraphicsLibraryFramework;
 
 namespace MinecraftClone3API.Blocks
 {
@@ -40,7 +37,7 @@ namespace MinecraftClone3API.Blocks
         public static readonly AxisAlignedBoundingBox DefaultAlignedBoundingBox =
             new AxisAlignedBoundingBox(new Vector3(-0.5f), new Vector3(0.5f));
         
-        public BlockModel Model = ClientResources.MissingModel;
+        public BlockModel Model = CommonResources.MissingModel;
 
         public Block(string name) : base(name)
         {
@@ -119,6 +116,13 @@ namespace MinecraftClone3API.Blocks
         /// on the client). Reads/writes the block's stored <see cref="BlockData"/>.</summary>
         public virtual void OnServerTick(WorldServer world, Vector3i blockPos) { }
 
+        /// <summary>Server-side: a block in one of the six face-adjacent positions changed (placed, broken, or
+        /// fell). Default no-op. Overriders must stay light — only schedule a tick
+        /// (<see cref="WorldServer.ScheduleBlockTick"/>) or touch their own block data; do not call back into
+        /// <c>SetBlock</c>, which would recurse through this notification. Falling blocks use it to start falling
+        /// when the block beneath them is removed.</summary>
+        public virtual void OnNeighborChanged(WorldServer world, Vector3i blockPos, Vector3i changedPos) { }
+
         public virtual Color4 GetTintColor(WorldBase world, Vector3i blockPos, int tintId) => Color4.White;
         public virtual LightLevel GetLightLevel(WorldBase world, Vector3i blockPos) => LightLevel.Zero;
 
@@ -126,15 +130,17 @@ namespace MinecraftClone3API.Blocks
         {
         }
 
-        /// <summary>Client-side: derive the metadata to carry in the place request (e.g. a tint from held
-        /// keys, or a stair's facing from the placing player's look + clicked face). Runs on the client so
-        /// the server — which may be headless — never reads input.</summary>
-        public virtual int GetPlacementMetadata(KeyboardState ks, EntityPlayer player, BlockRaytraceResult ray) => 0;
+        /// <summary>Client-side: derive the metadata to carry in the place request (e.g. a stair's facing from
+        /// the placing player's look + clicked face). Runs on the client; takes only Core types so the headless
+        /// server never depends on input/windowing.</summary>
+        public virtual int GetPlacementMetadata(EntityPlayer player, BlockRaytraceResult ray) => 0;
 
         /// <summary>Client-side: the player right-clicked this block while looking at it. Return true if the
         /// block handled the interaction (e.g. opened a GUI), which suppresses placing the held item. Runs
-        /// only on the client (the headless server never calls it), so it may touch window/GUI state.</summary>
-        public virtual bool OnActivated(GameWindow window, WorldBase world, Vector3i blockPos, EntityPlayer player) => false;
+        /// only on the client (the headless server never calls it), so it may touch window/GUI state via the
+        /// client globals (<c>ClientResources.Window</c>, <c>StateEngine</c>) — not passed in, so Core's
+        /// signature stays free of windowing types.</summary>
+        public virtual bool OnActivated(WorldBase world, Vector3i blockPos, EntityPlayer player) => false;
 
         public virtual int OnLightPassThrough(WorldBase world, Vector3i blockPos, int lightLevel, int color)
             => lightLevel - 1;

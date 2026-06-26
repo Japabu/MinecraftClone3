@@ -558,6 +558,9 @@ namespace MinecraftClone3API.Client.Blocks
         public void SendUseItem(Vector3i position)
             => _connection.Send(new UseItemRequestPacket {Position = position});
 
+        public void SendUseItemOnEntity(int entityId)
+            => _connection.Send(new UseItemOnEntityRequestPacket {EntityId = entityId});
+
         /// <summary>Asks the server to drop the held hotbar item (one, or the whole stack when
         /// <paramref name="all"/>). The server is authoritative for the inventory and echoes the result back.</summary>
         public void SendDropItem(bool all)
@@ -615,6 +618,9 @@ namespace MinecraftClone3API.Client.Blocks
                 case EntityDespawnPacket despawn:
                     Entities.Remove(despawn.EntityId);
                     break;
+                case EntityDataPacket data:
+                    if (Entities.TryGetValue(data.EntityId, out var dataEntity)) dataEntity.Data = data.Data;
+                    break;
                 case WorldTimePacket time:
                     _serverTimeSeconds = time.WorldSeconds;
                     _timeSyncClock.Restart();
@@ -665,6 +671,7 @@ namespace MinecraftClone3API.Client.Blocks
             entity.Position = spawn.Position;
             entity.Pitch = spawn.Pitch;
             entity.Yaw = spawn.Yaw;
+            entity.Data = spawn.Data;
             return entity;
         }
 

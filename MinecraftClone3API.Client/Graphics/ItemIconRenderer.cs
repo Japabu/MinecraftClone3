@@ -62,7 +62,7 @@ namespace MinecraftClone3API.Graphics
             GL.Uniform1(shader.GetUniformLocation("uTextures256"), 2);
             GL.Uniform1(shader.GetUniformLocation("uTextures1024"), 3);
 
-            BlockTextureManager.Bind();
+            GlTextureUploader.Bind();
             Samplers.BindBlockTextureSampler();
 
             vao.Draw();
