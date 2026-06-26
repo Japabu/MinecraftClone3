@@ -74,7 +74,7 @@ table** opens the 3×3 `GuiCraftingTable` overlay) and only places the held bloc
 `ApplyInterpolation(alpha)` lerps `PrevPosition→Position` so 20 tps motion is smooth at the frame rate. Two
 modes, toggled by **double-tapping Space**:
 - **Walk (default):** exact-Minecraft constants integrated once per tick — gravity `v_y=(v_y−0.08)·0.98`,
-  jump `0.42`, ground accel `0.1`/friction `0.546`, air `0.02`/`0.91`, Ctrl sprint `1.3×`.
+  jump `0.42`, ground accel `0.1`/friction `0.546`, air `0.02`/`0.91`, sprint `1.3×`.
   `PlayerPhysics.MoveWithCollision` is **swept per-axis (Y→X→Z)**: it clips each axis's displacement against
   overlapping solid blocks' collision boxes and zeroes the blocked component. A block contributes its boxes
   via **`Block.GetCollisionBoxes`** (block-local, ±0.5), which defaults to the single `GetBoundingBox` cube
@@ -88,11 +88,22 @@ modes, toggled by **double-tapping Space**:
   matters: on the jump tick `velY = +0.42`, and stepping then would stack `StepHeight` on the jump and clip
   the player up a full block — so stepping only happens while settling onto the ground.
 - **Swim (in water):** when the body overlaps a `Block.IsLiquid` block (`PlayerPhysics.IsInLiquid` samples
-  the lower + mid body), the walk tick takes the water branch — gentle water accel, all velocity damped by
-  `WaterDrag`, **Space buoys up** (`SwimImpulse`), otherwise a slow sink (`WaterGravity` ≪ land gravity).
-  Liquid is pass-through, so swept collision + the ground probe still run; you don't fall through.
+  the lower + mid body), the walk tick takes the water branch — gentle water accel (faster while
+  sprint-swimming), all velocity damped by `WaterDrag`, **Space buoys up** (`SwimImpulse`), otherwise a slow
+  sink (`WaterGravity` ≪ land gravity). Liquid is pass-through, so swept collision + the ground probe still
+  run; you don't fall through.
 - **Fly (creative):** the same fixed-step `Entity.Move` — Space/Shift up/down, Ctrl fast, **no
   gravity/collision** (noclip). Also runs in the 20 tps tick and is render-interpolated like walking.
+
+**Sprinting** (`PlayerController.UpdateSprint`, per frame). Engages on a held **Sprint** key (default Ctrl) or
+a **Forward double-tap** while pushing forward; it is **sticky** (stays on with Forward held alone) until
+Forward is released, a wall is hit (`PlayerPhysics.Tick`/`MoveWithCollision` now return a horizontal-collision
+bool, fed back as `_horizontalCollision`), or — in **Survival** — hunger drops to `≤ 6` (`EntityPlayer.Hunger`,
+mirrored from the stats packet; Creative is never gated). Sprinting passes `1.3×` to the walk branch (and the
+faster water accel to the swim branch) and **widens the FOV** to `SprintFovScale` (1.15×), eased via
+`PlayerController.FovScale` which `StateWorld` multiplies into the projection FOV (clamped ≤ 179°). Sprint
+costs no extra server bookkeeping: the server already approximates exhaustion from the reported position delta
+(sprinting just moves farther, see [entities.md](entities.md)).
 
 The block-target raytrace uses the **eye** (`RenderPosition + EyeOffset`); `SendMove` ships the **feet**
 position, so remote players (drawn by `EntityRenderer` as 0.6×1.8 boxes, offset up by half-height) line up.

@@ -33,6 +33,20 @@ namespace MinecraftClone3API.Entities
         /// <summary>True when the local player's own body should be drawn (any third-person view).</summary>
         public static bool RenderSelf => Perspective != CameraPerspective.FirstPerson;
 
+        // Sprinting (survival + creative walk): started by holding the Sprint key or double-tapping Forward
+        // while moving forward, and (in survival) only while not too hungry. Sticky once started — it keeps
+        // going on held Forward alone — until Forward is released, hunger runs low, or a wall is hit. Boosts
+        // walk speed (PlayerPhysics.SprintMultiplier) and widens the FOV like Minecraft.
+        private const float SprintFovScale = 1.15f;
+        private const float ForwardDoubleTapSeconds = 0.3f;
+        private const float SprintHungerThreshold = 6f;
+        private static bool _sprinting;
+        private static bool _horizontalCollision;
+        private static readonly Stopwatch _forwardTapTimer = Stopwatch.StartNew();
+        // Eased multiplier on the configured FOV: 1 normally, easing toward SprintFovScale while sprinting.
+        public static float FovScale = 1f;
+        private static readonly Stopwatch _fovTimer = Stopwatch.StartNew();
+
         private static BlockRaytraceResult _blockRaytrace;
         private static bool _skipMouseDelta;
         private static readonly Stopwatch _spaceTapTimer = Stopwatch.StartNew();
@@ -90,6 +104,8 @@ namespace MinecraftClone3API.Entities
                 }
                 _spaceTapTimer.Restart();
             }
+
+            UpdateSprint(ks);
 
             if (world is WorldClient client)
             {
@@ -211,10 +227,40 @@ namespace MinecraftClone3API.Entities
             if (wish.LengthSquared > 1f) wish = wish.Normalized();
 
             var jump = Keybinds.IsDown(ks, GameAction.Jump);
-            var sprint = Keybinds.IsDown(ks, GameAction.Sprint) && inputZ > 0;
 
-            PlayerPhysics.Tick(world, PlayerEntity, wish, jump, sprint);
+            _horizontalCollision = PlayerPhysics.Tick(world, PlayerEntity, wish, jump, _sprinting);
         }
+
+        /// <summary>Sprint state machine (Minecraft-style). Engages on a held Sprint key or a Forward
+        /// double-tap while pushing forward and (in survival) not too hungry; stays engaged on held Forward
+        /// alone until Forward is released, hunger drops, or a wall is hit. Also eases the sprint FOV. Idle
+        /// while flying — creative free-flight has its own fast modifier.</summary>
+        private static void UpdateSprint(KeyboardState ks)
+        {
+            var forwardDown = Keybinds.IsDown(ks, GameAction.Forward);
+
+            if (Keybinds.IsPressed(ks, GameAction.Forward))
+            {
+                if (_forwardTapTimer.Elapsed.TotalSeconds < ForwardDoubleTapSeconds && forwardDown && CanSprint())
+                    _sprinting = true;
+                _forwardTapTimer.Restart();
+            }
+
+            if (Keybinds.IsDown(ks, GameAction.Sprint) && forwardDown && CanSprint())
+                _sprinting = true;
+
+            if (!forwardDown || !CanSprint() || _horizontalCollision || PlayerEntity.Flying)
+                _sprinting = false;
+
+            var dt = (float) _fovTimer.Elapsed.TotalSeconds;
+            _fovTimer.Restart();
+            var target = _sprinting ? SprintFovScale : 1f;
+            FovScale += (target - FovScale) * MathF.Min(1f, dt * 12f);
+        }
+
+        // Survival can't sprint while too hungry (Minecraft: hunger must be above 6); creative always can.
+        private static bool CanSprint()
+            => PlayerEntity.GameMode != GameMode.Survival || PlayerEntity.Hunger > SprintHungerThreshold;
 
         private static void BreakBlock(WorldBase world)
         {

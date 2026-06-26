@@ -395,8 +395,10 @@ namespace MinecraftClone3.States
             // so a huge far plane (a 96-chunk horizon reaches ~1800 blocks) keeps enough depth precision to not
             // z-fight near full-detail terrain — 0.1 still only clips when the camera is right against a block.
             var farPlane = MathF.Max(512f, _world.LodRenderDistance + LodColumn.RegionBlocks * 2);
+            // Sprinting widens the FOV (eased in PlayerController), clamped so a high base FOV can't exceed 179°.
+            var fov = MathF.Min(GraphicsSettings.Fov * PlayerController.FovScale, 179f);
             var projection = Matrix4.CreatePerspectiveFieldOfView(
-                MathHelper.DegreesToRadians(GraphicsSettings.Fov), aspect, 0.1f, farPlane);
+                MathHelper.DegreesToRadians(fov), aspect, 0.1f, farPlane);
             WorldRenderer.RenderWorld(_world, projection);
 
             if (_window.CursorState == CursorState.Grabbed && !PlayerController.RenderSelf)
