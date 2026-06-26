@@ -3,6 +3,7 @@ using MinecraftClone3API.Client;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
+using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Desktop;
@@ -71,6 +72,20 @@ namespace MinecraftClone3API.Blocks
         /// (<c>break seconds ≈ hardness · 1.5</c> by hand). A negative value is unbreakable (bedrock). Creative
         /// breaks instantly regardless.</summary>
         public virtual float Hardness => 1.5f;
+
+        /// <summary>The tool category that mines this block fastest (Minecraft's <c>mineable/*</c> tags), or
+        /// <see cref="ToolType.None"/> if no tool helps. A matching held tool applies its
+        /// <see cref="Item.MiningSpeed"/> multiplier.</summary>
+        public virtual ToolType PreferredTool => ToolType.None;
+
+        /// <summary>Whether mining at full speed requires the correct tool of sufficient tier (Minecraft's
+        /// <c>requires_tool</c>: stone, ores, obsidian). When true and the held tool is wrong or too low a tier,
+        /// mining is throttled (the vanilla ÷100 vs ÷30 penalty).</summary>
+        public virtual bool RequiresCorrectTool => false;
+
+        /// <summary>The minimum matching-tool tier needed to satisfy <see cref="RequiresCorrectTool"/> (Minecraft
+        /// harvest level: stone ore 1, gold/diamond ore 2, obsidian 3). Ignored when no tool is required.</summary>
+        public virtual int RequiredToolTier => 0;
 
         public virtual AxisAlignedBoundingBox GetBoundingBox(WorldBase world, Vector3i blockPos)
             => DefaultAlignedBoundingBox;

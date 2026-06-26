@@ -98,10 +98,20 @@ The Inventory key opens the **survival** inventory (`GuiInventory` — 2×2 craf
 
 **Block breaking.** Creative breaks instantly on left-click (unchanged). Survival is hold-to-mine
 (`PlayerController.HandleBreaking`, per display frame): holding left-click accrues progress on the targeted
-block scaled by its `Block.Hardness` (Minecraft `break seconds ≈ hardness · 1.5` by hand; bedrock's negative
-hardness is unbreakable), and breaks it (the existing `SetBlock`-to-air request) when full; the progress resets
-if the target changes or the button is released. The progressive crack overlay (`destroy_stage_0..9`) is drawn
-by `BlockBreakRenderer` (see [rendering.md](rendering.md)).
+block at the Minecraft mining rate (`BreakSeconds`), and breaks it (the existing `SetBlock`-to-air request) when
+full; the progress resets if the target changes or the button is released. The rate follows vanilla exactly: a
+held tool's `Item.MiningSpeed` multiplier applies only when its `Item.ToolType` matches the block's
+`Block.PreferredTool`, and the per-tick destroy progress is `speed / hardness / divider` where `divider` is
+**30** with the correct tool (or for blocks that don't require one) and **100** otherwise — so mining stone by
+hand takes the full 7.5 s, a wooden pickaxe ~1.1 s. A block with `RequiresCorrectTool` only reaches the ÷30 rate
+when the matching tool's `Item.ToolTier` meets its `Block.RequiredToolTier`. Negative hardness (bedrock) is
+unbreakable. The progressive crack overlay (`destroy_stage_0..9`) is drawn by `BlockBreakRenderer` (see
+[rendering.md](rendering.md)).
+
+**Tools.** `ItemTool` (VanillaPlugin) is a pickaxe/axe/shovel with a material's speed + tier (wood 2/0, stone
+4/1, iron 6/2, gold 12/0, diamond 8/3); each material registers all three. Tools stack to 1 and have **no
+durability** (see [known-issues.md](known-issues.md)). Blocks declare their preferred tool / tier / requires-tool
+on `BlockBasic`'s ctor.
 
 **HUD/GUI textures** come from the resource pack's modern (1.20.2+) **individual sprite** layout — the hotbar
 (`hud/hotbar.png` + `hud/hotbar_selection.png`) and the survival HUD hearts/food (`hud/heart/*`, `hud/food_*`)

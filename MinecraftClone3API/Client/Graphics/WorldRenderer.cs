@@ -125,7 +125,7 @@ namespace MinecraftClone3API.Graphics
         // world brightens/dims over the cycle with no remesh. The time is server-authoritative
         // (WorldClient.WorldTimeSeconds, synced from WorldTimePacket and advanced locally), so multiplayer
         // clients share one time of day. Set once at the top of RenderWorld. Starts at noon (the 0.25 phase).
-        private const float DayLengthSeconds = 240f;
+        private const float DayLengthSeconds = 1200f;
         private static double _dayTimeSeconds;
 
         // Sun/moon textures from the resource pack (sun.png and the full-moon celestial texture), sampled by

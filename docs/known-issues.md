@@ -98,7 +98,8 @@ relevant permanent doc. Not a changelog.
 - **No texel snapping → mild shadow shimmer while the camera moves.** Because the sun moves every frame the
   projection is intentionally unsnapped (snapping would flicker). The cost is faint sub-texel edge crawl while
   walking/turning; PCF softens it and the sun's own crawl masks it. If the day cycle were paused or made very
-  slow, re-introducing texel snapping would be worth it. `DayLengthSeconds` (240) sets how fast the sun moves.
+  slow, re-introducing texel snapping would be worth it. `DayLengthSeconds` (1200, the Minecraft 20-minute day)
+  sets how fast the sun moves.
 - **Only opaque chunks cast sun shadows; entities cast/receive none.** Transparent geometry (water/glass) is
   excluded from the shadow pass (a solid black shadow from translucent material is wrong; a coloured shadow
   would need a transmittance pass). Remote players render "unlit" (`normal.w==1`), so they neither receive nor
@@ -160,7 +161,8 @@ relevant permanent doc. Not a changelog.
   3×3 crafting table has full vanilla slot interaction (pick/place/split/drag) — see [inventory.md](inventory.md).
   Accepted scope: crafting is computed **client-side** and the result mutations go up as ordinary (unvalidated)
   `InventoryAction`s — fine for a creative sandbox, exploitable in real MP. No survival pickup/drop, no recipe
-  book. Standalone items are inert (the apple isn't edible, no tools/durability).
+  book; no survival item pickup/drop. (The apple is edible and mining tools work — but tools have no durability
+  and broken blocks drop nothing; see the tool/survival limitations above.)
 - **Item ids aren't remapped from disk.** Like block ids, the `registry.bin` save/load path exists but is
   unwired, so item ids are assigned by registration order — stable only for a fixed plugin set. A changed
   plugin set shifts ids and a saved inventory would show wrong items (delete the world, per the no-back-compat
@@ -191,10 +193,14 @@ relevant permanent doc. Not a changelog.
   (`geometry.sheep.v1.8`, `inflate` 0.6–1.75) drawn over the bare sheep with the dyeable wool texture; we ship
   only the sheared body, so the sheep looks thin. Now that the loader supports `inflate`, it's an added overlay
   model (like the player's) plus the `wool` texture — deferred.
-- **Survival MVP — accepted limitations.** Mining time is `hardness · 1.5` (hand only) — there are **no tools**,
-  so no tool speed-up and no "requires a tool to drop" gating; every block is breakable (except bedrock).
-  `Block.Hardness` is set with real Minecraft values only on `BlockBasic`; other block types (leaves, grass,
-  torch, stairs, crafting table, **furnace** — its file is off-limits — glowstone, water) use the `1.5` default.
+- **Tools — accepted limitations.** Mining tools exist (`ItemTool`: pickaxe/axe/shovel × wood/stone/iron/gold/
+  diamond) with Minecraft-exact speed/tier and the full vanilla mining formula, but **no durability** (tools
+  never wear out) and **no block drops** — a broken block vanishes, so survival can't gather resources to *craft*
+  tools yet; tools are obtainable only from the creative item picker. The block's `requires-tool` gate currently
+  only throttles mining *speed* (÷100), not drops, because there is no drop system.
+- **Survival MVP — accepted limitations.** Tool/hardness data is set with real Minecraft values only on
+  `BlockBasic`; other block types (leaves, grass, torch, stairs, crafting table, **furnace** — its file is
+  off-limits — glowstone, water) use the `1.5` hardness / no-preferred-tool defaults.
   The survival inventory (`GuiInventory`) has the 2×2 crafting grid but **no armor, offhand, or 3D player
   preview** (those regions of `inventory.png` are inert). Mob combat (creatures dealing/taking damage) is still
   unwired. The breaking crack overlay assumes the deferred G-buffer attachment layout (diffuse/normal/light).

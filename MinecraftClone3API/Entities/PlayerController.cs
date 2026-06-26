@@ -180,9 +180,9 @@ namespace MinecraftClone3API.Entities
             world.SetBlock(_blockRaytrace.BlockPos, BlockRegistry.BlockAir);
         }
 
-        /// <summary>Creative breaks instantly on click; survival holds left-click to mine, accruing
-        /// hardness-scaled progress on the targeted block (Minecraft <c>break seconds ≈ hardness · 1.5</c> by
-        /// hand) and breaking it when full. Progress resets if the target changes or the button is released.</summary>
+        /// <summary>Creative breaks instantly on click; survival holds left-click to mine, accruing progress on
+        /// the targeted block at the Minecraft mining rate (tool match and tier vs. block hardness) and breaking
+        /// it when full. Progress resets if the target changes or the button is released.</summary>
         private static void HandleBreaking(WorldBase world, MouseState ms)
         {
             var dt = (float) _frameTimer.Elapsed.TotalSeconds;
@@ -214,16 +214,45 @@ namespace MinecraftClone3API.Entities
                 _miningProgress = 0f;
             }
 
-            var hardness = _blockRaytrace.Block.Hardness;
-            if (hardness < 0f) { _miningProgress = 0f; return; }   // unbreakable (bedrock)
+            Item tool = null;
+            if (world is WorldClient client)
+            {
+                var held = client.Inventory.SelectedItem;
+                if (!held.IsEmpty) tool = held.Item;
+            }
 
-            _miningProgress += dt / MathF.Max(0.05f, hardness * 1.5f);
+            var breakSeconds = BreakSeconds(_blockRaytrace.Block, tool);
+            if (breakSeconds < 0f) { _miningProgress = 0f; return; }   // unbreakable (bedrock)
+
+            if (breakSeconds <= 0f) _miningProgress = 1f;
+            else _miningProgress += dt / breakSeconds;
+
             if (_miningProgress >= 1f)
             {
                 world.SetBlock(target, BlockRegistry.BlockAir);
                 _miningTarget = null;
                 _miningProgress = 0f;
             }
+        }
+
+        /// <summary>Seconds to break <paramref name="block"/> with the held <paramref name="tool"/>, following
+        /// Minecraft's mining formula: the tool's <see cref="Item.MiningSpeed"/> applies only when its
+        /// <see cref="Item.ToolType"/> matches the block's <see cref="Block.PreferredTool"/>, and the rate is
+        /// throttled (÷100 vs ÷30) when the block <see cref="Block.RequiresCorrectTool"/> but the tool is wrong
+        /// or too low a tier. Returns 0 for instant blocks and -1 for unbreakable ones.</summary>
+        private static float BreakSeconds(Block block, Item tool)
+        {
+            var hardness = block.Hardness;
+            if (hardness < 0f) return -1f;
+            if (hardness == 0f) return 0f;
+
+            var matches = tool != null && tool.ToolType != ToolType.None && tool.ToolType == block.PreferredTool;
+            var speed = matches ? tool.MiningSpeed : 1f;
+            var correctForDrops = !block.RequiresCorrectTool || (matches && tool.ToolTier >= block.RequiredToolTier);
+            var divider = correctForDrops ? 30f : 100f;
+
+            var progressPerTick = speed / hardness / divider;
+            return PlayerPhysics.TickSeconds / progressPerTick;
         }
 
         /// <summary>Right-click interaction: if the player is looking at an interactable block (e.g. a crafting
