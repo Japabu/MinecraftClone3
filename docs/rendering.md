@@ -204,7 +204,9 @@ For the icon, `ItemIconRenderer`
 draws the box model with the **`ItemIcon` shader** (its single output matches the 1-attachment icon FBO; the
 entity shader's 3 G-buffer outputs render nothing into it on macOS) — the box-model VAO shares the packed
 chunk-vertex format, so the icon shader handles it with a per-part `uModel`. Block-entity geos are authored
-**centred on x/z with feet at y=0** so they drop into the cell with a centre-pivot yaw. The **chest** geo
+**centred on x/z with feet at y=0**, and seat at the cell's **bottom-centre**: voxel blocks are centred on their
+integer coordinate (the mesher bakes a `-0.5` element offset, so block `P` fills `[P-0.5, P+0.5]`), so a
+block-entity at `P` translates by `(P.x, P.y-0.5, P.z)` with a centre-pivot yaw — *not* `P+0.5`. The **chest** geo
 (`chest.geo.json`) reproduces Minecraft's exact `ChestModel` boxes/UVs (bottom/lid/lock), with the lid+lock
 bones pivoted at the **back-top hinge** so they swing as one. When this client has a chest's screen open
 (`BlockEntityRenderer.SetChestOpen`, driven by `GuiChest`), `BlockEntityRenderer` eases a per-chest lid
@@ -228,7 +230,18 @@ entity shader (so composition lights it), **pinned to a fixed view-space pose** 
 must **not** clear the shared depth buffer (composition reconstructs world position from it), so it instead
 compresses its draw into the front `glDepthRange(0, 0.1)` to beat all terrain while its own faces self-occlude,
 restoring the range after. Only in first-person (`PlayerController.Perspective`); `PlayerController.SwingPhase`
-drives a swing arc on attack/mine/place/use. An empty hand draws nothing.
+drives the swing on attack/mine/place/use. An empty hand draws nothing.
+
+**The held pose comes from the resource pack, exactly like Minecraft** (`ItemDisplay`). Minecraft composes the
+item model's `display.firstperson_righthand` transform (data, in the pack JSON) with `ItemInHandRenderer`'s
+hand constants and swing (code). We do the same: the per-stack pose is
+`displayMatrix · swing · translate(0.56,-0.52,-0.72)` (the MC `ITEM_POS` arm base), where `displayMatrix` is
+the model's `display.firstperson_righthand` (`scale → rotateZ·Y·X → translate/16`, MC's `ItemTransform.apply`)
+and `swing` is MC's exact `swingArm`+`applyItemArmAttackTransform` (identity at rest). A **held block** reads its
+already-parsed `BlockModel.Display`; a **flat item** resolves its model's display on demand from the pack
+(parent chain followed, transforms only — no texture load), so a resource pack that retunes a model's display
+block retunes our viewmodel too. Models with no display block fall back to the vanilla `item/generated` /
+`block/block` firstperson values.
 
 **Entity hurt flash.** `EntityGeometry.fs` has a per-draw `uTint` (white by default, set once in `BindShader`);
 `EntityRenderer.DrawModel` sets it red while an entity's `HurtTime` is non-zero (then resets to white), so a

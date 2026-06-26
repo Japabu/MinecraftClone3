@@ -113,11 +113,14 @@ namespace MinecraftClone3API.Graphics
         private static void DrawAt(EntityRenderer.RenderModel model, Block block, WorldClient world, Vector3i worldPos,
             int uModel, int uLight, float dt)
         {
-            var centre = worldPos.ToVector3() + new Vector3(0.5f, 0.5f, 0.5f);
+            // Voxel blocks are centred on their integer coordinate (the mesher bakes a -0.5 element offset, so
+            // block P fills [P-0.5, P+0.5]). The block-entity model is authored centred on x/z with its feet at
+            // y=0, so it seats at the cell's bottom-centre: the integer position, dropped half a block in Y.
+            var centre = worldPos.ToVector3();
             EntityRenderer.SetLight(world, centre, uLight);
 
             var root = Matrix4.CreateRotationY(block.GetBlockEntityRotation(world, worldPos)) *
-                       Matrix4.CreateTranslation(worldPos.X + 0.5f, worldPos.Y, worldPos.Z + 0.5f);
+                       Matrix4.CreateTranslation(worldPos.X, worldPos.Y - 0.5f, worldPos.Z);
 
             var progress = AnimateLid(worldPos, dt);
             if (progress <= 0f)

@@ -37,23 +37,25 @@ namespace MinecraftClone3API.Graphics
             GL.DepthRange(0.0, 0.1);
 
             var inverseView = camera.View.Inverted();
-            var swing = SwingMatrix();
+            var swing = ItemDisplay.Swing(PlayerController.SwingPhase);
 
             if (block != null && block.RendersAsBlockEntity && BlockEntityRenderer.GetModel(block.Id) is EntityRenderer.RenderModel beModel)
             {
-                // Box model authored centred on x/z with feet at y=0: drop it to centre, then place it.
-                var pose = Matrix4.CreateTranslation(0f, -0.45f, 0f) * BlockPose(swing);
-                EntityRenderer.DrawStaticParts(beModel, pose * inverseView, uModel);
+                // Box model authored centred on x/z with feet at y=0: centre it in Y (height 14/16) before the
+                // block display transform scales/rotates it about its centre, exactly like a normal held block.
+                var pose = Matrix4.CreateTranslation(0f, -0.4375f, 0f) *
+                           ItemDisplay.FirstPersonPose(item, block, swing) * inverseView;
+                EntityRenderer.DrawStaticParts(beModel, pose, uModel);
             }
             else if (block != null && EntityRenderer.GetItemMesh(block.Id) is VertexArrayObject blockMesh)
             {
-                var pose = BlockPose(swing) * inverseView;
+                var pose = ItemDisplay.FirstPersonPose(item, block, swing) * inverseView;
                 GL.UniformMatrix4(uModel, false, ref pose);
                 blockMesh.Draw();
             }
             else if (HeldItemMeshes.Get(item) is VertexArrayObject itemMesh)
             {
-                var pose = ItemPose(swing) * inverseView;
+                var pose = ItemDisplay.FirstPersonPose(item, null, swing) * inverseView;
                 GL.UniformMatrix4(uModel, false, ref pose);
                 itemMesh.Draw();
             }
@@ -61,32 +63,5 @@ namespace MinecraftClone3API.Graphics
             GL.DepthRange(0.0, 1.0);
             RenderState.Set(new GlState {CullFace = true, DepthTest = true, DepthFunc = DepthFunction.Lequal});
         }
-
-        // The swing arc: dip down and rotate forward over the 0..1..0 of the swing. (Tunable.)
-        private static Matrix4 SwingMatrix()
-        {
-            var s = MathF.Sin(PlayerController.SwingPhase * MathF.PI);
-            return Matrix4.CreateRotationX(-1.3f * s) * Matrix4.CreateTranslation(-0.1f * s, -0.25f * s, 0.1f * s);
-        }
-
-        // View-space placement of a held block (centred cube [-0.5,0.5]) in the lower-right, angled to show its
-        // front + side. View space: camera at origin looking −Z, +X right, +Y up. (Tunable.)
-        private static Matrix4 BlockPose(Matrix4 swing) =>
-            Matrix4.CreateScale(0.40f) *
-            Matrix4.CreateRotationX(MathHelper.DegreesToRadians(20f)) *
-            Matrix4.CreateRotationY(MathHelper.DegreesToRadians(-45f)) *
-            swing *
-            Matrix4.CreateTranslation(0.56f, -0.52f, -0.80f);
-
-        // View-space placement of a held flat item (the extruded sprite, centred [-0.5,0.5], thin in z), held
-        // diagonally like Minecraft. The sprite faces the camera dead-on (no Y angle) so its front and back faces
-        // coincide on screen rather than splitting into a doubled image; the swing's X-tilt reveals its depth.
-        // (Tunable.)
-        private static Matrix4 ItemPose(Matrix4 swing) =>
-            Matrix4.CreateScale(0.85f) *
-            Matrix4.CreateRotationZ(MathHelper.DegreesToRadians(20f)) *
-            Matrix4.CreateRotationY(MathHelper.DegreesToRadians(-90f)) *
-            swing *
-            Matrix4.CreateTranslation(0.65f, -0.32f, -0.70f);
     }
 }
