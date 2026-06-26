@@ -97,6 +97,43 @@ position, so remote players (drawn by `EntityRenderer` as 0.6×1.8 boxes, offset
 `EntityMove`) aims a lerp from the current visual position toward the new target, advanced per frame by
 `WorldClient.UpdateEntityInterpolation`, and `Entity.RenderPosition` returns the lerp.
 
+**Survival.** The 20 tps `Tick` runs player physics → `_integratedServer.Update()` (which runs the survival
+sim, [entities.md](entities.md)) → `_network.Pump()` (handles fall/gamemode/respawn, broadcasts stats) →
+`SendMove`. Each frame `StateWorld` mirrors the server's `GameMode` onto the local player (so the fly toggle is
+gated to Creative — double-tap Space does nothing in Survival) and force-clears flight in Survival. The
+**survival HUD** (`Client/GUI/SurvivalHud.cs`) draws hearts + hunger above the hotbar from the official
+`icons.png` (placeholder bars without a resource pack), only in Survival. On death (`WorldClient.PlayerDead`,
+from the stats packet) `StateWorld` opens the **`GuiDeathScreen`** overlay (Respawn / Title); singleplayer keeps
+the integrated server ticking *while dead* (`simulate |= PlayerDead`) so the `RespawnRequest` is processed even
+though the overlay unfocused the world. When the server clears the dead flag, `StateWorld` closes the overlay
+and snaps the (position-authoritative) player to the spawn point. The **pause menu** carries a "Game Mode:
+Survival/Creative" toggle button that sends `SetGameModeRequest`; the label follows the authoritative mode
+(updated optimistically on click so it responds even while the singleplayer pause has frozen the server pump).
+The Inventory key opens the **survival** inventory (`GuiInventory` — 2×2 crafting + 36 slots over
+`container/inventory.png`) in survival and the creative item picker (`GuiCreativeInventory`) in creative.
+
+**Block breaking.** Creative breaks instantly on left-click (unchanged). Survival is hold-to-mine
+(`PlayerController.HandleBreaking`, per display frame): holding left-click accrues progress on the targeted
+block at the Minecraft mining rate (`BreakSeconds`), and breaks it (the existing `SetBlock`-to-air request) when
+full; the progress resets if the target changes or the button is released. The rate follows vanilla exactly: a
+held tool's `Item.MiningSpeed` multiplier applies only when its `Item.ToolType` matches the block's
+`Block.PreferredTool`, and the per-tick destroy progress is `speed / hardness / divider` where `divider` is
+**30** with the correct tool (or for blocks that don't require one) and **100** otherwise — so mining stone by
+hand takes the full 7.5 s, a wooden pickaxe ~1.1 s. A block with `RequiresCorrectTool` only reaches the ÷30 rate
+when the matching tool's `Item.ToolTier` meets its `Block.RequiredToolTier`. Negative hardness (bedrock) is
+unbreakable. The progressive crack overlay (`destroy_stage_0..9`) is drawn by `BlockBreakRenderer` (see
+[rendering.md](rendering.md)).
+
+**Tools.** `ItemTool` (VanillaPlugin) is a pickaxe/axe/shovel with a material's speed + tier (wood 2/0, stone
+4/1, iron 6/2, gold 12/0, diamond 8/3); each material registers all three. Tools stack to 1 and have **no
+durability** (see [known-issues.md](known-issues.md)). Blocks declare their preferred tool / tier / requires-tool
+on `BlockBasic`'s ctor.
+
+**HUD/GUI textures** come from the resource pack's modern (1.20.2+) **individual sprite** layout — the hotbar
+(`hud/hotbar.png` + `hud/hotbar_selection.png`) and the survival HUD hearts/food (`hud/heart/*`, `hud/food_*`)
+are separate PNGs, not the old monolithic `widgets.png`/`icons.png`; `GuiAssets` resolves each and callers fall
+back to coloured placeholders when absent.
+
 **Keybinds.** Movement/interaction keys are rebindable via `Keybinds` (`Client/Keybinds.cs`), a static
 `GameAction → Keys` map persisted to `GamePaths.KeybindsFile` (`Keybinds.json`), loaded in `Program.Main`
 alongside `GraphicsSettings`. `PlayerController` (and `StateWorld`/`ContainerScreen` for the Inventory action)

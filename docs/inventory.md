@@ -12,12 +12,17 @@ others.
   `namespace:name` content id), and `GetName()` (the localized display name). The base class is GL-free so the
   headless server uses it. A non-block item can set `IsUsable` and override `OnUseServer` for a server-side
   right-click action (e.g. Vanilla's `ItemSpawnEgg` spawns a creature — see [entities.md](entities.md));
-  right-clicking a usable item sends a `UseItemRequestPacket`.
+  right-clicking a usable item sends a `UseItemRequestPacket`. `CanUseServer(player)` gates whether the action
+  may run (default true) and `ConsumesOnUse` (default false) decrements one from the held stack on success.
+  This is the **food** path: Vanilla's `ItemFood` (Apple — MC nutrition 4 / saturation modifier 0.3) is usable,
+  consumes-on-use, and `CanUseServer` only true in survival with hunger to refill;
+  `ServerNetwork.ApplyUseRequest` checks `CanUseServer`, runs `OnUseServer` (`PlayerSurvival.Eat`), then
+  decrements the slot and re-pushes `InventoryState`. Right-click already routes here, so no new packet.
 - **`ItemBlock`** (`Items/ItemBlock.cs`) — the auto-generated item form of a block. Registering a block
   (`PluginContext.Register(Block)`) also registers an `ItemBlock` for it under the same registry key, so every
   block is an item: placeable (`GetBlock()` returns the block) and rendered as a 3D isometric icon.
-- **Standalone items** subclass `Item` (e.g. Vanilla's `ItemSimple` — stick, coal, ingots, diamond, apple):
-  no block, a 2D sprite, not placeable.
+- **Standalone items** subclass `Item` (e.g. Vanilla's `ItemSimple` — stick, coal, ingots, diamond; `ItemFood`
+  — apple): no block, a 2D sprite, not placeable.
 - **`ItemRegistry`** (`Util/ItemRegistry.cs`) — parallels `BlockRegistry` but with its **own id space** (item
   ids travel only in inventory packets, never in chunk storage). Id 0 is the empty stack; real items start at
   1. Ids are assigned in registration order, deterministic for a fixed plugin set. `GameRegistry` exposes
@@ -150,9 +155,14 @@ optimistically, and sends `InventoryAction` / `HeldSlot` on changes. Inputs are 
 - **`ItemStackRenderer`** draws an `ItemStack` in a slot: a block item's 3D icon, or a standalone item's lazily
   loaded 2D sprite (`TexturePath`, cached, placeholder box when absent), plus a count label when above one. It
   re-asserts alpha blending before blitting because `GetIcon` may have just rendered (depth on, blend off).
-- **`HotbarRenderer`** draws the always-on HUD hotbar from `widgets.png` (placeholder boxes without a pack).
-- **`GuiCreativeInventory`** (overlay, **E**) — scrollable grid of every registered item over
+- **`HotbarRenderer`** draws the always-on HUD hotbar from the modern sprite layout (`hud/hotbar.png` +
+  `hud/hotbar_selection.png`; placeholder boxes without a pack — see the sprite-layout note below).
+- **`GuiCreativeInventory`** (overlay, **E** in creative) — scrollable grid of every registered item over
   `creative_inventory/tab_items.png`, a cursor-held stack, and the clickable hotbar row.
+- **`GuiInventory`** (overlay, **E** in survival) — the survival player inventory over
+  `container/inventory.png`: a 2×2 crafting grid + result (scratch, returns to the inventory on close), the 3×9
+  main inventory, and the hotbar. Same `ContainerScreen` interaction as the crafting table; armor / offhand /
+  the 3D player preview are not modelled.
 - **`GuiTooltip`** (`Client/GUI/GuiTooltip.cs`) — the item-name tooltip drawn next to the cursor when hovering
   a non-empty slot; used by both container screens.
 
@@ -164,4 +174,11 @@ path (guarded by `ResourceReader.Exists`); absent a pack, screens draw placehold
 `PlayerController` handles hotbar selection (number keys `1`–`9`, scroll wheel — wrapping, mirrored via
 `WorldClient.SendHeldSlot`). Right-click first tries `Block.OnActivated` on the targeted block (crafting table
 → opens its screen); otherwise `PlaceBlock` places the held item's block (skipping non-placeable items and
-empty slots). Breaking is unchanged. The creative screen opens on **E** in `StateWorld.Update`.
+empty slots). Breaking is creative-instant / survival hold-to-mine (see [state-gameloop.md](state-gameloop.md)).
+The Inventory key (**E**) opens `GuiCreativeInventory` in creative, `GuiInventory` in survival
+(`StateWorld.Update`).
+
+**HUD/GUI sprite layout.** A current resource pack (1.20.2+) uses **individual sprite PNGs** under
+`gui/sprites/hud/…` and `gui/sprites/…` rather than the old monolithic `widgets.png`/`icons.png`. `GuiAssets`
+holds the per-sprite asset paths (hotbar, hotbar selection, hearts, food); each is loaded lazily and null-guarded
+so a missing pack falls back to placeholder drawing.

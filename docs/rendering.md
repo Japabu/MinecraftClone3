@@ -11,7 +11,7 @@
          2: RGBA8 light (rgb = baked block light, a = baked sky-light factor 0..1)   + depth
          · opaque chunks front-to-back, then transparent back-to-front (per-chunk sorted VAO)
          · EntityRenderer  : remote players as solid placeholder cubes (BlockOutline shader, unlit)
-         · PlayerController : block-targeting outline
+         · PlayerController : block-targeting outline + the survival breaking crack overlay (BlockBreak shader)
     └─ DrawShadowResolve (same gate as DrawShadowMap) → ShadowResolveFramebuffer (HALF-res RGBA8)
          the 12-tap PCF runs here at half res: r = shadow factor, g = norm view depth;
          reads G-buffer normal/depth/light + the shadow depth map
@@ -161,6 +161,14 @@ water-flag + light **cleanly** (overwrite, not blend). This needs **no `RenderSt
 restore keeps RenderState's single `Blend` bool the whole description. Side effect (intentional): glass also
 writes its front pane's own normal/light instead of blending them, removing a latent `normal.w` corruption
 when glass overlapped an unlit pixel. `WorldGeometry.vs/.fs` are untouched.
+
+**Breaking crack overlay.** `BlockBreakRenderer` (in the overlay pass, while a survival player mines) draws a
+slightly-inflated textured cube of the `destroy_stage_0..9` sprite over the targeted block with the `BlockBreak`
+shader. Same attachment trick as above, taken further: it **masks attachments 1 (normal) and 2 (light)** with
+`GL.ColorMask` and writes only the blended diffuse, so the block keeps its geometry-pass normal/light and
+composition lights the darkened surface — the cracks read as part of the block. Depth-test `Lequal` with
+**depth-write off** keeps the far cube faces culled against the block's own depth (so face culling isn't needed).
+The dark, mostly-transparent crack texture `discard`s its empty texels.
 
 OpenGL is capped at **4.1 Core / GLSL 4.10** (macOS limit). Consequences: **uniform and sampler locations are
 queried by name** (no `layout(location=)`/`layout(binding=)` on uniforms); vertex-attribute and

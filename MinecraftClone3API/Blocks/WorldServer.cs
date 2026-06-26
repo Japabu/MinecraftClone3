@@ -488,6 +488,7 @@ namespace MinecraftClone3API.Blocks
             foreach (var playerEntity in PlayerEntities)
             {
                 playerEntity.Update();
+                PlayerSurvival.Tick(this, playerEntity);
             }
             foreach (var entity in Entities)
             {

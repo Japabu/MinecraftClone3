@@ -1,5 +1,6 @@
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Entities;
+using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
 
@@ -16,7 +17,9 @@ namespace VanillaPlugin.Blocks
     {
         private static readonly Vector3i Down = new Vector3i(0, -1, 0);
 
-        public BlockFalling(string name, string modelPath) : base(name, modelPath, true)
+        public BlockFalling(string name, string modelPath, float hardness = 1.5f,
+            ToolType tool = ToolType.None, int toolTier = 0, bool requiresTool = false)
+            : base(name, modelPath, true, hardness, tool, toolTier, requiresTool)
         {
         }
 

@@ -24,7 +24,9 @@ network data is needed). Subclasses:
   `FallingBlockData` so the client renders the right full-size block (`EntityRenderer.DrawFallingBlock`, reusing
   the dropped-item block mesh at full scale, no spin).
 - **`EntityPlayer`** — the player (its own tuned [PlayerPhysics](../MinecraftClone3API/Entities/PlayerPhysics.cs);
-  remote copies are bare `Entity`s with `Type == null`).
+  remote copies are bare `Entity`s with `Type == null`). Also carries the survival stats
+  (`Health`/`Hunger`/`Saturation`/`Exhaustion`/`Air`/`GameMode`, see below) — server-authoritative, mirrored on
+  the client from the stats packet.
 
 `EntityPhysics` ([Entities/EntityPhysics.cs](../MinecraftClone3API/Entities/EntityPhysics.cs)) is the generic
 gravity + AABB sweep (clip Y→X→Z against each cell's `GetCollisionBoxes`), parameterised by the entity's
@@ -83,6 +85,31 @@ resolves the id against its **own** `WorldServer.FindEntity` list (so it can't a
 `Item.OnUseOnEntity`, then broadcasts the entity's (possibly changed) `EntityData`. `ItemShears.OnUseOnEntity`
 shears a woolly sheep — flips `SheepData.Sheared` (which the client uses to drop the wool layer) and `DropItem`s
 1–3 wool.
+
+## Player survival
+
+Health/hunger/damage are **server-authoritative** even though the player's *position* is client-authoritative.
+`PlayerSurvival` ([Entities/PlayerSurvival.cs](../MinecraftClone3API/Entities/PlayerSurvival.cs)) is stateless
+logic over `EntityPlayer`'s stat fields, run once per 20 tps tick from `WorldServer.Update`'s player loop. It
+applies Minecraft-exact mechanics on Normal difficulty:
+
+- **Health** 20 (10 hearts, 1 heart = 2 points), **Hunger** 20, saturation gated by hunger.
+- **Hunger/saturation/exhaustion:** movement (approximated server-side from the reported position delta) and
+  regen accrue exhaustion; at the threshold it drains saturation, then hunger.
+- **Regen:** hunger ≥ 18 heals 1 health on the 80-tick cadence (costs exhaustion). **Starvation:** hunger 0
+  drains 1 health on the same cadence, floored at 1 (Normal).
+- **Drowning:** when the head cell is liquid, `Air` drains from 300; at 0, 2 points every 20 ticks (refills
+  above water). **Void:** below Y −96, 4 points every 10 ticks.
+- **Fall damage:** `max(0, ceil(distance − 3))`. Because the client owns position, `PlayerController` accumulates
+  the fall while airborne and reports it on landing (`PlayerFallPacket`); the server computes the damage.
+- **Creative** short-circuits everything (stats clamped full, immune, may fly). The mode is per-player
+  (`GameMode`), toggled via the pause menu (`SetGameModeRequest`); flight is gated to Creative client-side.
+
+Death is `Health ≤ 0`: the network layer latches `ClientSession.Dead`, broadcasts it in the stats packet, and
+holds the player until a `RespawnRequest` (the death screen) resets stats + teleports to spawn. Stats persist
+per player (see [networking.md](networking.md) / `PlayerSerializer`). Eating drives hunger back up — see
+[inventory.md](inventory.md). Mob combat (creatures dealing/taking damage) is **not** wired yet; `EntityType`
+already carries `MaxHealth` for it.
 
 ## Rendering
 

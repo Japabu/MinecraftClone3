@@ -28,6 +28,19 @@ namespace MinecraftClone3API.Networking
         /// progress; cleared on <see cref="CloseContainerPacket"/>.</summary>
         public Vector3i? OpenContainer;
 
+        /// <summary>Whether this player is currently dead (health ≤ 0), set by the stats sync. While dead the
+        /// server holds the player until a <see cref="RespawnRequestPacket"/> arrives.</summary>
+        public bool Dead;
+
+        // Last survival stats sent to this client, so PlayerStatsPacket is sent only on change. StatsSent
+        // forces the first send (the cached values would otherwise compare equal to a fresh full-health player).
+        public bool StatsSent;
+        public float LastHealth;
+        public float LastHunger;
+        public float LastSaturation;
+        public byte LastGameMode;
+        public bool LastDead;
+
         // Gate for StreamChunks: the player chunk + loaded-chunk count at the last fully-drained interest
         // scan. When neither changed there is nothing new to stream, so the O(loaded) ConcurrentDictionary
         // scan is skipped (it was ~88% of CPU in a trace while standing still in a fully-streamed area).
