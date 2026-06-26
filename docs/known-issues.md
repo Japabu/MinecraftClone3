@@ -113,7 +113,8 @@ relevant permanent doc. Not a changelog.
 - **No texel snapping → mild shadow shimmer while the camera moves.** Because the sun moves every frame the
   projection is intentionally unsnapped (snapping would flicker). The cost is faint sub-texel edge crawl while
   walking/turning; PCF softens it and the sun's own crawl masks it. If the day cycle were paused or made very
-  slow, re-introducing texel snapping would be worth it. `DayLengthSeconds` (240) sets how fast the sun moves.
+  slow, re-introducing texel snapping would be worth it. `DayLengthSeconds` (1200, the Minecraft 20-minute day)
+  sets how fast the sun moves.
 - **Only opaque chunks cast sun shadows; entities cast/receive none.** Transparent geometry (water/glass) is
   excluded from the shadow pass (a solid black shadow from translucent material is wrong; a coloured shadow
   would need a transmittance pass). Remote players render "unlit" (`normal.w==1`), so they neither receive nor
@@ -175,7 +176,8 @@ relevant permanent doc. Not a changelog.
   3×3 crafting table has full vanilla slot interaction (pick/place/split/drag) — see [inventory.md](inventory.md).
   Accepted scope: crafting is computed **client-side** and the result mutations go up as ordinary (unvalidated)
   `InventoryAction`s — fine for a creative sandbox, exploitable in real MP. No survival pickup/drop, no recipe
-  book. Standalone items are inert (the apple isn't edible, no tools/durability).
+  book; no survival item pickup/drop. (The apple is edible and mining tools work — but tools have no durability
+  and broken blocks drop nothing; see the tool/survival limitations above.)
 - **Item ids aren't remapped from disk.** Like block ids, the `registry.bin` save/load path exists but is
   unwired, so item ids are assigned by registration order — stable only for a fixed plugin set. A changed
   plugin set shifts ids and a saved inventory would show wrong items (delete the world, per the no-back-compat
@@ -200,9 +202,33 @@ relevant permanent doc. Not a changelog.
   not load faithfully): bone `parent` hierarchies (our `EntityModel` is a flat part list — the renderer pivots
   each part independently, no parent transform), cube `mirror` (we author explicit per-box UVs instead), and the
   Y/Z bone-rotation sign conventions (only the X-axis quadruped pitch is exercised + verified). Supporting
-  parented bones would mean giving the renderer a real bone matrix stack. Geometry is transcribed from the
-  **official Mojang Bedrock** `.geo.json` (verified cube-for-cube), so the built-in mobs match vanilla exactly.
-- **The sheep renders sheared (no wool layer).** Vanilla's wool is a second, inflated body/head/leg geometry
-  (`geometry.sheep.v1.8`, `inflate` 0.6–1.75) drawn over the bare sheep with the dyeable wool texture; we ship
-  only the sheared body, so the sheep looks thin. Now that the loader supports `inflate`, it's an added overlay
-  model (like the player's) plus the `wool` texture — deferred.
+  parented bones would mean giving the renderer a real bone matrix stack. Cube **`origin`/`size`/`uv` and the
+  leg pivots are transcribed from the official Mojang Bedrock `.geo.json` and verified cube-for-cube**, so the
+  built-in mobs' geometry matches vanilla exactly. The one un-applied detail is cube **`mirror`** (vanilla
+  mirrors the right-side legs and one arm/leg of the humanoid): we render those faces un-mirrored, which is
+  near-invisible on the near-symmetric limb textures. Applying it means swapping the left/right face regions
+  and reversing U in `EntityRenderer.AddBox`.
+- **Entities are stored/queried by linear scan — fine now, wants a spatial index eventually.** The server keeps
+  a flat `WorldServer.Entities` `HashSet`; `FindEntity` (entity-targeted use), `EntityCreature.NearestPlayer`
+  (every creature, every tick), and the client's `PlayerController.PickEntity` (every right-click) all scan the
+  whole set O(n). Bounded today by the ambient-spawn soft cap (few entities), but a dense world (big herds,
+  many dropped items) would make the per-tick `NearestPlayer` scan the hot one. The fix is a **uniform spatial
+  hash** (entities bucketed by cell, updated on move) so AI/picking/lookup query only nearby cells; defer until
+  entity counts justify it. Entity ids could also use a `Dictionary<int, Entity>` to make `FindEntity` O(1)
+  cheaply, independent of the spatial work.
+- **Sheep wool is white-only (no dye colours), and the sheared sheep doesn't regrow it.** The wool overlay
+  renders from `sheep_wool.png` (untinted), so all sheep are white; vanilla tints the wool by the sheep's dye
+  colour. And there's no grass-eating, so a sheared sheep stays bare. Both deferred — the wiring (a per-sheep
+  `SheepData`, the overlay layer) is in place, so colour is a tint on the overlay draw + a colour field in
+  `SheepData`, and regrow is a server-side timer flipping `Sheared` back.
+- **Tools — accepted limitations.** Mining tools exist (`ItemTool`: pickaxe/axe/shovel × wood/stone/iron/gold/
+  diamond) with Minecraft-exact speed/tier and the full vanilla mining formula, but **no durability** (tools
+  never wear out) and **no block drops** — a broken block vanishes, so survival can't gather resources to *craft*
+  tools yet; tools are obtainable only from the creative item picker. The block's `requires-tool` gate currently
+  only throttles mining *speed* (÷100), not drops, because there is no drop system.
+- **Survival MVP — accepted limitations.** Tool/hardness data is set with real Minecraft values only on
+  `BlockBasic`; other block types (leaves, grass, torch, stairs, crafting table, **furnace** — its file is
+  off-limits — glowstone, water) use the `1.5` hardness / no-preferred-tool defaults.
+  The survival inventory (`GuiInventory`) has the 2×2 crafting grid but **no armor, offhand, or 3D player
+  preview** (those regions of `inventory.png` are inert). Mob combat (creatures dealing/taking damage) is still
+  unwired. The breaking crack overlay assumes the deferred G-buffer attachment layout (diffuse/normal/light).

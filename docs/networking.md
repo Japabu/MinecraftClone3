@@ -39,6 +39,10 @@ tolerates the server mutating the source chunk concurrently (a torn entry self-c
   C→S  OpenContainer/CloseContainer   client opened/closed a container block (furnace) screen
   S→C  ContainerState        open container's item slots + progress fields, streamed each tick to its viewers
   C→S  ContainerSlot         client edited one of a container block's own slots (input/fuel/output)
+  S→C  PlayerStats           owning player's health/maxhealth/hunger/saturation/gamemode + dead flag; on change
+  C→S  PlayerFall            completed fall distance (blocks); server applies fall damage (player owns position)
+  C→S  SetGameModeRequest    pause-menu game-mode toggle (server-authoritative)
+  C→S  RespawnRequest        death-screen respawn (honoured only while dead)
   S→C  DimensionChange       drop the cached world + re-enter loading; carries generic visuals (HasSky, fog, ambient)
 ```
 
@@ -79,6 +83,16 @@ own inventory rows in the furnace screen still use `InventoryAction`. `CloseCont
 **copies them by value**. The `InventoryState` packet carries
 the live server `Inventory` by reference over loopback, so the client receive **copies it slot-by-slot**
 (`ItemStack` is a struct) rather than aliasing the server's array.
+
+**Survival stats are server-authoritative** (see [entities.md](entities.md)). The server runs the survival sim
+on `ClientSession.Player` and, each `Pump`, `SyncPlayerStats()` sends a `PlayerStats` packet to the **owning**
+client only when a value changed (cached per session). It also latches `ClientSession.Dead` from health ≤ 0.
+The client mirrors the stats onto `WorldClient` (HUD, flight gate, death screen). `PlayerFall` reports a landing
+so the server can apply fall damage despite the player owning its position; `SetGameModeRequest` flips the mode;
+`RespawnRequest` (only while dead) resets stats + teleports the player to spawn, after which the next
+`PlayerStats` clears the dead flag and the client snaps to the respawn point. Player **stats persist** alongside
+the inventory in `PlayerSerializer` (`<worldDir>/Players/<name>.dat`) — a save-format change, so an existing
+world (or its `Players/` folder) must be deleted.
 
 **Placement metadata is computed client-side, never read on the server.** `Block.OnPlaced(world, pos,
 player, int metadata)` receives the metadata from the `PlaceBlockRequest`; the client derives it via
@@ -122,8 +136,8 @@ whole `ChunkData`. Rare; deltas handle the common place/break/light path.
 `ServerNetwork.Pump()` runs once per server tick, in order: adopt pending connections → drain & handle each
 session's packets (incl. `ChunkRelease`) → drop disconnected sessions → **stream chunks** (nearest-first,
 in-range-not-yet-sent only, capped at `MaxChunksPerTick` per session per tick) → **send `PlayerReady`** to
-any session whose `SentChunks` now covers the spawn column → **flush block changes** (delta packets) →
-**resend dirty chunks** (block-data only).
+any session whose `SentChunks` now covers the spawn column → relay entities → sync containers → **sync player
+stats** → **flush block changes** (delta packets) → **resend dirty chunks** (block-data only).
 
 **LOD horizon streaming.** `LodColumnData` mirrors `ChunkDataPacket` exactly — `From` carries the live region
 by reference (loopback never serializes), and compression + serialization are **lazy inside `Write`/`Read`** at

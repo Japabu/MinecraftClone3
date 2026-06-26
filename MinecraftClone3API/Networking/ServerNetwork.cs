@@ -226,6 +226,7 @@ namespace MinecraftClone3API.Networking
             SendTimeSync();
             SyncEntities();
             SyncContainers();
+            SyncPlayerStats();
 
             _pumpTimer.Restart();
             FlushBlockChanges();
@@ -307,7 +308,8 @@ namespace MinecraftClone3API.Networking
             Stack = entity is EntityItem item ? item.Stack : ItemStack.Empty,
             Position = entity.Position,
             Pitch = entity.Pitch,
-            Yaw = entity.Yaw
+            Yaw = entity.Yaw,
+            Data = entity.Data
         };
 
         // Once the spawn column (the spawn chunk and the one below it, which the player stands on) has
@@ -361,6 +363,18 @@ namespace MinecraftClone3API.Networking
                 case UseItemRequestPacket use when session.LoggedIn:
                     ApplyUseRequest(session, use);
                     break;
+                case UseItemOnEntityRequestPacket useOn when session.LoggedIn:
+                    ApplyUseOnEntityRequest(session, useOn);
+                    break;
+                case PlayerFallPacket fall when session.LoggedIn:
+                    PlayerSurvival.ApplyFallDamage(session.Player, fall.FallDistance);
+                    break;
+                case SetGameModeRequestPacket gm when session.LoggedIn:
+                    SetGameMode(session, (GameMode) gm.GameMode);
+                    break;
+                case RespawnRequestPacket _ when session.LoggedIn:
+                    Respawn(session);
+                    break;
                 case DropItemRequestPacket drop when session.LoggedIn:
                     ApplyDropRequest(session, drop);
                     break;
@@ -404,6 +418,67 @@ namespace MinecraftClone3API.Networking
                 });
         }
 
+        /// <summary>Sends each player its own survival stats when a value changed since the last send (so the
+        /// owning client's HUD/death screen stay in sync). Also latches <see cref="ClientSession.Dead"/> from
+        /// the authoritative health.</summary>
+        private void SyncPlayerStats()
+        {
+            foreach (var session in _sessions)
+            {
+                if (!session.LoggedIn) continue;
+                var p = session.Player;
+                session.Dead = p.Health <= 0f;
+
+                if (session.StatsSent && p.Health == session.LastHealth && p.Hunger == session.LastHunger &&
+                    p.Saturation == session.LastSaturation && (byte) p.GameMode == session.LastGameMode &&
+                    session.Dead == session.LastDead)
+                    continue;
+
+                session.StatsSent = true;
+                session.LastHealth = p.Health;
+                session.LastHunger = p.Hunger;
+                session.LastSaturation = p.Saturation;
+                session.LastGameMode = (byte) p.GameMode;
+                session.LastDead = session.Dead;
+
+                session.Connection.Send(new PlayerStatsPacket
+                {
+                    Health = p.Health,
+                    MaxHealth = PlayerSurvival.MaxHealth,
+                    Hunger = p.Hunger,
+                    Saturation = p.Saturation,
+                    GameMode = (byte) p.GameMode,
+                    Dead = session.Dead
+                });
+            }
+        }
+
+        private static void SetGameMode(ClientSession session, GameMode mode)
+        {
+            session.Player.GameMode = mode;
+            // Survival forbids flight; the meaningful gate is client-side, but clear the flag for cleanliness.
+            if (mode == GameMode.Survival) session.Player.Flying = false;
+        }
+
+        private void Respawn(ClientSession session)
+        {
+            if (!session.Dead) return;
+            PlayerSurvival.Reset(session.Player);
+            session.Dead = false;
+
+            // Respawning always returns to the Overworld spawn. If the player died in another dimension, run a
+            // full transfer (drop their world client-side and re-load the Overworld); otherwise just reposition.
+            if (session.World != _world)
+            {
+                BeginRespawnTransfer(session);
+            }
+            else
+            {
+                session.Player.Position = SpawnPosition;
+                session.Player.LastTickPosition = SpawnPosition;
+            }
+        }
+
         private void Login(ClientSession session, string name)
         {
             if (session.LoggedIn) return;
@@ -411,12 +486,13 @@ namespace MinecraftClone3API.Networking
             session.EntityId = _world.NextEntityId();
             session.PlayerName = name ?? "";
             session.World = _world;
-            session.Player = new EntityPlayer {Position = SpawnPosition, EntityId = session.EntityId};
+            session.Player = new EntityPlayer
+                {Position = SpawnPosition, LastTickPosition = SpawnPosition, EntityId = session.EntityId};
             session.LoggedIn = true;
             session.ReadyGate = SpawnPosition;
             _world.AddPlayer(session.Player);
 
-            if (!PlayerSerializer.Load(_world.WorldDir, session.PlayerName, session.Inventory))
+            if (!PlayerSerializer.Load(_world.WorldDir, session.PlayerName, session.Inventory, session.Player))
                 SeedCreativeInventory(session.Inventory);
 
             session.Connection.Send(new LoginAcceptPacket {EntityId = session.EntityId, Spawn = SpawnPosition});
@@ -465,7 +541,7 @@ namespace MinecraftClone3API.Networking
             foreach (var item in GameRegistry.Items)
             {
                 if (slot >= Inventory.HotbarSize) break;
-                if (!item.IsUsable) continue;
+                if (!item.IsUsable && !item.UsableOnEntity) continue;
                 inventory.Slots[slot++] = new ItemStack(item.Id, ItemStack.MaxStackSize);
             }
 
@@ -498,9 +574,35 @@ namespace MinecraftClone3API.Networking
         /// is read from the server's authoritative inventory copy, not the request, so it can't be spoofed.</summary>
         private void ApplyUseRequest(ClientSession session, UseItemRequestPacket use)
         {
-            var item = session.Inventory.SelectedItem.Item;
+            var slot = session.Inventory.SelectedHotbar;
+            var held = session.Inventory.Slots[slot];
+            var item = held.Item;
             if (item == null || !item.IsUsable) return;
+            // Item-specific gate (e.g. food only applies in survival when there is hunger to refill).
+            if (!item.CanUseServer(session.Player)) return;
+
             item.OnUseServer(session.World, session.Player, use.Position.ToVector3() + new Vector3(0.5f, 0f, 0.5f));
+
+            if (item.ConsumesOnUse)
+            {
+                session.Inventory.Slots[slot] =
+                    held.Count - 1 <= 0 ? ItemStack.Empty : held.WithCount(held.Count - 1);
+                session.Connection.Send(new InventoryStatePacket {Inventory = session.Inventory});
+            }
+        }
+
+        /// <summary>Runs the held item's server-side action against the targeted entity (shears on a sheep). The
+        /// target is resolved from the server's own entity list (not the request), and any resulting
+        /// <see cref="EntityData"/> change is broadcast so every client's copy stays in step.</summary>
+        private void ApplyUseOnEntityRequest(ClientSession session, UseItemOnEntityRequestPacket useOn)
+        {
+            var item = session.Inventory.SelectedItem.Item;
+            if (item == null || !item.UsableOnEntity) return;
+            var target = session.World.FindEntity(useOn.EntityId);
+            if (target == null) return;
+
+            item.OnUseOnEntity(session.World, session.Player, target);
+            BroadcastTo(session.World, new EntityDataPacket {EntityId = target.EntityId, Data = target.Data}, null);
         }
 
         /// <summary>Drops the player's held hotbar item (one, or the whole stack on Ctrl+Q): decrements the
@@ -543,7 +645,7 @@ namespace MinecraftClone3API.Networking
 
                 if (session.LoggedIn)
                 {
-                    PlayerSerializer.Save(_world.WorldDir, session.PlayerName, session.Inventory);
+                    PlayerSerializer.Save(_world.WorldDir, session.PlayerName, session.Inventory, session.Player);
                     session.World.RemovePlayer(session.Player);
                     BroadcastTo(session.World, new EntityDespawnPacket {EntityId = session.EntityId}, session);
                     Logger.Info($"Player {session.EntityId} disconnected");
@@ -786,8 +888,30 @@ namespace MinecraftClone3API.Networking
             session.World.RemovePlayer(session.Player);
             BroadcastTo(session.World, new EntityDespawnPacket {EntityId = session.EntityId}, session);
 
-            session.World = toWorld;
             session.Player.Position = approx.ToVector3() + new Vector3(0.5f, 0f, 0.5f);
+            MoveToDimension(session, toWorld, approx, buildPortal: true);
+            session.PortalImmune = true;
+            session.PortalTimer = 0;
+        }
+
+        /// <summary>Sends a dead player home to the Overworld spawn, transferring dimensions if they died
+        /// somewhere else (so the client drops the Nether and re-loads the Overworld).</summary>
+        private void BeginRespawnTransfer(ClientSession session)
+        {
+            session.Player.Position = SpawnPosition;
+            MoveToDimension(session, _world, SpawnPosition.ToVector3i(), buildPortal: false);
+        }
+
+        /// <summary>Detaches the player from their current dimension and re-attaches them to <paramref
+        /// name="toWorld"/> at <paramref name="approx"/>, resets the per-session streaming state, and tells the
+        /// client to drop its world + apply the destination's visuals. The arrival (portal build or plain drop)
+        /// is finalized by <see cref="ProcessPendingTransfers"/> once the column has streamed in.</summary>
+        private void MoveToDimension(ClientSession session, WorldServer toWorld, Vector3i approx, bool buildPortal)
+        {
+            session.World.RemovePlayer(session.Player);
+            BroadcastTo(session.World, new EntityDespawnPacket {EntityId = session.EntityId}, session);
+
+            session.World = toWorld;
             session.Player.Velocity = Vector3.Zero;
             toWorld.AddPlayer(session.Player);
 
@@ -799,10 +923,9 @@ namespace MinecraftClone3API.Networking
             session.LodScanRegionCount = -1;
             session.ReadyGate = null;
             session.ReadySent = false;
-            session.PortalImmune = true;
-            session.PortalTimer = 0;
             session.PendingPortalWorld = toWorld;
             session.PendingPortalApprox = approx;
+            session.PendingBuildPortal = buildPortal;
 
             // Ship the destination dimension's generic visuals (sky/fog/ambient) so the client renders it without
             // the engine knowing anything dimension-specific. Defaults (open sky) if the dimension is unregistered.
@@ -821,9 +944,6 @@ namespace MinecraftClone3API.Networking
         /// client finishes loading at the destination portal.</summary>
         private void ProcessPendingTransfers()
         {
-            var portals = GameRegistry.Portals;
-            if (portals == null) return;
-
             foreach (var session in _sessions)
             {
                 var world = session.PendingPortalWorld;
@@ -835,7 +955,12 @@ namespace MinecraftClone3API.Networking
                 var chunk = WorldBase.ChunkInWorld(session.PendingPortalApprox);
                 if (!world.IsChunkGenerated(chunk)) continue;
 
-                var stand = portals.EnsureDestinationPortal(world, session.PendingPortalApprox);
+                // A portal transfer finds-or-builds the destination portal; a respawn just drops the player at
+                // the (known-safe) spawn block.
+                var portals = GameRegistry.Portals;
+                var stand = session.PendingBuildPortal && portals != null
+                    ? portals.EnsureDestinationPortal(world, session.PendingPortalApprox)
+                    : session.PendingPortalApprox.ToVector3() + new Vector3(0.5f, 0f, 0.5f);
                 session.Player.Position = stand;
                 session.Player.Velocity = Vector3.Zero;
                 session.PendingPortalWorld = null;
@@ -878,7 +1003,7 @@ namespace MinecraftClone3API.Networking
             // never sent a disconnect, so RemoveDisconnected wouldn't have saved them.
             foreach (var session in _sessions)
                 if (session.LoggedIn)
-                    PlayerSerializer.Save(_world.WorldDir, session.PlayerName, session.Inventory);
+                    PlayerSerializer.Save(_world.WorldDir, session.PlayerName, session.Inventory, session.Player);
 
             try
             {

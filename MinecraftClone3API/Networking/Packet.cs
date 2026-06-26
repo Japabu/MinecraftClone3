@@ -15,9 +15,11 @@ namespace MinecraftClone3API.Networking
         BlockChanges,
         PlaceBlockRequest,
         UseItemRequest,
+        UseItemOnEntityRequest,
         EntityMove,
         EntitySpawn,
         EntityDespawn,
+        EntityData,
         WorldTime,
         LodColumnData,
         InventoryState,
@@ -28,6 +30,10 @@ namespace MinecraftClone3API.Networking
         CloseContainer,
         ContainerState,
         ContainerSlot,
+        PlayerStats,
+        PlayerFall,
+        SetGameModeRequest,
+        RespawnRequest,
         DimensionChange
     }
 
@@ -48,9 +54,11 @@ namespace MinecraftClone3API.Networking
             {PacketId.BlockChanges, () => new BlockChangesPacket()},
             {PacketId.PlaceBlockRequest, () => new PlaceBlockRequestPacket()},
             {PacketId.UseItemRequest, () => new UseItemRequestPacket()},
+            {PacketId.UseItemOnEntityRequest, () => new UseItemOnEntityRequestPacket()},
             {PacketId.EntityMove, () => new EntityMovePacket()},
             {PacketId.EntitySpawn, () => new EntitySpawnPacket()},
             {PacketId.EntityDespawn, () => new EntityDespawnPacket()},
+            {PacketId.EntityData, () => new EntityDataPacket()},
             {PacketId.WorldTime, () => new WorldTimePacket()},
             {PacketId.LodColumnData, () => new LodColumnDataPacket()},
             {PacketId.InventoryState, () => new InventoryStatePacket()},
@@ -61,6 +69,10 @@ namespace MinecraftClone3API.Networking
             {PacketId.CloseContainer, () => new CloseContainerPacket()},
             {PacketId.ContainerState, () => new ContainerStatePacket()},
             {PacketId.ContainerSlot, () => new ContainerSlotPacket()},
+            {PacketId.PlayerStats, () => new PlayerStatsPacket()},
+            {PacketId.PlayerFall, () => new PlayerFallPacket()},
+            {PacketId.SetGameModeRequest, () => new SetGameModeRequestPacket()},
+            {PacketId.RespawnRequest, () => new RespawnRequestPacket()},
             {PacketId.DimensionChange, () => new DimensionChangePacket()}
         };
 

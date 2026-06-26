@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Net.Sockets;
+using System.Threading;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Client;
 using MinecraftClone3API.Client.Blocks;
@@ -43,8 +44,13 @@ namespace MinecraftClone3.States
 
         private readonly bool _connectionFailed;
 
+        // The previous world's async teardown (see Exit), if it is still saving. A newly opened world and the
+        // app-exit path join it first so a save never races the next world on disk or gets cut off at exit.
+        private static Thread _pendingTeardown;
+
         private bool _loading = true;
         private bool _spawnApplied;
+        private GuiDeathScreen _deathScreen;
         private int _lastRenderDistanceChunks = -1;
         private float _lastLodHorizonQuality = -1f;
         private int _lastLodHorizonChunks = -1;
@@ -79,6 +85,10 @@ namespace MinecraftClone3.States
             _window = window;
             _multiplayer = multiplayer;
             _benchmark = benchmark;
+
+            // Don't open a world while the previous one is still saving on its teardown thread (Exit) — it would
+            // race the same region files on disk. In practice the save is long done by the time the menu is navigated.
+            WaitForPendingTeardown();
 
             // Grab the cursor so relative mouse movement drives the camera (FPS-style). The benchmark drives the
             // camera itself and runs unattended, so it must NOT grab the cursor (that would trap the user's mouse).
@@ -187,22 +197,33 @@ namespace MinecraftClone3.States
                 _world.ForceLodMeshRescan();
             }
 
+            // Mirror the server-authoritative game mode onto the local player so the controller can gate
+            // flight, and force-disable flight in survival.
+            _player.GameMode = _world.GameMode;
+            if (_world.GameMode == GameMode.Survival) _player.Flying = false;
+            UpdateDeathScreen();
+
             // The automated benchmark drives the camera itself (no player input / no pause overlay).
             var active = focused && !_benchmark;
             if (active && _window.KeyboardState.IsKeyPressed(Keys.Escape))
             {
-                StateEngine.AddOverlay(new GuiPauseMenu(_window));
+                StateEngine.AddOverlay(new GuiPauseMenu(_window, _world));
                 active = false;
             }
             if (active && Keybinds.IsPressed(_window.KeyboardState, GameAction.Inventory))
             {
-                StateEngine.AddOverlay(new GuiCreativeInventory(_window, _world));
+                StateEngine.AddOverlay(_world.GameMode == GameMode.Survival
+                    ? (GuiBase) new GuiInventory(_window, _world)
+                    : new GuiCreativeInventory(_window, _world));
                 active = false;
             }
 
-            // Singleplayer freezes the world while paused; multiplayer can't pause a shared server. The
-            // benchmark always pumps so chunks keep streaming/regenerating even with the window unfocused.
-            var simulate = focused || _multiplayer || _benchmark;
+            // The world keeps simulating whenever it isn't explicitly paused: only the singleplayer Esc menu
+            // pauses it (StateEngine.WorldPaused), so a container/inventory screen leaves furnaces smelting and
+            // mobs moving, exactly as vanilla — and the non-pausing death overlay keeps the integrated server
+            // ticking so a respawn request is processed. Multiplayer can't pause a shared server, and the
+            // benchmark always pumps so chunks keep streaming with the window unfocused.
+            var simulate = _multiplayer || _benchmark || !StateEngine.WorldPaused;
             if (simulate)
             {
                 var dt = _simTimer.Elapsed.TotalSeconds;
@@ -252,6 +273,32 @@ namespace MinecraftClone3.States
                 _spawnApplied = false;
                 _loadProgress = 0f;
                 _loadingTimer.Restart();
+            }
+        }
+
+        /// <summary>Opens the death overlay when the server reports the player died, and closes it (snapping the
+        /// player to the server's respawn point — the client is position-authoritative) once the server confirms
+        /// the revive. Driven by the death flag in the player stats packet.</summary>
+        private void UpdateDeathScreen()
+        {
+            if (_world.PlayerDead && _deathScreen == null)
+            {
+                _deathScreen = new GuiDeathScreen(_window, _world);
+                StateEngine.AddOverlay(_deathScreen);
+            }
+            else if (!_world.PlayerDead && _deathScreen != null)
+            {
+                _deathScreen.IsDead = true;
+                _deathScreen = null;
+
+                _player.Position = _world.SpawnPosition;
+                _player.PrevPosition = _world.SpawnPosition;
+                _player.InterpolatedPosition = _world.SpawnPosition;
+                _player.Velocity = Vector3.Zero;
+
+                _window.CursorState = CursorState.Grabbed;
+                PlayerController.ResetMouse();
+                PlayerController.Camera.Update();
             }
         }
 
@@ -353,6 +400,7 @@ namespace MinecraftClone3.States
             WorldRenderer.RenderWorld(_world, projection);
 
             HotbarRenderer.Render(_world.Inventory);
+            SurvivalHud.Render(_world);
 
             if (!Profiler.Recording && !RenderDebug.ShowDiagnostics && !RenderDebug.ShowControls) return;
 
@@ -493,9 +541,38 @@ namespace MinecraftClone3.States
             Profiler.World = null;
             Profiler.Network = null;
             Profiler.Server = null;
+
+            // GL teardown must run here, on the main/GL thread. Stopping the server network and joining +
+            // saving the world is GL-free but can take seconds when many chunks are dirty (a burning furnace
+            // floods light, dirtying every chunk it touches). Doing it here would block the render loop for the
+            // whole save; on macOS the window then goes unresponsive and its drawable surface wedges, so the
+            // screen freezes on the last frame even though the game has already moved to the menu. Run it on a
+            // background thread instead; the next world open and app exit gate on it via WaitForPendingTeardown.
             _world?.Disconnect();
-            _network?.Stop();
-            _network?.UnloadWorlds();
+
+            var network = _network;
+            if (network == null) return;
+
+            _pendingTeardown = new Thread(() =>
+            {
+                network.Stop();
+                network.UnloadWorlds();   // saves + stops every dimension world, not just the Overworld
+            }) {Name = "World Teardown"};
+            _pendingTeardown.Start();
         }
+
+        /// <summary>Blocks until the previous world's async teardown (<see cref="Exit"/>) has finished saving.
+        /// The teardown thread is foreground, so the process already won't exit mid-save; this also lets a
+        /// freshly opened world wait so it never races the old save on disk.</summary>
+        public static void WaitForPendingTeardown()
+        {
+            var pending = _pendingTeardown;
+            if (pending != null && pending.IsAlive) pending.Join();
+            _pendingTeardown = null;
+        }
+
+        /// <summary>True while the async world teardown (<see cref="Exit"/>) is still saving — drives the
+        /// "Saving world..." screen, which keeps drawing until this clears and then reveals the title.</summary>
+        public static bool IsTearingDown => _pendingTeardown != null && _pendingTeardown.IsAlive;
     }
 }

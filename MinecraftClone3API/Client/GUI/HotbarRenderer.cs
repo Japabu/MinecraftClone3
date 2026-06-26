@@ -13,14 +13,15 @@ namespace MinecraftClone3API.Client.GUI
     /// </summary>
     public static class HotbarRenderer
     {
-        // widgets.png layout (pixels): the hotbar strip is the 182x22 region at the top-left, the selection
-        // cursor the 24x24 region just below it. A slot is 20px wide; the first slot's 16x16 icon sits at (3,3).
+        // Modern HUD sprite layout: hotbar.png is the whole 182x22 bar, hotbar_selection.png the 24x23 cursor.
+        // A slot is 20px wide; the first slot's 16x16 icon sits at (3,3).
         private const int BarWidth = 182;
         private const int BarHeight = 22;
         private const int SlotStride = 20;
         private const int IconInset = 3;
         private const int IconSize = 16;
-        private const int CursorSize = 24;
+        private const int CursorWidth = 24;
+        private const int CursorHeight = 23;
 
         // Scale the (small) native widget up into the 960x540 GUI space.
         private const int Scale = 2;
@@ -38,17 +39,20 @@ namespace MinecraftClone3API.Client.GUI
             var x0 = ((int) ScaledResolution.GuiResolution.X - barW) / 2;
             var y0 = (int) ScaledResolution.GuiResolution.Y - barH - 2;
 
-            var widgets = GuiAssets.Get(GuiAssets.Widgets);
-            if (widgets != null)
+            var bar = GuiAssets.Get(GuiAssets.Hotbar);
+            if (bar != null)
             {
-                GuiRenderer.DrawTexture(widgets, Rectangle.FromSize(x0, y0, barW, barH),
-                    new Rectangle(0, 0, BarWidth, BarHeight));
+                GuiRenderer.DrawTexture(bar, Rectangle.FromSize(x0, y0, barW, barH), null);
 
-                var sel = inventory.SelectedHotbar;
-                var cx = x0 + (sel * SlotStride - 1) * Scale;
-                var cy = y0 - 1 * Scale;
-                GuiRenderer.DrawTexture(widgets, Rectangle.FromSize(cx, cy, CursorSize * Scale, CursorSize * Scale),
-                    new Rectangle(0, BarHeight, CursorSize, BarHeight + CursorSize));
+                var selection = GuiAssets.Get(GuiAssets.HotbarSelection);
+                if (selection != null)
+                {
+                    var sel = inventory.SelectedHotbar;
+                    var cx = x0 + (sel * SlotStride - 1) * Scale;
+                    var cy = y0 - 1 * Scale;
+                    GuiRenderer.DrawTexture(selection,
+                        Rectangle.FromSize(cx, cy, CursorWidth * Scale, CursorHeight * Scale), null);
+                }
             }
             else
             {

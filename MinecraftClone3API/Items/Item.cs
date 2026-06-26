@@ -38,6 +38,36 @@ namespace MinecraftClone3API.Items
         /// <paramref name="position"/> is the world cell the player clicked toward. No-op by default.</summary>
         public virtual void OnUseServer(WorldServer world, EntityPlayer player, Vector3 position) { }
 
+        /// <summary>Whether right-clicking this item while aiming at an entity triggers <see cref="OnUseOnEntity"/>
+        /// (e.g. shears on a sheep) — lets the client send an entity-targeted use only when it's meaningful.</summary>
+        public virtual bool UsableOnEntity => false;
+
+        /// <summary>Server-side right-click action against a targeted entity (server-authoritative). The target is
+        /// resolved from the server's own entity list, so a request can't act on an arbitrary id. No-op by
+        /// default.</summary>
+        public virtual void OnUseOnEntity(WorldServer world, EntityPlayer player, Entity target) { }
+
+        /// <summary>Whether a successful <see cref="OnUseServer"/> consumes one from the held stack (e.g. eating
+        /// food). False for reusable items like spawn eggs.</summary>
+        public virtual bool ConsumesOnUse => false;
+
+        /// <summary>Server-side gate deciding whether <see cref="OnUseServer"/> may run for this player right now
+        /// (e.g. food only when in survival with hunger to refill). True by default.</summary>
+        public virtual bool CanUseServer(EntityPlayer player) => true;
+
+        /// <summary>The tool category this item acts as, or <see cref="ToolType.None"/> for non-tools. A held
+        /// tool mines a block faster when this matches the block's <see cref="Block.PreferredTool"/>.</summary>
+        public virtual ToolType ToolType => ToolType.None;
+
+        /// <summary>The tool material's mining-speed multiplier (Minecraft: wood 2, stone 4, iron 6, diamond 8,
+        /// gold 12), applied only when the tool matches the block's preferred tool. Ignored for non-tools.</summary>
+        public virtual float MiningSpeed => 1f;
+
+        /// <summary>The tool material's harvest tier (Minecraft: wood/gold 0, stone 1, iron 2, diamond 3). A
+        /// block that <see cref="Block.RequiresCorrectTool"/> only mines at full speed when the matching tool's
+        /// tier meets the block's <see cref="Block.RequiredToolTier"/>.</summary>
+        public virtual int ToolTier => 0;
+
         /// <summary>Resource-pack path of the 2D inventory sprite for a non-block item (e.g.
         /// <c>"minecraft:item/stick"</c>); null for block items, which render a 3D isometric icon instead.</summary>
         public virtual string TexturePath => null;

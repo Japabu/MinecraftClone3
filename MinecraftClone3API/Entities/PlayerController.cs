@@ -26,6 +26,16 @@ namespace MinecraftClone3API.Entities
         private static bool _skipMouseDelta;
         private static readonly Stopwatch _spaceTapTimer = Stopwatch.StartNew();
 
+        // Accumulated downward travel (blocks) since leaving the ground; reported to the server on landing so it
+        // can apply fall damage (the player is position-authoritative, so the client measures the fall).
+        private static float _fallDistance;
+
+        // Survival block-breaking: the block currently being mined and 0..1 progress toward breaking it, plus a
+        // wall-clock timer so mining accrues at the display rate (UpdateFrame runs per frame, not per tick).
+        private static Vector3i? _miningTarget;
+        private static float _miningProgress;
+        private static readonly Stopwatch _frameTimer = Stopwatch.StartNew();
+
         public static void SetEntity(EntityPlayer playerEntity)
         {
             PlayerEntity = playerEntity;
@@ -54,7 +64,7 @@ namespace MinecraftClone3API.Entities
             var sensitivity = GraphicsSettings.MouseSensitivity;
             PlayerEntity.Rotate(-delta.Y * sensitivity, -delta.X * sensitivity);
 
-            if (Keybinds.IsPressed(ks, GameAction.Jump))
+            if (PlayerEntity.GameMode == GameMode.Creative && Keybinds.IsPressed(ks, GameAction.Jump))
             {
                 if (_spaceTapTimer.Elapsed.TotalSeconds < DoubleTapSeconds)
                 {
@@ -78,8 +88,7 @@ namespace MinecraftClone3API.Entities
             if (ks.IsKeyPressed(Keys.F10)) Profiler.Toggle();
             if (ks.IsKeyPressed(Keys.F2)) WorldRenderer.FixedTimeOfDay = WorldRenderer.FixedTimeOfDay == null ? 220.0 : 0;
 
-            if (ms.IsButtonDown(MouseButton.Left) && !ms.WasButtonDown(MouseButton.Left))
-                BreakBlock(world);
+            HandleBreaking(world, ms);
             if (ms.IsButtonDown(MouseButton.Right) && !ms.WasButtonDown(MouseButton.Right) && !TryActivateBlock(window, world))
                 PlaceBlock(world, ks);
 
@@ -97,6 +106,30 @@ namespace MinecraftClone3API.Entities
 
             if (PlayerEntity.Flying) TickFlying(ks);
             else TickWalking(ks, world);
+
+            TrackFall(world);
+        }
+
+        /// <summary>Accumulates downward travel while airborne and reports the total fall to the server on
+        /// landing (the server applies the damage). Flying resets the accumulator so descending in fly-mode and
+        /// disabling it never deals damage.</summary>
+        private static void TrackFall(WorldBase world)
+        {
+            if (PlayerEntity.Flying)
+            {
+                _fallDistance = 0f;
+                return;
+            }
+
+            if (PlayerEntity.OnGround)
+            {
+                if (_fallDistance > 0f && world is WorldClient client) client.SendFall(_fallDistance);
+                _fallDistance = 0f;
+                return;
+            }
+
+            var dy = PlayerEntity.Position.Y - PlayerEntity.PrevPosition.Y;
+            if (dy < 0f) _fallDistance += -dy;
         }
 
         public static void ApplyInterpolation(float alpha)
@@ -147,6 +180,81 @@ namespace MinecraftClone3API.Entities
             world.SetBlock(_blockRaytrace.BlockPos, BlockRegistry.BlockAir);
         }
 
+        /// <summary>Creative breaks instantly on click; survival holds left-click to mine, accruing progress on
+        /// the targeted block at the Minecraft mining rate (tool match and tier vs. block hardness) and breaking
+        /// it when full. Progress resets if the target changes or the button is released.</summary>
+        private static void HandleBreaking(WorldBase world, MouseState ms)
+        {
+            var dt = (float) _frameTimer.Elapsed.TotalSeconds;
+            _frameTimer.Restart();
+            // Cap the step so a long stall (alt-tab, an open menu) can't dump a full break into one frame.
+            if (dt > 0.25f) dt = 0.25f;
+
+            var leftDown = ms.IsButtonDown(MouseButton.Left);
+
+            if (PlayerEntity.GameMode == GameMode.Creative)
+            {
+                if (leftDown && !ms.WasButtonDown(MouseButton.Left)) BreakBlock(world);
+                _miningTarget = null;
+                _miningProgress = 0f;
+                return;
+            }
+
+            if (!leftDown || _blockRaytrace == null)
+            {
+                _miningTarget = null;
+                _miningProgress = 0f;
+                return;
+            }
+
+            var target = _blockRaytrace.BlockPos;
+            if (_miningTarget != target)
+            {
+                _miningTarget = target;
+                _miningProgress = 0f;
+            }
+
+            Item tool = null;
+            if (world is WorldClient client)
+            {
+                var held = client.Inventory.SelectedItem;
+                if (!held.IsEmpty) tool = held.Item;
+            }
+
+            var breakSeconds = BreakSeconds(_blockRaytrace.Block, tool);
+            if (breakSeconds < 0f) { _miningProgress = 0f; return; }   // unbreakable (bedrock)
+
+            if (breakSeconds <= 0f) _miningProgress = 1f;
+            else _miningProgress += dt / breakSeconds;
+
+            if (_miningProgress >= 1f)
+            {
+                world.SetBlock(target, BlockRegistry.BlockAir);
+                _miningTarget = null;
+                _miningProgress = 0f;
+            }
+        }
+
+        /// <summary>Seconds to break <paramref name="block"/> with the held <paramref name="tool"/>, following
+        /// Minecraft's mining formula: the tool's <see cref="Item.MiningSpeed"/> applies only when its
+        /// <see cref="Item.ToolType"/> matches the block's <see cref="Block.PreferredTool"/>, and the rate is
+        /// throttled (÷100 vs ÷30) when the block <see cref="Block.RequiresCorrectTool"/> but the tool is wrong
+        /// or too low a tier. Returns 0 for instant blocks and -1 for unbreakable ones.</summary>
+        private static float BreakSeconds(Block block, Item tool)
+        {
+            var hardness = block.Hardness;
+            if (hardness < 0f) return -1f;
+            if (hardness == 0f) return 0f;
+
+            var matches = tool != null && tool.ToolType != ToolType.None && tool.ToolType == block.PreferredTool;
+            var speed = matches ? tool.MiningSpeed : 1f;
+            var correctForDrops = !block.RequiresCorrectTool || (matches && tool.ToolTier >= block.RequiredToolTier);
+            var divider = correctForDrops ? 30f : 100f;
+
+            var progressPerTick = speed / hardness / divider;
+            return PlayerPhysics.TickSeconds / progressPerTick;
+        }
+
         /// <summary>Right-click interaction: if the player is looking at an interactable block (e.g. a crafting
         /// table) let it handle the click (open its GUI) and report that placement should be suppressed.</summary>
         private static bool TryActivateBlock(GameWindow window, WorldBase world)
@@ -159,7 +267,6 @@ namespace MinecraftClone3API.Entities
 
         private static void PlaceBlock(WorldBase world, KeyboardState ks)
         {
-            if (_blockRaytrace == null) return;
             if (!(world is WorldClient client)) return;
 
             var held = client.Inventory.SelectedItem;
@@ -167,6 +274,15 @@ namespace MinecraftClone3API.Entities
             var item = held.Item;
             if (item == null) return;
 
+            // Aiming at an entity with an entity-usable item (shears on a sheep)? That takes precedence and
+            // doesn't need a block under the crosshair.
+            if (item.UsableOnEntity)
+            {
+                var entity = PickEntity(client);
+                if (entity != null) { client.SendUseItemOnEntity(entity.EntityId); return; }
+            }
+
+            if (_blockRaytrace == null) return;
             var target = _blockRaytrace.BlockPos + _blockRaytrace.Face.GetNormali();
             var block = item.GetBlock();
             if (block != null)
@@ -178,6 +294,59 @@ namespace MinecraftClone3API.Entities
 
             // Usable non-block items (a spawn egg) ask the server to act; other items do nothing.
             if (item.IsUsable) client.SendUseItem(target);
+        }
+
+        // The entity the player is aiming at within reach (and nearer than the targeted block, so you can't
+        // reach through a wall), or null. A ray–AABB test against each entity's collision box.
+        private static Entity PickEntity(WorldClient client)
+        {
+            const float reach = 8f;
+            var origin = PlayerEntity.RenderPosition + PlayerEntity.EyeOffset;
+            var dir = PlayerEntity.Forward;
+            var maxDist = reach;
+            if (_blockRaytrace != null)
+                maxDist = MathF.Min(maxDist,
+                    (_blockRaytrace.BlockPos.ToVector3() + new Vector3(0.5f) - origin).Length);
+
+            Entity best = null;
+            foreach (var entity in client.Entities.Values)
+            {
+                if (entity.Type == null) continue;
+                var half = entity.Type.Width * 0.5f;
+                var min = entity.RenderPosition - new Vector3(half, 0, half);
+                var max = entity.RenderPosition + new Vector3(half, entity.Type.Height, half);
+                if (RayAabb(origin, dir, min, max, out var dist) && dist <= maxDist)
+                {
+                    maxDist = dist;
+                    best = entity;
+                }
+            }
+
+            return best;
+        }
+
+        private static bool RayAabb(Vector3 origin, Vector3 dir, Vector3 min, Vector3 max, out float t)
+        {
+            var tmin = 0f;
+            var tmax = float.MaxValue;
+            t = 0f;
+            if (!Slab(origin.X, dir.X, min.X, max.X, ref tmin, ref tmax)) return false;
+            if (!Slab(origin.Y, dir.Y, min.Y, max.Y, ref tmin, ref tmax)) return false;
+            if (!Slab(origin.Z, dir.Z, min.Z, max.Z, ref tmin, ref tmax)) return false;
+            t = tmin;
+            return true;
+        }
+
+        private static bool Slab(float o, float d, float lo, float hi, ref float tmin, ref float tmax)
+        {
+            if (MathF.Abs(d) < 1e-6f) return o >= lo && o <= hi;
+            var inv = 1f / d;
+            var t1 = (lo - o) * inv;
+            var t2 = (hi - o) * inv;
+            if (t1 > t2) { var tmp = t1; t1 = t2; t2 = tmp; }
+            if (t1 > tmin) tmin = t1;
+            if (t2 < tmax) tmax = t2;
+            return tmin <= tmax;
         }
 
         /// <summary>Hotbar slot selection: number keys 1-9 jump to a slot, the scroll wheel steps through
@@ -208,6 +377,11 @@ namespace MinecraftClone3API.Entities
 
             BoundingBoxRenderer.Render(_blockRaytrace.BoundingBox, _blockRaytrace.BlockPos.ToVector3(), 1.01f, camera,
                 projection);
+
+            // The breaking crack overlay, while mining the targeted block in survival.
+            if (_miningProgress > 0f && _miningTarget == _blockRaytrace.BlockPos)
+                BlockBreakRenderer.Render(_blockRaytrace.BoundingBox, _blockRaytrace.BlockPos.ToVector3(),
+                    _miningProgress, camera, projection);
         }
     }
 }

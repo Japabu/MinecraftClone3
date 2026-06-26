@@ -29,12 +29,15 @@ namespace MinecraftClone3API.Networking
         /// <summary>Portal transfer state. <see cref="PortalTimer"/> counts ticks the player has stood in a
         /// portal block; <see cref="PortalImmune"/> is set right after a transfer and cleared once the player
         /// steps off a portal, so arriving inside one doesn't bounce straight back. A non-null
-        /// <see cref="PendingPortalWorld"/> means a transfer is mid-flight: the destination portal is built once
-        /// <see cref="PendingPortalApprox"/>'s column has streamed into that world.</summary>
+        /// <see cref="PendingPortalWorld"/> means a transfer is mid-flight: once
+        /// <see cref="PendingPortalApprox"/>'s column has streamed into that world the destination is finalized —
+        /// building/linking a portal when <see cref="PendingBuildPortal"/> (a portal transfer) or just dropping
+        /// the player there when not (a respawn back to the Overworld spawn).</summary>
         public int PortalTimer;
         public bool PortalImmune;
         public WorldServer PendingPortalWorld;
         public Vector3i PendingPortalApprox;
+        public bool PendingBuildPortal;
 
         public string PlayerName = "";
 
@@ -47,6 +50,19 @@ namespace MinecraftClone3API.Networking
         /// server streams that block's <see cref="ContainerStatePacket"/> each tick so the screen shows live
         /// progress; cleared on <see cref="CloseContainerPacket"/>.</summary>
         public Vector3i? OpenContainer;
+
+        /// <summary>Whether this player is currently dead (health ≤ 0), set by the stats sync. While dead the
+        /// server holds the player until a <see cref="RespawnRequestPacket"/> arrives.</summary>
+        public bool Dead;
+
+        // Last survival stats sent to this client, so PlayerStatsPacket is sent only on change. StatsSent
+        // forces the first send (the cached values would otherwise compare equal to a fresh full-health player).
+        public bool StatsSent;
+        public float LastHealth;
+        public float LastHunger;
+        public float LastSaturation;
+        public byte LastGameMode;
+        public bool LastDead;
 
         // Gate for StreamChunks: the player chunk + loaded-chunk count at the last fully-drained interest
         // scan. When neither changed there is nothing new to stream, so the O(loaded) ConcurrentDictionary

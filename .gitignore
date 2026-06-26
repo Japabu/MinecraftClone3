@@ -1,6 +1,10 @@
 packages
 .vs
 
+# Local editor + Claude Code state (the latter also holds git worktrees)
+.vscode/
+.claude/
+
 # Build output
 bin/
 obj/

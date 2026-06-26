@@ -3,6 +3,7 @@ using MinecraftClone3API.Client;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
+using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Desktop;
@@ -67,6 +68,25 @@ namespace MinecraftClone3API.Blocks
         public virtual bool CanTarget(WorldBase world, Vector3i vector3I) => true;
         public virtual bool IsLiquid => false;
 
+        /// <summary>Minecraft block hardness, driving how long the block takes to mine in survival
+        /// (<c>break seconds ≈ hardness · 1.5</c> by hand). A negative value is unbreakable (bedrock). Creative
+        /// breaks instantly regardless.</summary>
+        public virtual float Hardness => 1.5f;
+
+        /// <summary>The tool category that mines this block fastest (Minecraft's <c>mineable/*</c> tags), or
+        /// <see cref="ToolType.None"/> if no tool helps. A matching held tool applies its
+        /// <see cref="Item.MiningSpeed"/> multiplier.</summary>
+        public virtual ToolType PreferredTool => ToolType.None;
+
+        /// <summary>Whether mining at full speed requires the correct tool of sufficient tier (Minecraft's
+        /// <c>requires_tool</c>: stone, ores, obsidian). When true and the held tool is wrong or too low a tier,
+        /// mining is throttled (the vanilla ÷100 vs ÷30 penalty).</summary>
+        public virtual bool RequiresCorrectTool => false;
+
+        /// <summary>The minimum matching-tool tier needed to satisfy <see cref="RequiresCorrectTool"/> (Minecraft
+        /// harvest level: stone ore 1, gold/diamond ore 2, obsidian 3). Ignored when no tool is required.</summary>
+        public virtual int RequiredToolTier => 0;
+
         public virtual AxisAlignedBoundingBox GetBoundingBox(WorldBase world, Vector3i blockPos)
             => DefaultAlignedBoundingBox;
 
@@ -118,6 +138,13 @@ namespace MinecraftClone3API.Blocks
         /// <summary>Server-authoritative per-tick update for a <see cref="NeedsServerTick"/> block (never called
         /// on the client). Reads/writes the block's stored <see cref="BlockData"/>.</summary>
         public virtual void OnServerTick(WorldServer world, Vector3i blockPos) { }
+
+        /// <summary>Server-side: a block in one of the six face-adjacent positions changed (placed, broken, or
+        /// fell). Default no-op. Overriders must stay light — only schedule a tick
+        /// (<see cref="WorldServer.ScheduleBlockTick"/>) or touch their own block data; do not call back into
+        /// <c>SetBlock</c>, which would recurse through this notification. Falling blocks use it to start falling
+        /// when the block beneath them is removed.</summary>
+        public virtual void OnNeighborChanged(WorldServer world, Vector3i blockPos, Vector3i changedPos) { }
 
         public virtual Color4 GetTintColor(WorldBase world, Vector3i blockPos, int tintId) => Color4.White;
         public virtual LightLevel GetLightLevel(WorldBase world, Vector3i blockPos) => LightLevel.Zero;

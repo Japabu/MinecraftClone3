@@ -30,6 +30,9 @@ namespace MinecraftClone3API.Graphics
         private class RenderModel
         {
             public BlockTexture Texture;
+            // Optional second layer drawn over this one with its own texture (the sheep's wool); suppressed when
+            // the entity is sheared.
+            public RenderModel Overlay;
             public readonly List<(ModelPart Part, VertexArrayObject Vao)> Parts =
                 new List<(ModelPart, VertexArrayObject)>();
         }
@@ -60,7 +63,12 @@ namespace MinecraftClone3API.Graphics
             {
                 if (type.Kind != EntityKind.Creature || type.ModelPath == null) continue;
                 var texture = ResourceReader.ReadBlockTexture(type.TexturePath);
-                CreatureModels[type.Id] = BuildModel(LoadModel(type.ModelPath), texture, ReadData(ResolvePath(type.TexturePath)));
+                var model = BuildModel(LoadModel(type.ModelPath), texture, ReadData(ResolvePath(type.TexturePath)));
+                if (type.OverlayModelPath != null)
+                    model.Overlay = BuildModel(LoadModel(type.OverlayModelPath),
+                        ResourceReader.ReadBlockTexture(type.OverlayTexturePath),
+                        ReadData(ResolvePath(type.OverlayTexturePath)));
+                CreatureModels[type.Id] = model;
             }
         }
 
@@ -167,6 +175,8 @@ namespace MinecraftClone3API.Graphics
                     DrawModel(_playerModel, entity, world, uModel, uLight);
                 else if (entity.Type.Kind == EntityKind.Item)
                     DrawItem((EntityItem) entity, world, uModel, uLight);
+                else if (entity.Type.Kind == EntityKind.FallingBlock)
+                    DrawFallingBlock((EntityFallingBlock) entity, world, uModel, uLight);
                 else if (CreatureModels.TryGetValue(entity.Type.Id, out var model))
                     DrawModel(model, entity, world, uModel, uLight);
             }
@@ -185,6 +195,15 @@ namespace MinecraftClone3API.Graphics
             // Whole-model placement: yaw to face the heading, then translate to the entity's feet.
             var root = Matrix4.CreateRotationY(entity.Yaw) * Matrix4.CreateTranslation(pos);
 
+            DrawParts(model, entity, root, uModel);
+            // The wool overlay shares the base part names/pivots, so the same animation matrices apply; the
+            // entity's data (e.g. a sheared sheep) can hide it.
+            if (model.Overlay != null && (entity.Data?.OverlayVisible ?? true))
+                DrawParts(model.Overlay, entity, root, uModel);
+        }
+
+        private static void DrawParts(RenderModel model, Entity entity, Matrix4 root, int uModel)
+        {
             foreach (var (part, vao) in model.Parts)
             {
                 var rotation = part.Rotation + PartRotation(part.Name, entity);
@@ -211,6 +230,22 @@ namespace MinecraftClone3API.Graphics
             var bob = 0.1f + 0.05f * MathF.Sin(t * 3f);
             var matrix = Matrix4.CreateScale(0.4f) * Matrix4.CreateRotationY(t * 2f) *
                          Matrix4.CreateTranslation(pos + new Vector3(0, 0.25f + bob, 0));
+            GL.UniformMatrix4(uModel, false, ref matrix);
+            mesh.Draw();
+        }
+
+        private static void DrawFallingBlock(EntityFallingBlock falling, WorldClient world, int uModel, int uLight)
+        {
+            var mesh = GetItemMesh(falling.BlockId);
+            if (mesh == null) return;
+
+            // RenderPosition is the block's bottom-centre; the icon mesh is centred on the origin, so lift it by
+            // half a block to fill the cell from feet upward (no spin/bob — it's a full block, not an item).
+            var pos = falling.RenderPosition;
+            var centre = pos + new Vector3(0, 0.5f, 0);
+            SetLight(world, centre, uLight);
+
+            var matrix = Matrix4.CreateTranslation(centre);
             GL.UniformMatrix4(uModel, false, ref matrix);
             mesh.Draw();
         }
@@ -317,7 +352,7 @@ namespace MinecraftClone3API.Graphics
             Quad(vao, tex, layerSize, new Vector3(0, -1, 0),
                 new Vector3(t.X, f.Y, t.Z), new Vector3(f.X, f.Y, t.Z),
                 new Vector3(t.X, f.Y, f.Z), new Vector3(f.X, f.Y, f.Z),
-                u + sz + sx, v + sz, u + 2 * sz + sx, v);
+                u + sz + sx, v + sz, u + sz + 2 * sx, v);
         }
 
         private static void Quad(VertexArrayObject vao, BlockTexture tex, int layerSize, Vector3 normal,

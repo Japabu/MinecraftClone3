@@ -38,7 +38,12 @@ talks to it over an in-memory loopback connection; multiplayer swaps the loopbac
   are content** (see [networking.md](networking.md), [worldgen.md](worldgen.md)).
 - **Authority:** server owns blocks + light (block + sky). Position is **client-authoritative** — there is no
   server-side physics; the client runs walk gravity/collision and writes the result, the server relays it.
-  The client *requests* edits; the server applies and broadcasts the result.
+  The client *requests* edits; the server applies and broadcasts the result. **Survival stats**
+  (health/hunger/saturation/game mode) are **server-authoritative** even under client-authoritative position:
+  the server runs the survival sim and decides damage, while the client *reports* falls (it owns where the
+  player is) and *requests* gamemode/respawn — see [entities.md](entities.md). Player inventory **and** survival
+  stats persist per name in `<worldDir>/Players/<name>.dat` (`PlayerSerializer`); changing that format means an
+  existing world (or its `Players/` folder) must be deleted.
 - **Join handshake (loading screen).** Login → server assigns id + a seed-derived spawn (`LoginAccept`) and
   starts streaming chunks around it → once the spawn column is *sent* it sends **`PlayerReady`** → the client
   (`StateWorld._loading`) shows a loading screen and enters the world once `PlayerReady` arrives **and** the

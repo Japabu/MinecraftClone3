@@ -16,6 +16,7 @@ namespace MinecraftClone3API.Util
         internal static readonly Registry<CraftingRecipe> RecipeRegistry = new Registry<CraftingRecipe>();
         internal static readonly Registry<SmeltingRecipe> SmeltingRegistry = new Registry<SmeltingRecipe>();
         internal static readonly Registry<BlockDataRegistryEntry> BlockDataRegistry = new Registry<BlockDataRegistryEntry>();
+        internal static readonly Registry<EntityDataRegistryEntry> EntityDataRegistry = new Registry<EntityDataRegistryEntry>();
         internal static readonly Registry<Biome> BiomeRegistry = new Registry<Biome>();
         internal static readonly Registry<Feature> FeatureRegistry = new Registry<Feature>();
         internal static readonly Registry<Dimension> DimensionRegistry = new Registry<Dimension>();
@@ -77,6 +78,11 @@ namespace MinecraftClone3API.Util
             var entry = new BlockDataRegistryEntry(data.GetType());
             return BlockDataRegistry[entry];
         }
+
+        internal static string GetEntityDataRegistryKey(EntityData data)
+            => EntityDataRegistry[new EntityDataRegistryEntry(data.GetType())];
+
+        internal static System.Type GetEntityDataType(string key) => EntityDataRegistry[key].Type;
 
         public static void Save(DirectoryInfo saveDir)
         {

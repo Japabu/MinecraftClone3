@@ -96,6 +96,16 @@ namespace MinecraftClone3API.Client.Blocks
 
         public int LocalEntityId = -1;
 
+        // Local mirror of the server-authoritative survival stats (from PlayerStatsPacket), read by the
+        // survival HUD, the Flying gate, and the death screen. StatsReceived gates the HUD until the first sync.
+        public float Health;
+        public float MaxHealth = 20f;
+        public float Hunger;
+        public float Saturation;
+        public GameMode GameMode = GameMode.Creative;
+        public bool PlayerDead;
+        public bool StatsReceived;
+
         public Vector3 SpawnPosition;
         public bool SpawnReceived;
         public bool Ready;
@@ -574,6 +584,27 @@ namespace MinecraftClone3API.Client.Blocks
         public void SendUseItem(Vector3i position)
             => _connection.Send(new UseItemRequestPacket {Position = position});
 
+        public void SendUseItemOnEntity(int entityId)
+            => _connection.Send(new UseItemOnEntityRequestPacket {EntityId = entityId});
+
+        /// <summary>Reports a completed fall (distance in blocks) so the server can apply fall damage.</summary>
+        public void SendFall(float distance)
+            => _connection.Send(new PlayerFallPacket {FallDistance = distance});
+
+        /// <summary>Asks the server to switch game mode (the pause-menu toggle). Updates the local mirror
+        /// optimistically so the menu/HUD/flight respond instantly even while a singleplayer pause has frozen
+        /// the server pump; the server confirms the same value idempotently on unpause.</summary>
+        public void SendSetGameMode(GameMode mode)
+        {
+            GameMode = mode;
+            StatsReceived = true;
+            _connection.Send(new SetGameModeRequestPacket {GameMode = (byte) mode});
+        }
+
+        /// <summary>Asks the server to respawn the dead player (the death-screen button).</summary>
+        public void SendRespawn()
+            => _connection.Send(new RespawnRequestPacket());
+
         /// <summary>Asks the server to drop the held hotbar item (one, or the whole stack when
         /// <paramref name="all"/>). The server is authoritative for the inventory and echoes the result back.</summary>
         public void SendDropItem(bool all)
@@ -634,6 +665,9 @@ namespace MinecraftClone3API.Client.Blocks
                 case EntityDespawnPacket despawn:
                     Entities.Remove(despawn.EntityId);
                     break;
+                case EntityDataPacket data:
+                    if (Entities.TryGetValue(data.EntityId, out var dataEntity)) dataEntity.Data = data.Data;
+                    break;
                 case WorldTimePacket time:
                     _serverTimeSeconds = time.WorldSeconds;
                     _timeSyncClock.Restart();
@@ -647,6 +681,15 @@ namespace MinecraftClone3API.Client.Blocks
                     break;
                 case ContainerStatePacket state:
                     ApplyContainerState(state);
+                    break;
+                case PlayerStatsPacket stats:
+                    Health = stats.Health;
+                    MaxHealth = stats.MaxHealth;
+                    Hunger = stats.Hunger;
+                    Saturation = stats.Saturation;
+                    GameMode = (GameMode) stats.GameMode;
+                    PlayerDead = stats.Dead;
+                    StatsReceived = true;
                     break;
             }
         }
@@ -745,6 +788,8 @@ namespace MinecraftClone3API.Client.Blocks
                 entity = new Entity();
             else if (type.Kind == EntityKind.Item)
                 entity = new EntityItem {Type = type, Stack = spawn.Stack};
+            else if (type.Kind == EntityKind.FallingBlock)
+                entity = new EntityFallingBlock {Type = type, BlockId = (spawn.Data as FallingBlockData)?.BlockId ?? 0};
             else
                 entity = new Entity {Type = type};
 
@@ -752,6 +797,7 @@ namespace MinecraftClone3API.Client.Blocks
             entity.Position = spawn.Position;
             entity.Pitch = spawn.Pitch;
             entity.Yaw = spawn.Yaw;
+            entity.Data = spawn.Data;
             return entity;
         }
 

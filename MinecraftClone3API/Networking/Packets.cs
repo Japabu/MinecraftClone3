@@ -177,6 +177,38 @@ namespace MinecraftClone3API.Networking
         public override void Read(BinaryReader reader) => Position = ReadVector3i(reader);
     }
 
+    /// <summary>Client → server: right-clicked the held item while aiming at an entity (e.g. shears on a sheep).
+    /// The server resolves the target from its own entity list and runs the held item's <c>OnUseOnEntity</c>.</summary>
+    public class UseItemOnEntityRequestPacket : Packet
+    {
+        public int EntityId;
+
+        public override PacketId Id => PacketId.UseItemOnEntityRequest;
+        public override void Write(BinaryWriter writer) => writer.Write(EntityId);
+        public override void Read(BinaryReader reader) => EntityId = reader.ReadInt32();
+    }
+
+    /// <summary>Server → client: an entity's <see cref="EntityData"/> changed (e.g. a sheep was sheared), so the
+    /// client replaces its copy. The data is type-tagged, so any registered subclass round-trips.</summary>
+    public class EntityDataPacket : Packet
+    {
+        public int EntityId;
+        public EntityData Data;
+
+        public override PacketId Id => PacketId.EntityData;
+        public override void Write(BinaryWriter writer)
+        {
+            writer.Write(EntityId);
+            EntityData.Write(writer, Data);
+        }
+
+        public override void Read(BinaryReader reader)
+        {
+            EntityId = reader.ReadInt32();
+            Data = EntityData.Read(reader);
+        }
+    }
+
     /// <summary>Server → client full inventory sync (the server owns the authoritative copy). Sent on join
     /// after login; the client then mutates its replica optimistically and reports changes back via
     /// <see cref="InventoryActionPacket"/>.</summary>
@@ -273,6 +305,7 @@ namespace MinecraftClone3API.Networking
         public Vector3 Position;
         public float Pitch;
         public float Yaw;
+        public EntityData Data;
 
         public override PacketId Id => PacketId.EntitySpawn;
 
@@ -284,6 +317,7 @@ namespace MinecraftClone3API.Networking
             WriteVector3(writer, Position);
             writer.Write(Pitch);
             writer.Write(Yaw);
+            EntityData.Write(writer, Data);
         }
 
         public override void Read(BinaryReader reader)
@@ -294,6 +328,7 @@ namespace MinecraftClone3API.Networking
             Position = ReadVector3(reader);
             Pitch = reader.ReadSingle();
             Yaw = reader.ReadSingle();
+            Data = EntityData.Read(reader);
         }
     }
 
@@ -457,5 +492,71 @@ namespace MinecraftClone3API.Networking
             Slot = reader.ReadInt32();
             Stack = ItemStack.Read(reader);
         }
+    }
+
+    /// <summary>Server → owning client snapshot of the player's survival stats (health/hunger/saturation,
+    /// game mode, and the death flag). Sent on join and whenever a value changes; drives the survival HUD and
+    /// the death screen.</summary>
+    public class PlayerStatsPacket : Packet
+    {
+        public float Health;
+        public float MaxHealth;
+        public float Hunger;
+        public float Saturation;
+        public byte GameMode;
+        public bool Dead;
+
+        public override PacketId Id => PacketId.PlayerStats;
+
+        public override void Write(BinaryWriter writer)
+        {
+            writer.Write(Health);
+            writer.Write(MaxHealth);
+            writer.Write(Hunger);
+            writer.Write(Saturation);
+            writer.Write(GameMode);
+            writer.Write(Dead);
+        }
+
+        public override void Read(BinaryReader reader)
+        {
+            Health = reader.ReadSingle();
+            MaxHealth = reader.ReadSingle();
+            Hunger = reader.ReadSingle();
+            Saturation = reader.ReadSingle();
+            GameMode = reader.ReadByte();
+            Dead = reader.ReadBoolean();
+        }
+    }
+
+    /// <summary>Client → server report of a completed fall (distance in blocks). The player is position-
+    /// authoritative, so the client measures the fall and the server decides the damage.</summary>
+    public class PlayerFallPacket : Packet
+    {
+        public float FallDistance;
+
+        public override PacketId Id => PacketId.PlayerFall;
+        public override void Write(BinaryWriter writer) => writer.Write(FallDistance);
+        public override void Read(BinaryReader reader) => FallDistance = reader.ReadSingle();
+    }
+
+    /// <summary>Client → server request to switch game mode (the pause-menu toggle). Server-authoritative; the
+    /// server flips the mode and echoes it back in the next <see cref="PlayerStatsPacket"/>.</summary>
+    public class SetGameModeRequestPacket : Packet
+    {
+        public byte GameMode;
+
+        public override PacketId Id => PacketId.SetGameModeRequest;
+        public override void Write(BinaryWriter writer) => writer.Write(GameMode);
+        public override void Read(BinaryReader reader) => GameMode = reader.ReadByte();
+    }
+
+    /// <summary>Client → server request to respawn after death (the death-screen button). Honoured only while
+    /// the player is dead.</summary>
+    public class RespawnRequestPacket : Packet
+    {
+        public override PacketId Id => PacketId.RespawnRequest;
+        public override void Write(BinaryWriter writer) { }
+        public override void Read(BinaryReader reader) { }
     }
 }

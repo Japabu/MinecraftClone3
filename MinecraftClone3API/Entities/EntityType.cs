@@ -1,3 +1,4 @@
+using System;
 using MinecraftClone3API.Util;
 
 namespace MinecraftClone3API.Entities
@@ -8,7 +9,11 @@ namespace MinecraftClone3API.Entities
         Creature,
 
         /// <summary>A dropped item stack: a small spinning block icon affected by gravity, picked up by players.</summary>
-        Item
+        Item,
+
+        /// <summary>A block falling under gravity (sand, gravel): rendered as a full-size block, turns back into
+        /// a placed block when it lands.</summary>
+        FallingBlock
     }
 
     /// <summary>
@@ -46,8 +51,19 @@ namespace MinecraftClone3API.Entities
         /// server. Null for items (they render the dropped block's icon mesh instead).</summary>
         public readonly string ModelPath;
 
+        /// <summary>Optional second render layer drawn over the base model with its own texture — the sheep's
+        /// wool. Suppressed per-entity by its <see cref="EntityData.OverlayVisible"/>. Null for types without one.</summary>
+        public readonly string OverlayModelPath;
+        public readonly string OverlayTexturePath;
+
+        /// <summary>Builds the initial <see cref="EntityData"/> a freshly-spawned instance carries (e.g. a sheep's
+        /// wool state), or null for types that need none.</summary>
+        public readonly Func<EntityData> DataFactory;
+
         public EntityType(string name, EntityKind kind, float width, float height, float maxHealth,
-            float moveSpeed, bool hostile, string texturePath, string modelPath) : base(name)
+            float moveSpeed, bool hostile, string texturePath, string modelPath,
+            string overlayModelPath = null, string overlayTexturePath = null, Func<EntityData> dataFactory = null)
+            : base(name)
         {
             Kind = kind;
             Width = width;
@@ -57,13 +73,23 @@ namespace MinecraftClone3API.Entities
             Hostile = hostile;
             TexturePath = texturePath;
             ModelPath = modelPath;
+            OverlayModelPath = overlayModelPath;
+            OverlayTexturePath = overlayTexturePath;
+            DataFactory = dataFactory;
         }
 
         /// <summary>Creates a server-side instance of this type (used by <c>WorldServer.SpawnEntity</c>).</summary>
         public Entity CreateEntity()
         {
-            var entity = Kind == EntityKind.Item ? (Entity) new EntityItem() : new EntityCreature();
+            Entity entity;
+            switch (Kind)
+            {
+                case EntityKind.Item: entity = new EntityItem(); break;
+                case EntityKind.FallingBlock: entity = new EntityFallingBlock(); break;
+                default: entity = new EntityCreature(); break;
+            }
             entity.Type = this;
+            entity.Data = DataFactory?.Invoke();
             return entity;
         }
     }
