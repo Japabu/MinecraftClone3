@@ -7,6 +7,12 @@ others.
 
 ## Item model (`Items/`, GL-free, shared)
 
+- **Stack sizes** are code-defined, not pack data — as in Minecraft, where they live in item code, not the
+  assets. `Item.MaxStackSize` defaults to 64; item subclasses override it to match MC (tools/swords/armor/
+  shears/flint &amp; steel → 1, ender pearl → 16). Everything that merges stacks honors the **per-item** value
+  (`stack.Item?.MaxStackSize ?? ItemStack.MaxStackSize`): `Inventory.Add`, `ContainerScreen`, `CraftingState`,
+  `BlockFurnace`, and the creative-hotbar seed. `ItemStack.MaxStackSize` (64) is only the fallback for an empty
+  stack with no resolvable item.
 - **`Item`** (`Items/Item.cs`) — a `RegistryEntry` with a ushort `Id`, a `MaxStackSize`, `GetBlock()` (the
   block it places, or null), a 2D inventory-sprite `TexturePath` (for non-block items), a `MinecraftId` (its
   `namespace:name` content id), and `GetName()` (the localized display name). The base class is GL-free so the

@@ -34,10 +34,11 @@ namespace MinecraftClone3API.Items
         /// Returns true if the whole stack fit; otherwise <paramref name="stack"/> holds the remainder.</summary>
         public bool Add(ref ItemStack stack)
         {
+            var max = stack.Item?.MaxStackSize ?? ItemStack.MaxStackSize;
             for (var i = 0; i < Size && !stack.IsEmpty; i++)
             {
                 if (Slots[i].IsEmpty || !Slots[i].SameItem(stack)) continue;
-                var room = ItemStack.MaxStackSize - Slots[i].Count;
+                var room = max - Slots[i].Count;
                 if (room <= 0) continue;
                 var moved = room < stack.Count ? room : stack.Count;
                 Slots[i] = Slots[i].WithCount(Slots[i].Count + moved);
@@ -47,8 +48,9 @@ namespace MinecraftClone3API.Items
             for (var i = 0; i < Size && !stack.IsEmpty; i++)
             {
                 if (!Slots[i].IsEmpty) continue;
-                Slots[i] = stack;
-                stack = ItemStack.Empty;
+                var moved = stack.Count < max ? stack.Count : max;
+                Slots[i] = stack.WithCount(moved);
+                stack = stack.WithCount(stack.Count - moved);
             }
 
             return stack.IsEmpty;
