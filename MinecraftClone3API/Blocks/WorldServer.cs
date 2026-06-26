@@ -203,7 +203,9 @@ namespace MinecraftClone3API.Blocks
 
         public const string OverworldDimensionKey = "Vanilla:Overworld";
 
-        public Vector3 SpawnPosition => _generator.Spawn().ToVector3();
+        // Spawn() returns the feet cell (the air above the surface); offset to the cell's horizontal centre so
+        // the player stands centred in the column (corner-origin: block P fills [P, P+1]).
+        public Vector3 SpawnPosition => _generator.Spawn().ToVector3() + new Vector3(0.5f, 0f, 0.5f);
 
         public readonly string WorldDir;
 
@@ -557,8 +559,9 @@ namespace MinecraftClone3API.Blocks
                 if (t.Kind == EntityKind.FallingBlock) { type = t; break; }
             if (type == null) return null;
 
-            // Position is the block's bottom-centre: a block at by spans by-0.5..by+0.5, so its floor is by-0.5.
-            var spawnPos = new Vector3(blockPos.X, blockPos.Y - 0.5f, blockPos.Z);
+            // Position is the block's bottom-centre: a block at by spans by..by+1 (corner-origin), so its floor
+            // is by and its horizontal centre is (bx+0.5, bz+0.5).
+            var spawnPos = new Vector3(blockPos.X + 0.5f, blockPos.Y, blockPos.Z + 0.5f);
             var falling = (EntityFallingBlock) SpawnEntity(type, spawnPos);
             falling.BlockId = blockId;
             falling.Data = new FallingBlockData {BlockId = blockId};
@@ -703,9 +706,9 @@ namespace MinecraftClone3API.Blocks
             {
                 var ox = _spawnRng.Next(-24, 25);
                 var oz = _spawnRng.Next(-24, 25);
-                var baseX = (int) MathF.Round(anchor.Position.X) + ox;
-                var baseZ = (int) MathF.Round(anchor.Position.Z) + oz;
-                if (!TryFindGround(baseX, (int) MathF.Round(anchor.Position.Y), baseZ, out var groundY)) continue;
+                var baseX = (int) MathF.Floor(anchor.Position.X) + ox;
+                var baseZ = (int) MathF.Floor(anchor.Position.Z) + oz;
+                if (!TryFindGround(baseX, (int) MathF.Floor(anchor.Position.Y), baseZ, out var groundY)) continue;
                 SpawnEntity(chosen, new Vector3(baseX + 0.5f, groundY, baseZ + 0.5f));
             }
         }

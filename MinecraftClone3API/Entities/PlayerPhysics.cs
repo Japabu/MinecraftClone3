@@ -86,7 +86,7 @@ namespace MinecraftClone3API.Entities
         private static bool IsLiquidAt(WorldBase world, float x, float y, float z)
             => world.GetBlock(BlockCoord(x), BlockCoord(y), BlockCoord(z)).IsLiquid;
 
-        private static int BlockCoord(float v) => (int) Math.Floor(v + 0.5f);
+        private static int BlockCoord(float v) => (int) Math.Floor(v);
 
         private static bool MoveWithCollision(WorldBase world, EntityPlayer p)
         {

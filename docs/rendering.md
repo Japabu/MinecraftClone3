@@ -174,7 +174,8 @@ writes its front pane's own normal/light instead of blending them, removing a la
 when glass overlapped an unlit pixel. `WorldGeometry.vs/.fs` are untouched.
 
 **Underwater murk.** When the camera's eye sits inside a liquid block (`WorldRenderer` samples the block at the
-camera position with `floor(v+0.5)`, matching `PlayerPhysics`' liquid test, so it triggers whenever the eye is
+camera position with `floor(v)` — corner-origin, block `P` fills `[P, P+1]` — matching `PlayerPhysics`' liquid
+test, so it triggers whenever the eye is
 submerged — including only half-submerged at the surface), the composition fogs the **whole scene and the
 background sky** into a water colour over a short distance (`UnderwaterFogStart`/`End` consts in
 `Composition.fs`), with a slight permanent tint right at the camera (`UnderwaterMinTint`) — Minecraft's
@@ -214,9 +215,9 @@ For the icon, `ItemIconRenderer`
 draws the box model with the **`ItemIcon` shader** (its single output matches the 1-attachment icon FBO; the
 entity shader's 3 G-buffer outputs render nothing into it on macOS) — the box-model VAO shares the packed
 chunk-vertex format, so the icon shader handles it with a per-part `uModel`. Block-entity geos are authored
-**centred on x/z with feet at y=0**, and seat at the cell's **bottom-centre**: voxel blocks are centred on their
-integer coordinate (the mesher bakes a `-0.5` element offset, so block `P` fills `[P-0.5, P+0.5]`), so a
-block-entity at `P` translates by `(P.x, P.y-0.5, P.z)` with a centre-pivot yaw — *not* `P+0.5`. The **chest** geo
+**centred on x/z with feet at y=0**, and seat at the cell's **bottom-centre**: coordinates are corner-origin
+(block `P` fills `[P, P+1]`), so a block-entity at `P` translates by `(P.x+0.5, P.y, P.z+0.5)` with a
+centre-pivot yaw. The **chest** geo
 (`chest.geo.json`) reproduces Minecraft's exact `ChestModel` boxes/UVs (bottom/lid/lock), with the lid+lock
 bones pivoted at the **back-top hinge** so they swing as one. When this client has a chest's screen open
 (`BlockEntityRenderer.SetChestOpen`, driven by `GuiChest`), `BlockEntityRenderer` eases a per-chest lid

@@ -36,7 +36,7 @@ namespace MinecraftClone3API.Blocks
     public class Block : RegistryEntry
     {
         public static readonly AxisAlignedBoundingBox DefaultAlignedBoundingBox =
-            new AxisAlignedBoundingBox(new Vector3(-0.5f), new Vector3(0.5f));
+            new AxisAlignedBoundingBox(Vector3.Zero, new Vector3(1f));
         
         public BlockModel Model = CommonResources.MissingModel;
 
@@ -92,7 +92,7 @@ namespace MinecraftClone3API.Blocks
         public virtual AxisAlignedBoundingBox GetBoundingBox(WorldBase world, Vector3i blockPos)
             => DefaultAlignedBoundingBox;
 
-        /// <summary>The solid collision boxes (block-local, centred -0.5..0.5) the player sweeps against.
+        /// <summary>The solid collision boxes (block-local 0..1, so block P fills [P, P+1]) the player sweeps against.
         /// Default is the single <see cref="GetBoundingBox"/> cube; non-cube blocks (stairs) override to
         /// return several boxes. Pass-through blocks contribute none. Kept separate from
         /// <see cref="GetBoundingBox"/> so targeting/raytrace can stay a single simple cube.</summary>

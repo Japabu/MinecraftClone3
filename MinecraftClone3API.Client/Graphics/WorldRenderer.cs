@@ -311,12 +311,12 @@ namespace MinecraftClone3API.Graphics
             var sunFade = _hasSky ? SunFade(toSun.Y) : 0f;
             var sunUp = sunFade > 0f;
 
-            // Eye-in-liquid underwater murk. Blocks are centred on integers (±0.5), so floor(v+0.5) is the
-            // block containing the camera — matching PlayerPhysics' liquid sampling. The murk colour dims with
-            // the daylight (sun + ambient) so it's bright blue by day, near-black at night or in a flooded cave.
+            // Eye-in-liquid underwater murk. Block P fills [P, P+1] (corner-origin), so floor(v) is the block
+            // containing the camera — matching PlayerPhysics' liquid sampling. The murk colour dims with the
+            // daylight (sun + ambient) so it's bright blue by day, near-black at night or in a flooded cave.
             var cam = PlayerController.Camera.Position;
-            _underwater = world.GetBlock((int) MathF.Floor(cam.X + 0.5f), (int) MathF.Floor(cam.Y + 0.5f),
-                (int) MathF.Floor(cam.Z + 0.5f)).IsLiquid;
+            _underwater = world.GetBlock((int) MathF.Floor(cam.X), (int) MathF.Floor(cam.Y),
+                (int) MathF.Floor(cam.Z)).IsLiquid;
             var litTint = _hasSky ? SkyAmbient() + SunColor() * sunFade : _ambientFloor;
             var bright = MathHelper.Clamp(MathF.Max(litTint.X, MathF.Max(litTint.Y, litTint.Z)), 0.12f, 1f);
             _underwaterColor = new Vector3(0.05f, 0.17f, 0.40f) * bright;

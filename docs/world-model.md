@@ -41,8 +41,11 @@ models (stairs) render as-is. **Two ways a block varies its appearance** by stat
 the block reports its current property values via `GetBlockState` (e.g. `facing=east, lit=true`) and the
 matching variant supplies model + rotation, so a furnace's facing/lit appearance is driven straight from the
 jar; or, for blocks with no blockstate file, the single `Block.Model` plus `Block.GetModelTransform` (default
-identity) driven by stored metadata (a stair's facing). Either way the orientation is composed after the
-element transform so it rotates the centred element about the block origin. (Face normals + `cullface` are not
+identity) driven by stored metadata (a stair's facing). Coordinates are **corner-origin like Minecraft**:
+block `P` fills the AABB `[P, P+1]` and world→block is `floor(v)` (not the old centre-origin `floor(v+0.5)`).
+The mesher emits this by shifting each element `-0.5 → orient → +0.5`, so the orientation still rotates the
+centred element about the block centre, then the whole element lands in the `[0, 1]` cell. (Face normals +
+`cullface` are not
 rotated — harmless: a partial block is never the both-full pair the face cull needs, so its faces always draw;
 only flat shading on rotated faces is mildly off.) Chunk serialization (`Chunk.Write` ↔ `new CachedChunk(world, pos, reader)`) is
 reused for both disk saves (`WorldSerializer`) and the `ChunkData` packet; both go through

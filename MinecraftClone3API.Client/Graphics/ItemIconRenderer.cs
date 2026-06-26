@@ -75,7 +75,8 @@ namespace MinecraftClone3API.Graphics
             }
 
             var vao = new VertexArrayObject();
-            ChunkMesher.AddBlockToVao(IconWorld.Instance, Vector3i.Zero, 0, 0, 0, block, vao, vao);
+            // The -0.5 origin offset re-centres the [0,1] cell mesh on the origin (where the iso camera looks).
+            ChunkMesher.AddBlockToVao(IconWorld.Instance, Vector3i.Zero, 0, 0, 0, block, vao, vao, new Vector3(-0.5f));
             vao.Upload();
 
             var identity = Matrix4.Identity;
