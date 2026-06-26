@@ -45,6 +45,7 @@ namespace MinecraftClone3.States
 
         private bool _loading = true;
         private bool _spawnApplied;
+        private GuiDeathScreen _deathScreen;
         private int _lastRenderDistanceChunks = -1;
         private float _lastLodHorizonQuality = -1f;
         private int _lastLodHorizonChunks = -1;
@@ -187,22 +188,32 @@ namespace MinecraftClone3.States
                 _world.ForceLodMeshRescan();
             }
 
+            // Mirror the server-authoritative game mode onto the local player so the controller can gate
+            // flight, and force-disable flight in survival.
+            _player.GameMode = _world.GameMode;
+            if (_world.GameMode == GameMode.Survival) _player.Flying = false;
+            UpdateDeathScreen();
+
             // The automated benchmark drives the camera itself (no player input / no pause overlay).
             var active = focused && !_benchmark;
             if (active && _window.KeyboardState.IsKeyPressed(Keys.Escape))
             {
-                StateEngine.AddOverlay(new GuiPauseMenu(_window));
+                StateEngine.AddOverlay(new GuiPauseMenu(_window, _world));
                 active = false;
             }
             if (active && Keybinds.IsPressed(_window.KeyboardState, GameAction.Inventory))
             {
-                StateEngine.AddOverlay(new GuiCreativeInventory(_window, _world));
+                StateEngine.AddOverlay(_world.GameMode == GameMode.Survival
+                    ? (GuiBase) new GuiInventory(_window, _world)
+                    : new GuiCreativeInventory(_window, _world));
                 active = false;
             }
 
             // Singleplayer freezes the world while paused; multiplayer can't pause a shared server. The
             // benchmark always pumps so chunks keep streaming/regenerating even with the window unfocused.
-            var simulate = focused || _multiplayer || _benchmark;
+            // A dead player keeps the integrated server ticking so the respawn request is processed even
+            // though the death overlay has unfocused the world.
+            var simulate = focused || _multiplayer || _benchmark || _world.PlayerDead;
             if (simulate)
             {
                 var dt = _simTimer.Elapsed.TotalSeconds;
@@ -243,6 +254,32 @@ namespace MinecraftClone3.States
             _world.Update();
             Profiler.AddClientTime(_phaseTimer.Elapsed.TotalMilliseconds);
             Profiler.AddClientAlloc(GC.GetAllocatedBytesForCurrentThread() - c);
+        }
+
+        /// <summary>Opens the death overlay when the server reports the player died, and closes it (snapping the
+        /// player to the server's respawn point — the client is position-authoritative) once the server confirms
+        /// the revive. Driven by the death flag in the player stats packet.</summary>
+        private void UpdateDeathScreen()
+        {
+            if (_world.PlayerDead && _deathScreen == null)
+            {
+                _deathScreen = new GuiDeathScreen(_window, _world);
+                StateEngine.AddOverlay(_deathScreen);
+            }
+            else if (!_world.PlayerDead && _deathScreen != null)
+            {
+                _deathScreen.IsDead = true;
+                _deathScreen = null;
+
+                _player.Position = _world.SpawnPosition;
+                _player.PrevPosition = _world.SpawnPosition;
+                _player.InterpolatedPosition = _world.SpawnPosition;
+                _player.Velocity = Vector3.Zero;
+
+                _window.CursorState = CursorState.Grabbed;
+                PlayerController.ResetMouse();
+                PlayerController.Camera.Update();
+            }
         }
 
         /// <summary>One fixed 20 tps simulation step: the player physics (only when <paramref name="stepPlayer"/>,
@@ -343,6 +380,7 @@ namespace MinecraftClone3.States
             WorldRenderer.RenderWorld(_world, projection);
 
             HotbarRenderer.Render(_world.Inventory);
+            SurvivalHud.Render(_world);
 
             if (!Profiler.Recording && !RenderDebug.ShowDiagnostics && !RenderDebug.ShowControls) return;
 

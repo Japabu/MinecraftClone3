@@ -67,6 +67,11 @@ namespace MinecraftClone3API.Blocks
         public virtual bool CanTarget(WorldBase world, Vector3i vector3I) => true;
         public virtual bool IsLiquid => false;
 
+        /// <summary>Minecraft block hardness, driving how long the block takes to mine in survival
+        /// (<c>break seconds ≈ hardness · 1.5</c> by hand). A negative value is unbreakable (bedrock). Creative
+        /// breaks instantly regardless.</summary>
+        public virtual float Hardness => 1.5f;
+
         public virtual AxisAlignedBoundingBox GetBoundingBox(WorldBase world, Vector3i blockPos)
             => DefaultAlignedBoundingBox;
 

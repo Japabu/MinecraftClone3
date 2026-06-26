@@ -38,6 +38,14 @@ namespace MinecraftClone3API.Items
         /// <paramref name="position"/> is the world cell the player clicked toward. No-op by default.</summary>
         public virtual void OnUseServer(WorldServer world, EntityPlayer player, Vector3 position) { }
 
+        /// <summary>Whether a successful <see cref="OnUseServer"/> consumes one from the held stack (e.g. eating
+        /// food). False for reusable items like spawn eggs.</summary>
+        public virtual bool ConsumesOnUse => false;
+
+        /// <summary>Server-side gate deciding whether <see cref="OnUseServer"/> may run for this player right now
+        /// (e.g. food only when in survival with hunger to refill). True by default.</summary>
+        public virtual bool CanUseServer(EntityPlayer player) => true;
+
         /// <summary>Resource-pack path of the 2D inventory sprite for a non-block item (e.g.
         /// <c>"minecraft:item/stick"</c>); null for block items, which render a 3D isometric icon instead.</summary>
         public virtual string TexturePath => null;

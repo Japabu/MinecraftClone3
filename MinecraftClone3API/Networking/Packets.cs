@@ -430,4 +430,70 @@ namespace MinecraftClone3API.Networking
             Stack = ItemStack.Read(reader);
         }
     }
+
+    /// <summary>Server → owning client snapshot of the player's survival stats (health/hunger/saturation,
+    /// game mode, and the death flag). Sent on join and whenever a value changes; drives the survival HUD and
+    /// the death screen.</summary>
+    public class PlayerStatsPacket : Packet
+    {
+        public float Health;
+        public float MaxHealth;
+        public float Hunger;
+        public float Saturation;
+        public byte GameMode;
+        public bool Dead;
+
+        public override PacketId Id => PacketId.PlayerStats;
+
+        public override void Write(BinaryWriter writer)
+        {
+            writer.Write(Health);
+            writer.Write(MaxHealth);
+            writer.Write(Hunger);
+            writer.Write(Saturation);
+            writer.Write(GameMode);
+            writer.Write(Dead);
+        }
+
+        public override void Read(BinaryReader reader)
+        {
+            Health = reader.ReadSingle();
+            MaxHealth = reader.ReadSingle();
+            Hunger = reader.ReadSingle();
+            Saturation = reader.ReadSingle();
+            GameMode = reader.ReadByte();
+            Dead = reader.ReadBoolean();
+        }
+    }
+
+    /// <summary>Client → server report of a completed fall (distance in blocks). The player is position-
+    /// authoritative, so the client measures the fall and the server decides the damage.</summary>
+    public class PlayerFallPacket : Packet
+    {
+        public float FallDistance;
+
+        public override PacketId Id => PacketId.PlayerFall;
+        public override void Write(BinaryWriter writer) => writer.Write(FallDistance);
+        public override void Read(BinaryReader reader) => FallDistance = reader.ReadSingle();
+    }
+
+    /// <summary>Client → server request to switch game mode (the pause-menu toggle). Server-authoritative; the
+    /// server flips the mode and echoes it back in the next <see cref="PlayerStatsPacket"/>.</summary>
+    public class SetGameModeRequestPacket : Packet
+    {
+        public byte GameMode;
+
+        public override PacketId Id => PacketId.SetGameModeRequest;
+        public override void Write(BinaryWriter writer) => writer.Write(GameMode);
+        public override void Read(BinaryReader reader) => GameMode = reader.ReadByte();
+    }
+
+    /// <summary>Client → server request to respawn after death (the death-screen button). Honoured only while
+    /// the player is dead.</summary>
+    public class RespawnRequestPacket : Packet
+    {
+        public override PacketId Id => PacketId.RespawnRequest;
+        public override void Write(BinaryWriter writer) { }
+        public override void Read(BinaryReader reader) { }
+    }
 }

@@ -96,6 +96,16 @@ namespace MinecraftClone3API.Client.Blocks
 
         public int LocalEntityId = -1;
 
+        // Local mirror of the server-authoritative survival stats (from PlayerStatsPacket), read by the
+        // survival HUD, the Flying gate, and the death screen. StatsReceived gates the HUD until the first sync.
+        public float Health;
+        public float MaxHealth = 20f;
+        public float Hunger;
+        public float Saturation;
+        public GameMode GameMode = GameMode.Creative;
+        public bool PlayerDead;
+        public bool StatsReceived;
+
         public Vector3 SpawnPosition;
         public bool SpawnReceived;
         public bool Ready;
@@ -558,6 +568,24 @@ namespace MinecraftClone3API.Client.Blocks
         public void SendUseItem(Vector3i position)
             => _connection.Send(new UseItemRequestPacket {Position = position});
 
+        /// <summary>Reports a completed fall (distance in blocks) so the server can apply fall damage.</summary>
+        public void SendFall(float distance)
+            => _connection.Send(new PlayerFallPacket {FallDistance = distance});
+
+        /// <summary>Asks the server to switch game mode (the pause-menu toggle). Updates the local mirror
+        /// optimistically so the menu/HUD/flight respond instantly even while a singleplayer pause has frozen
+        /// the server pump; the server confirms the same value idempotently on unpause.</summary>
+        public void SendSetGameMode(GameMode mode)
+        {
+            GameMode = mode;
+            StatsReceived = true;
+            _connection.Send(new SetGameModeRequestPacket {GameMode = (byte) mode});
+        }
+
+        /// <summary>Asks the server to respawn the dead player (the death-screen button).</summary>
+        public void SendRespawn()
+            => _connection.Send(new RespawnRequestPacket());
+
         /// <summary>Asks the server to drop the held hotbar item (one, or the whole stack when
         /// <paramref name="all"/>). The server is authoritative for the inventory and echoes the result back.</summary>
         public void SendDropItem(bool all)
@@ -628,6 +656,15 @@ namespace MinecraftClone3API.Client.Blocks
                     break;
                 case ContainerStatePacket state:
                     ApplyContainerState(state);
+                    break;
+                case PlayerStatsPacket stats:
+                    Health = stats.Health;
+                    MaxHealth = stats.MaxHealth;
+                    Hunger = stats.Hunger;
+                    Saturation = stats.Saturation;
+                    GameMode = (GameMode) stats.GameMode;
+                    PlayerDead = stats.Dead;
+                    StatsReceived = true;
                     break;
             }
         }

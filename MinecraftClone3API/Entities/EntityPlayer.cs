@@ -14,6 +14,22 @@ namespace MinecraftClone3API.Entities
 
         public bool Flying;
 
+        // Survival state. On the server these are authoritative (mutated by PlayerSurvival each tick and
+        // persisted); on the client Health/Hunger/Saturation/GameMode mirror the latest PlayerStats packet
+        // and the timers/LastTickPosition are unused. Defaults match a fresh Creative player.
+        public float Health = PlayerSurvival.MaxHealth;
+        public float Hunger = PlayerSurvival.MaxHunger;
+        public float Saturation = PlayerSurvival.StartSaturation;
+        public float Exhaustion;
+        public int Air = PlayerSurvival.MaxAir;
+        public GameMode GameMode = GameMode.Creative;
+
+        // Server-side survival bookkeeping (cadence counters + last position for movement exhaustion).
+        public int FoodTimer;
+        public int DrownTimer;
+        public int VoidTimer;
+        public Vector3 LastTickPosition;
+
         public Vector3 PrevPosition;
         public Vector3 InterpolatedPosition;
 

@@ -191,3 +191,10 @@ relevant permanent doc. Not a changelog.
   (`geometry.sheep.v1.8`, `inflate` 0.6–1.75) drawn over the bare sheep with the dyeable wool texture; we ship
   only the sheared body, so the sheep looks thin. Now that the loader supports `inflate`, it's an added overlay
   model (like the player's) plus the `wool` texture — deferred.
+- **Survival MVP — accepted limitations.** Mining time is `hardness · 1.5` (hand only) — there are **no tools**,
+  so no tool speed-up and no "requires a tool to drop" gating; every block is breakable (except bedrock).
+  `Block.Hardness` is set with real Minecraft values only on `BlockBasic`; other block types (leaves, grass,
+  torch, stairs, crafting table, **furnace** — its file is off-limits — glowstone, water) use the `1.5` default.
+  The survival inventory (`GuiInventory`) has the 2×2 crafting grid but **no armor, offhand, or 3D player
+  preview** (those regions of `inventory.png` are inert). Mob combat (creatures dealing/taking damage) is still
+  unwired. The breaking crack overlay assumes the deferred G-buffer attachment layout (diffuse/normal/light).

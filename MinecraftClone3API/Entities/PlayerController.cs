@@ -26,6 +26,16 @@ namespace MinecraftClone3API.Entities
         private static bool _skipMouseDelta;
         private static readonly Stopwatch _spaceTapTimer = Stopwatch.StartNew();
 
+        // Accumulated downward travel (blocks) since leaving the ground; reported to the server on landing so it
+        // can apply fall damage (the player is position-authoritative, so the client measures the fall).
+        private static float _fallDistance;
+
+        // Survival block-breaking: the block currently being mined and 0..1 progress toward breaking it, plus a
+        // wall-clock timer so mining accrues at the display rate (UpdateFrame runs per frame, not per tick).
+        private static Vector3i? _miningTarget;
+        private static float _miningProgress;
+        private static readonly Stopwatch _frameTimer = Stopwatch.StartNew();
+
         public static void SetEntity(EntityPlayer playerEntity)
         {
             PlayerEntity = playerEntity;
@@ -54,7 +64,7 @@ namespace MinecraftClone3API.Entities
             var sensitivity = GraphicsSettings.MouseSensitivity;
             PlayerEntity.Rotate(-delta.Y * sensitivity, -delta.X * sensitivity);
 
-            if (Keybinds.IsPressed(ks, GameAction.Jump))
+            if (PlayerEntity.GameMode == GameMode.Creative && Keybinds.IsPressed(ks, GameAction.Jump))
             {
                 if (_spaceTapTimer.Elapsed.TotalSeconds < DoubleTapSeconds)
                 {
@@ -78,8 +88,7 @@ namespace MinecraftClone3API.Entities
             if (ks.IsKeyPressed(Keys.F10)) Profiler.Toggle();
             if (ks.IsKeyPressed(Keys.F2)) WorldRenderer.FixedTimeOfDay = WorldRenderer.FixedTimeOfDay == null ? 220.0 : 0;
 
-            if (ms.IsButtonDown(MouseButton.Left) && !ms.WasButtonDown(MouseButton.Left))
-                BreakBlock(world);
+            HandleBreaking(world, ms);
             if (ms.IsButtonDown(MouseButton.Right) && !ms.WasButtonDown(MouseButton.Right) && !TryActivateBlock(window, world))
                 PlaceBlock(world, ks);
 
@@ -97,6 +106,30 @@ namespace MinecraftClone3API.Entities
 
             if (PlayerEntity.Flying) TickFlying(ks);
             else TickWalking(ks, world);
+
+            TrackFall(world);
+        }
+
+        /// <summary>Accumulates downward travel while airborne and reports the total fall to the server on
+        /// landing (the server applies the damage). Flying resets the accumulator so descending in fly-mode and
+        /// disabling it never deals damage.</summary>
+        private static void TrackFall(WorldBase world)
+        {
+            if (PlayerEntity.Flying)
+            {
+                _fallDistance = 0f;
+                return;
+            }
+
+            if (PlayerEntity.OnGround)
+            {
+                if (_fallDistance > 0f && world is WorldClient client) client.SendFall(_fallDistance);
+                _fallDistance = 0f;
+                return;
+            }
+
+            var dy = PlayerEntity.Position.Y - PlayerEntity.PrevPosition.Y;
+            if (dy < 0f) _fallDistance += -dy;
         }
 
         public static void ApplyInterpolation(float alpha)
@@ -145,6 +178,52 @@ namespace MinecraftClone3API.Entities
         {
             if (_blockRaytrace == null) return;
             world.SetBlock(_blockRaytrace.BlockPos, BlockRegistry.BlockAir);
+        }
+
+        /// <summary>Creative breaks instantly on click; survival holds left-click to mine, accruing
+        /// hardness-scaled progress on the targeted block (Minecraft <c>break seconds ≈ hardness · 1.5</c> by
+        /// hand) and breaking it when full. Progress resets if the target changes or the button is released.</summary>
+        private static void HandleBreaking(WorldBase world, MouseState ms)
+        {
+            var dt = (float) _frameTimer.Elapsed.TotalSeconds;
+            _frameTimer.Restart();
+            // Cap the step so a long stall (alt-tab, an open menu) can't dump a full break into one frame.
+            if (dt > 0.25f) dt = 0.25f;
+
+            var leftDown = ms.IsButtonDown(MouseButton.Left);
+
+            if (PlayerEntity.GameMode == GameMode.Creative)
+            {
+                if (leftDown && !ms.WasButtonDown(MouseButton.Left)) BreakBlock(world);
+                _miningTarget = null;
+                _miningProgress = 0f;
+                return;
+            }
+
+            if (!leftDown || _blockRaytrace == null)
+            {
+                _miningTarget = null;
+                _miningProgress = 0f;
+                return;
+            }
+
+            var target = _blockRaytrace.BlockPos;
+            if (_miningTarget != target)
+            {
+                _miningTarget = target;
+                _miningProgress = 0f;
+            }
+
+            var hardness = _blockRaytrace.Block.Hardness;
+            if (hardness < 0f) { _miningProgress = 0f; return; }   // unbreakable (bedrock)
+
+            _miningProgress += dt / MathF.Max(0.05f, hardness * 1.5f);
+            if (_miningProgress >= 1f)
+            {
+                world.SetBlock(target, BlockRegistry.BlockAir);
+                _miningTarget = null;
+                _miningProgress = 0f;
+            }
         }
 
         /// <summary>Right-click interaction: if the player is looking at an interactable block (e.g. a crafting
@@ -208,6 +287,11 @@ namespace MinecraftClone3API.Entities
 
             BoundingBoxRenderer.Render(_blockRaytrace.BoundingBox, _blockRaytrace.BlockPos.ToVector3(), 1.01f, camera,
                 projection);
+
+            // The breaking crack overlay, while mining the targeted block in survival.
+            if (_miningProgress > 0f && _miningTarget == _blockRaytrace.BlockPos)
+                BlockBreakRenderer.Render(_blockRaytrace.BoundingBox, _blockRaytrace.BlockPos.ToVector3(),
+                    _miningProgress, camera, projection);
         }
     }
 }

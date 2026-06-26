@@ -81,6 +81,33 @@ position, so remote players (drawn by `EntityRenderer` as 0.6×1.8 boxes, offset
 `EntityMove`) aims a lerp from the current visual position toward the new target, advanced per frame by
 `WorldClient.UpdateEntityInterpolation`, and `Entity.RenderPosition` returns the lerp.
 
+**Survival.** The 20 tps `Tick` runs player physics → `_integratedServer.Update()` (which runs the survival
+sim, [entities.md](entities.md)) → `_network.Pump()` (handles fall/gamemode/respawn, broadcasts stats) →
+`SendMove`. Each frame `StateWorld` mirrors the server's `GameMode` onto the local player (so the fly toggle is
+gated to Creative — double-tap Space does nothing in Survival) and force-clears flight in Survival. The
+**survival HUD** (`Client/GUI/SurvivalHud.cs`) draws hearts + hunger above the hotbar from the official
+`icons.png` (placeholder bars without a resource pack), only in Survival. On death (`WorldClient.PlayerDead`,
+from the stats packet) `StateWorld` opens the **`GuiDeathScreen`** overlay (Respawn / Title); singleplayer keeps
+the integrated server ticking *while dead* (`simulate |= PlayerDead`) so the `RespawnRequest` is processed even
+though the overlay unfocused the world. When the server clears the dead flag, `StateWorld` closes the overlay
+and snaps the (position-authoritative) player to the spawn point. The **pause menu** carries a "Game Mode:
+Survival/Creative" toggle button that sends `SetGameModeRequest`; the label follows the authoritative mode
+(updated optimistically on click so it responds even while the singleplayer pause has frozen the server pump).
+The Inventory key opens the **survival** inventory (`GuiInventory` — 2×2 crafting + 36 slots over
+`container/inventory.png`) in survival and the creative item picker (`GuiCreativeInventory`) in creative.
+
+**Block breaking.** Creative breaks instantly on left-click (unchanged). Survival is hold-to-mine
+(`PlayerController.HandleBreaking`, per display frame): holding left-click accrues progress on the targeted
+block scaled by its `Block.Hardness` (Minecraft `break seconds ≈ hardness · 1.5` by hand; bedrock's negative
+hardness is unbreakable), and breaks it (the existing `SetBlock`-to-air request) when full; the progress resets
+if the target changes or the button is released. The progressive crack overlay (`destroy_stage_0..9`) is drawn
+by `BlockBreakRenderer` (see [rendering.md](rendering.md)).
+
+**HUD/GUI textures** come from the resource pack's modern (1.20.2+) **individual sprite** layout — the hotbar
+(`hud/hotbar.png` + `hud/hotbar_selection.png`) and the survival HUD hearts/food (`hud/heart/*`, `hud/food_*`)
+are separate PNGs, not the old monolithic `widgets.png`/`icons.png`; `GuiAssets` resolves each and callers fall
+back to coloured placeholders when absent.
+
 **Keybinds.** Movement/interaction keys are rebindable via `Keybinds` (`Client/Keybinds.cs`), a static
 `GameAction → Keys` map persisted to `GamePaths.KeybindsFile` (`Keybinds.json`), loaded in `Program.Main`
 alongside `GraphicsSettings`. `PlayerController` (and `StateWorld`/`ContainerScreen` for the Inventory action)

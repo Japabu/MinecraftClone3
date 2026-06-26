@@ -22,22 +22,23 @@ namespace VanillaPlugin
 
         public void Load(PluginContext context)
         {
-            context.Register(new BlockBasic("Stone", "minecraft:block/stone", true));
-            context.Register(new BlockBasic("Cobblestone", "minecraft:block/cobblestone", true));
-            context.Register(new BlockBasic("Dirt", "minecraft:block/dirt", true));
-            context.Register(new BlockBasic("Sand", "minecraft:block/sand", true));
-            context.Register(new BlockBasic("Gravel", "minecraft:block/gravel", true));
-            context.Register(new BlockBasic("Snow", "minecraft:block/snow_block", true));
-            context.Register(new BlockBasic("Bedrock", "minecraft:block/bedrock", true));
-            context.Register(new BlockBasic("Obsidian", "minecraft:block/obsidian", true));
-            context.Register(new BlockBasic("Bricks", "minecraft:block/bricks", true));
-            context.Register(new BlockBasic("StoneBricks", "minecraft:block/stone_bricks", true));
-            context.Register(new BlockBasic("CoalOre", "minecraft:block/coal_ore", true));
-            context.Register(new BlockBasic("IronOre", "minecraft:block/iron_ore", true));
-            context.Register(new BlockBasic("GoldOre", "minecraft:block/gold_ore", true));
-            context.Register(new BlockBasic("DiamondOre", "minecraft:block/diamond_ore", true));
-            context.Register(new BlockBasic("OakLog", "minecraft:block/oak_log", true));
-            context.Register(new BlockBasic("OakPlanks", "minecraft:block/oak_planks", true));
+            // Hardness values match Minecraft (drives survival mining time); bedrock is unbreakable (-1).
+            context.Register(new BlockBasic("Stone", "minecraft:block/stone", true, 1.5f));
+            context.Register(new BlockBasic("Cobblestone", "minecraft:block/cobblestone", true, 2.0f));
+            context.Register(new BlockBasic("Dirt", "minecraft:block/dirt", true, 0.5f));
+            context.Register(new BlockBasic("Sand", "minecraft:block/sand", true, 0.5f));
+            context.Register(new BlockBasic("Gravel", "minecraft:block/gravel", true, 0.6f));
+            context.Register(new BlockBasic("Snow", "minecraft:block/snow_block", true, 0.2f));
+            context.Register(new BlockBasic("Bedrock", "minecraft:block/bedrock", true, -1f));
+            context.Register(new BlockBasic("Obsidian", "minecraft:block/obsidian", true, 50.0f));
+            context.Register(new BlockBasic("Bricks", "minecraft:block/bricks", true, 2.0f));
+            context.Register(new BlockBasic("StoneBricks", "minecraft:block/stone_bricks", true, 1.5f));
+            context.Register(new BlockBasic("CoalOre", "minecraft:block/coal_ore", true, 3.0f));
+            context.Register(new BlockBasic("IronOre", "minecraft:block/iron_ore", true, 3.0f));
+            context.Register(new BlockBasic("GoldOre", "minecraft:block/gold_ore", true, 3.0f));
+            context.Register(new BlockBasic("DiamondOre", "minecraft:block/diamond_ore", true, 3.0f));
+            context.Register(new BlockBasic("OakLog", "minecraft:block/oak_log", true, 2.0f));
+            context.Register(new BlockBasic("OakPlanks", "minecraft:block/oak_planks", true, 2.0f));
             context.Register(new BlockLeaves());
             context.Register(new BlockWater());
             context.Register(new BlockBasic("BrewingStand", "minecraft:block/brewing_stand", false));
@@ -59,7 +60,7 @@ namespace VanillaPlugin
             context.Register(new ItemSimple("IronIngot", "minecraft/textures/item/iron_ingot.png"));
             context.Register(new ItemSimple("GoldIngot", "minecraft/textures/item/gold_ingot.png"));
             context.Register(new ItemSimple("Diamond", "minecraft/textures/item/diamond.png"));
-            context.Register(new ItemSimple("Apple", "minecraft/textures/item/apple.png"));
+            context.Register(new ItemFood("Apple", "minecraft/textures/item/apple.png", 4f, 0.3f));
 
             context.Register<BlockDataMetadata>();
             context.Register<BlockDataFurnace>();

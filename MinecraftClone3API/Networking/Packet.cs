@@ -27,7 +27,11 @@ namespace MinecraftClone3API.Networking
         OpenContainer,
         CloseContainer,
         ContainerState,
-        ContainerSlot
+        ContainerSlot,
+        PlayerStats,
+        PlayerFall,
+        SetGameModeRequest,
+        RespawnRequest
     }
 
     /// <summary>
@@ -59,7 +63,11 @@ namespace MinecraftClone3API.Networking
             {PacketId.OpenContainer, () => new OpenContainerPacket()},
             {PacketId.CloseContainer, () => new CloseContainerPacket()},
             {PacketId.ContainerState, () => new ContainerStatePacket()},
-            {PacketId.ContainerSlot, () => new ContainerSlotPacket()}
+            {PacketId.ContainerSlot, () => new ContainerSlotPacket()},
+            {PacketId.PlayerStats, () => new PlayerStatsPacket()},
+            {PacketId.PlayerFall, () => new PlayerFallPacket()},
+            {PacketId.SetGameModeRequest, () => new SetGameModeRequestPacket()},
+            {PacketId.RespawnRequest, () => new RespawnRequestPacket()}
         };
 
         public abstract PacketId Id { get; }
