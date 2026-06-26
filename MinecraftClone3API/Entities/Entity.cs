@@ -88,11 +88,18 @@ namespace MinecraftClone3API.Entities
             if (_interpAlpha < 1f)
                 _interpAlpha = MathHelper.Min(1f, _interpAlpha + dt / PlayerPhysics.TickSeconds);
 
-            // Advance the walk cycle and ease the swing strength toward the current speed. The phase speed and
-            // decay are tuned to read as a natural gait at the ~4 blocks/s a wandering creature moves.
-            var target = MathHelper.Clamp(_moveSpeed * 0.5f, 0f, 1f);
+            AdvanceWalkCycle(_moveSpeed, dt);
+        }
+
+        /// <summary>Advances the limb-swing walk cycle for a horizontal <paramref name="speed"/> (blocks/s),
+        /// easing the swing strength toward it. Remote entities drive this from interpolated network motion;
+        /// the local player drives it from its own physics (it isn't in the interpolation set). The phase
+        /// speed and decay are tuned to read as a natural gait at the ~4 blocks/s walking speed.</summary>
+        public void AdvanceWalkCycle(float speed, float dt)
+        {
+            var target = MathHelper.Clamp(speed * 0.5f, 0f, 1f);
             LimbSwingAmount += (target - LimbSwingAmount) * MathHelper.Min(1f, dt * 8f);
-            LimbSwing += _moveSpeed * dt * 2f;
+            LimbSwing += speed * dt * 2f;
         }
 
         public void Rotate(float pitch, float yaw)

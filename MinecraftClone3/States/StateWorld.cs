@@ -399,7 +399,7 @@ namespace MinecraftClone3.States
                 MathHelper.DegreesToRadians(GraphicsSettings.Fov), aspect, 0.1f, farPlane);
             WorldRenderer.RenderWorld(_world, projection);
 
-            if (_window.CursorState == CursorState.Grabbed)
+            if (_window.CursorState == CursorState.Grabbed && !PlayerController.RenderSelf)
                 CrosshairRenderer.Render();
             HotbarRenderer.Render(_world.Inventory);
             SurvivalHud.Render(_world);

@@ -21,10 +21,24 @@ namespace MinecraftClone3API.Entities
         private const float FlySpeed = 16f;
         private const float SprintMultiplier = 3f;
         private const float DoubleTapSeconds = 0.3f;
+        // How far the third-person camera trails the eye, and the gap it keeps when a block clips the view.
+        private const float ThirdPersonDistance = 4f;
+        private const float ThirdPersonClearance = 0.2f;
+
+        /// <summary>The F5 camera cycle: first-person, third-person behind, third-person facing the player.</summary>
+        public enum CameraPerspective { FirstPerson, ThirdBack, ThirdFront }
+
+        public static CameraPerspective Perspective = CameraPerspective.FirstPerson;
+
+        /// <summary>True when the local player's own body should be drawn (any third-person view).</summary>
+        public static bool RenderSelf => Perspective != CameraPerspective.FirstPerson;
 
         private static BlockRaytraceResult _blockRaytrace;
         private static bool _skipMouseDelta;
         private static readonly Stopwatch _spaceTapTimer = Stopwatch.StartNew();
+        // Wall-clock between frames, for advancing the local player's walk cycle (it isn't in the entity
+        // interpolation set, so nothing else drives its limb swing for the third-person view).
+        private static readonly Stopwatch _walkTimer = Stopwatch.StartNew();
 
         // Accumulated downward travel (blocks) since leaving the ground; reported to the server on landing so it
         // can apply fall damage (the player is position-authoritative, so the client measures the fall).
@@ -87,12 +101,37 @@ namespace MinecraftClone3API.Entities
             if (ks.IsKeyPressed(Keys.F7)) RenderDebug.ShadowFactor = !RenderDebug.ShadowFactor;
             if (ks.IsKeyPressed(Keys.F10)) Profiler.Toggle();
             if (ks.IsKeyPressed(Keys.F2)) WorldRenderer.FixedTimeOfDay = WorldRenderer.FixedTimeOfDay == null ? 220.0 : 0;
+            if (ks.IsKeyPressed(Keys.F5)) Perspective = (CameraPerspective) (((int) Perspective + 1) % 3);
 
             HandleBreaking(world, ms);
             if (ms.IsButtonDown(MouseButton.Right) && !ms.WasButtonDown(MouseButton.Right) && !TryActivateBlock(world))
                 PlaceBlock(world);
 
-            Camera.Update();
+            UpdateCamera(world);
+        }
+
+        /// <summary>Drives the camera from the player each frame. First-person follows the eye directly; the
+        /// third-person views trail (or face) the eye, pulled in if a block would clip the line of sight. The
+        /// local player's walk cycle is advanced here too so its limbs swing when its body is visible.</summary>
+        private static void UpdateCamera(WorldBase world)
+        {
+            var walkDt = (float) _walkTimer.Elapsed.TotalSeconds;
+            _walkTimer.Restart();
+            var speed = (PlayerEntity.Position.Xz - PlayerEntity.PrevPosition.Xz).Length / PlayerPhysics.TickSeconds;
+            PlayerEntity.AdvanceWalkCycle(speed, walkDt);
+
+            if (Perspective == CameraPerspective.FirstPerson)
+            {
+                Camera.Update();
+                return;
+            }
+
+            var eye = PlayerEntity.RenderPosition + PlayerEntity.EyeOffset;
+            var lookForward = Perspective == CameraPerspective.ThirdFront ? -PlayerEntity.Forward : PlayerEntity.Forward;
+            var distance = ThirdPersonDistance;
+            var hit = world.BlockRaytrace(eye, -lookForward, ThirdPersonDistance);
+            if (hit != null) distance = MathF.Max(0f, hit.Distance - ThirdPersonClearance);
+            Camera.UpdateThirdPerson(eye, lookForward, distance);
         }
 
         /// <summary>One fixed 20 tps simulation step (one walk physics step, or one fly move). Records

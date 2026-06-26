@@ -61,7 +61,10 @@ implemented** (one char per key press); the owning state must call `Detach()` fr
 **Player movement & physics** (`Entities/PlayerController.cs` + `PlayerPhysics.cs`, client-only, main
 thread). The player is a **0.6 × 1.8 AABB**; `Entity.Position` is the **feet** and the camera renders at
 `Position + EyeOffset` (1.62) via `Entity.RenderPosition`/`EyeOffset` (defaults keep non-player entities a
-point). `PlayerController` is split into `UpdateFrame` (per frame: look, fly toggle, hotbar selection, debug keys,
+point). **F5** cycles the camera perspective (`PlayerController.Perspective`): first-person → third-person
+behind → third-person facing; the two third-person views trail/face the eye by 4 blocks, pulled in by a
+block raytrace so the view never clips into terrain, and the renderer draws the player's own body
+(`PlayerController.RenderSelf`). `PlayerController` is split into `UpdateFrame` (per frame: look, fly toggle, hotbar selection, debug keys,
 break/place — see [inventory.md](inventory.md)) and `Tick` (one fixed **20 tps** step), driven by
 `StateWorld`'s accumulator; the **Inventory** keybind (default **E**) opens the creative inventory overlay
 (`StateWorld.Update`; no crafting grid, matching vanilla creative), and the **Drop** keybind (default **Q**,
