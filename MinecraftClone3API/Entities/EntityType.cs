@@ -13,7 +13,11 @@ namespace MinecraftClone3API.Entities
 
         /// <summary>A block falling under gravity (sand, gravel): rendered as a full-size block, turns back into
         /// a placed block when it lands.</summary>
-        FallingBlock
+        FallingBlock,
+
+        /// <summary>A thrown projectile (the ender pearl): flies under light gravity until it hits a block, then
+        /// acts on its thrower. Rendered as a small flat sprite of its item texture.</summary>
+        Projectile
     }
 
     /// <summary>
@@ -92,6 +96,7 @@ namespace MinecraftClone3API.Entities
             {
                 case EntityKind.Item: entity = new EntityItem(); break;
                 case EntityKind.FallingBlock: entity = new EntityFallingBlock(); break;
+                case EntityKind.Projectile: entity = new EntityProjectile(); break;
                 default: entity = new EntityCreature(); break;
             }
             entity.Type = this;

@@ -139,6 +139,13 @@ namespace VanillaPlugin
             context.Register(new EntityType("FallingBlock", EntityKind.FallingBlock,
                 EntityFallingBlock.Size, EntityFallingBlock.Size, 1f, 0f, false, null, null));
 
+            // The thrown ender pearl: a small projectile rendered from the pearl item sprite. The ItemEnderPearl
+            // throws it; on impact it teleports the thrower (see EntityProjectile / PlayerTeleportPacket).
+            var enderPearlProjectile = new EntityType("EnderPearlProjectile", EntityKind.Projectile,
+                0.25f, 0.25f, 1f, 0f, false, "minecraft:item/ender_pearl", null);
+            context.Register(enderPearlProjectile);
+            context.Register(new ItemEnderPearl(enderPearlProjectile));
+
             context.Register(new ItemSpawnEgg(pig, "minecraft/textures/item/pig_spawn_egg.png"));
             context.Register(new ItemSpawnEgg(cow, "minecraft/textures/item/cow_spawn_egg.png"));
             context.Register(new ItemSpawnEgg(sheep, "minecraft/textures/item/sheep_spawn_egg.png"));

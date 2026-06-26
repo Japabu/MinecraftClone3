@@ -206,6 +206,13 @@ relevant permanent doc. Not a changelog.
   colour. And there's no grass-eating, so a sheared sheep stays bare. Both deferred — the wiring (a per-sheep
   `SheepData`, the overlay layer) is in place, so colour is a tint on the overlay draw + a colour field in
   `SheepData`, and regrow is a server-side timer flipping `Sheared` back.
+- **Ender pearl can still strand you in a thick wall.** Throwing a pearl at a block teleports you to its impact
+  point (`EntityProjectile` → `WorldServer.PendingTeleports` → `PlayerTeleportPacket`, see [entities.md](entities.md));
+  when that point would embed the player, `TryResolveLanding` pushes back along the pearl's incoming path (then
+  up/horizontals) to a player-clear spot, and refuses to teleport if it finds none. This handles the common
+  head-on wall hit, but a dead-on hit into a **thick** wall (or a pocket where the back-off direction is also
+  blocked) can still drop you inside the geometry rather than in front of it. A proper swept depenetration
+  (resolve the player AABB out along the minimum-translation axis, multi-block) is the real fix; deferred.
 - **Tools — accepted limitations.** Mining tools exist (`ItemTool`: pickaxe/axe/shovel × wood/stone/iron/gold/
   diamond) with Minecraft-exact speed/tier and the full vanilla mining formula, but **no durability** (tools
   never wear out) and **no block drops** — a broken block vanishes, so survival can't gather resources to *craft*

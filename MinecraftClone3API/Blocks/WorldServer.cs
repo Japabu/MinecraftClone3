@@ -164,6 +164,17 @@ namespace MinecraftClone3API.Blocks
         public readonly Queue<Entity> PendingSpawns = new Queue<Entity>();
         public readonly Queue<int> PendingDespawns = new Queue<int>();
 
+        /// <summary>A pending "teleport this player to here", produced by a landed projectile (ender pearl) and
+        /// drained each Pump by ServerNetwork, which owns the sessions and so can command the owning client.</summary>
+        public readonly struct Teleport
+        {
+            public readonly int OwnerId;
+            public readonly Vector3 Position;
+            public Teleport(int ownerId, Vector3 position) { OwnerId = ownerId; Position = position; }
+        }
+
+        public readonly Queue<Teleport> PendingTeleports = new Queue<Teleport>();
+
         // Ambient creature spawning: every so often try to drop a small group near a random player.
         private readonly Random _spawnRng = new Random();
         private int _spawnCooldown = SpawnIntervalTicks;

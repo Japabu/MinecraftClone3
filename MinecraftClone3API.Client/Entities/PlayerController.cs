@@ -132,6 +132,10 @@ namespace MinecraftClone3API.Entities
             if (dy < 0f) _fallDistance += -dy;
         }
 
+        /// <summary>Clears the accumulated fall distance — used after a server teleport (an ender pearl) so the
+        /// jump in position isn't billed as a fall on the next landing.</summary>
+        public static void ResetFall() => _fallDistance = 0f;
+
         public static void ApplyInterpolation(float alpha)
         {
             PlayerEntity.InterpolatedPosition =
@@ -282,18 +286,23 @@ namespace MinecraftClone3API.Entities
                 if (entity != null) { client.SendUseItemOnEntity(entity.EntityId); return; }
             }
 
-            if (_blockRaytrace == null) return;
-            var target = _blockRaytrace.BlockPos + _blockRaytrace.Face.GetNormali();
             var block = item.GetBlock();
             if (block != null)
             {
+                if (_blockRaytrace == null) return;
+                var target = _blockRaytrace.BlockPos + _blockRaytrace.Face.GetNormali();
                 world.PlaceBlock(PlayerEntity, target, block,
                     block.GetPlacementMetadata(PlayerEntity, _blockRaytrace));
                 return;
             }
 
-            // Usable non-block items (a spawn egg) ask the server to act; other items do nothing.
-            if (item.IsUsable) client.SendUseItem(target);
+            // Usable non-block items ask the server to act. A spawn egg needs a targeted cell; a thrown item
+            // (ender pearl) doesn't (RequiresBlockTarget false), so it fires even aiming at the sky.
+            if (!item.IsUsable) return;
+            if (_blockRaytrace != null)
+                client.SendUseItem(_blockRaytrace.BlockPos + _blockRaytrace.Face.GetNormali());
+            else if (!item.RequiresBlockTarget)
+                client.SendUseItem(Vector3i.Zero);
         }
 
         // The entity the player is aiming at within reach (and nearer than the targeted block, so you can't

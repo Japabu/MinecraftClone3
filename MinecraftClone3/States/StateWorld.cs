@@ -202,6 +202,7 @@ namespace MinecraftClone3.States
             _player.GameMode = _world.GameMode;
             if (_world.GameMode == GameMode.Survival) _player.Flying = false;
             UpdateDeathScreen();
+            UpdateTeleport();
 
             // The automated benchmark drives the camera itself (no player input / no pause overlay).
             var active = focused && !_benchmark;
@@ -290,6 +291,20 @@ namespace MinecraftClone3.States
                 PlayerController.ResetMouse();
                 PlayerController.Camera.Update();
             }
+        }
+
+        /// <summary>Applies a server-commanded teleport (a landed ender pearl): snaps the position-authoritative
+        /// local player to the impact point and clears its fall accumulator so the jump isn't billed as a fall.</summary>
+        private void UpdateTeleport()
+        {
+            if (!(_world.PendingTeleport is Vector3 target)) return;
+            _world.PendingTeleport = null;
+
+            _player.Position = target;
+            _player.PrevPosition = target;
+            _player.InterpolatedPosition = target;
+            _player.Velocity = Vector3.Zero;
+            PlayerController.ResetFall();
         }
 
         /// <summary>One fixed 20 tps simulation step: the player physics (only when <paramref name="stepPlayer"/>,

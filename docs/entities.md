@@ -26,6 +26,11 @@ network data is needed). Subclasses:
   cell was filled the same tick). `Position` is the block's bottom-centre. It carries its block id on a
   `FallingBlockData` so the client renders the right full-size block (`EntityRenderer.DrawFallingBlock`, reusing
   the dropped-item block mesh at full scale, no spin).
+- **`EntityProjectile`** — a thrown ender pearl. Flies under light gravity with a **sub-stepped** swept block
+  check (so a fast pearl can't tunnel a thin wall); on entering a solid collision box it queues a teleport of
+  its thrower (`OwnerId`) onto `WorldServer.PendingTeleports` and dies. Rendered client-side as a single
+  **camera-facing billboard** quad of the pearl item sprite (`EntityRenderer.DrawProjectile`, oriented from the
+  camera basis), not a box model. Thrown by `ItemEnderPearl.OnUseServer` along the player's look vector.
 - **`EntityPlayer`** — the player (its own tuned [PlayerPhysics](../MinecraftClone3API/Entities/PlayerPhysics.cs);
   remote copies are bare `Entity`s with `Type == null`). Also carries the survival stats
   (`Health`/`Hunger`/`Saturation`/`Exhaustion`/`Air`/`GameMode`, see below) — server-authoritative, mirrored on
@@ -81,6 +86,16 @@ holding the `EntityType` to spawn and the official spawn-egg sprite). Right-clic
 inventory copy (so the request can't spoof the item) and calls `Item.OnUseServer`, which spawns the creature.
 Fresh players are seeded the spawn eggs on the first hotbar slots (then blocks) so entities are testable at once.
 
+**Thrown items (ender pearl).** An `Item` with `RequiresBlockTarget == false` (the ender pearl) fires its
+`OnUseServer` even when the crosshair is on no block (aiming at the sky), so `PlayerController` sends a
+`UseItemRequest` with a dummy cell the action ignores. `ItemEnderPearl` spawns an `EntityProjectile` at the
+player's eye along their look vector, tagged with the thrower's `EntityId`. When it lands, the projectile queues
+`(ownerId, position)` on `WorldServer.PendingTeleports`; `ServerNetwork.SyncEntities` drains it, sends the owner
+a **`PlayerTeleportPacket`**, mirrors the position on the server copy, and applies 5 points of pearl fall damage
+in survival. The player is position-authoritative, so this packet is the only relocation outside the respawn
+snap: the client obeys by snapping its local player there and clearing its fall accumulator
+(`StateWorld.UpdateTeleport` → `PlayerController.ResetFall`).
+
 **Item use on an entity (shears).** An `Item` with `UsableOnEntity = true` (the shears) takes precedence on
 right-click: `PlayerController.PickEntity` ray-casts the held look direction against each entity's collision AABB
 (nearer than the targeted block), and a hit sends `UseItemOnEntityRequestPacket` with the entity id. The server
@@ -122,7 +137,9 @@ flat light value sampled at its position, so it shades/shadows like the surround
 Mojang's texture offsets + dimensions so the sheet maps straight on, with UVs normalized by the texture array's
 layer size. (Current Minecraft splits some mob sheets by climate variant, so the paths carry a suffix —
 `entity/pig/pig_temperate`, `entity/cow/cow_temperate`, `entity/chicken/chicken_temperate`.) Dropped items render as the spinning, bobbing 3D icon of their block (the same mesh
-[ItemIconRenderer](../MinecraftClone3API/Client/Graphics/ItemIconRenderer.cs) uses for the inventory).
+[ItemIconRenderer](../MinecraftClone3API/Client/Graphics/ItemIconRenderer.cs) uses for the inventory). A
+projectile (the ender pearl) instead renders as a single **camera-facing billboard** quad of its item sprite —
+the quad's local axes are mapped onto the camera's `Right`/`Up`/forward each frame so it always faces the viewer.
 
 **Models are data, not code.** Each type's geometry is a **Bedrock-edition geometry JSON** file (the
 Blockbench-native mob format — bones with `pivot`/`rotation`, cubes with absolute `origin`/`size`/`uv`), loaded

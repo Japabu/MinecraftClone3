@@ -43,6 +43,10 @@ namespace MinecraftClone3API.Graphics
         // Dropped-item meshes (the block's icon geometry), built lazily — block textures are already uploaded.
         private static readonly Dictionary<ushort, VertexArrayObject> ItemMeshes = new Dictionary<ushort, VertexArrayObject>();
 
+        // Projectile (ender pearl) sprite textures, indexed at load; their crossed-quad meshes are built lazily.
+        private static readonly Dictionary<ushort, BlockTexture> ProjectileTextures = new Dictionary<ushort, BlockTexture>();
+        private static readonly Dictionary<ushort, VertexArrayObject> ProjectileMeshes = new Dictionary<ushort, VertexArrayObject>();
+
         private static readonly Stopwatch AnimClock = Stopwatch.StartNew();
 
         /// <summary>Legacy entry point kept for the loading flow; the real work is in <see cref="LoadModels"/>,
@@ -61,6 +65,12 @@ namespace MinecraftClone3API.Graphics
 
             foreach (var type in GameRegistry.EntityTypes)
             {
+                if (type.Kind == EntityKind.Projectile && type.TexturePath != null)
+                {
+                    ProjectileTextures[type.Id] = ResourceReader.ReadBlockTexture(type.TexturePath);
+                    continue;
+                }
+
                 if (type.Kind != EntityKind.Creature || type.ModelPath == null) continue;
                 var texture = ResourceReader.ReadBlockTexture(type.TexturePath);
                 var model = BuildModel(LoadModel(type.ModelPath), texture, ReadData(ResolvePath(type.TexturePath)));
@@ -177,6 +187,8 @@ namespace MinecraftClone3API.Graphics
                     DrawItem((EntityItem) entity, world, uModel, uLight);
                 else if (entity.Type.Kind == EntityKind.FallingBlock)
                     DrawFallingBlock((EntityFallingBlock) entity, world, uModel, uLight);
+                else if (entity.Type.Kind == EntityKind.Projectile)
+                    DrawProjectile(entity, world, camera, uModel, uLight);
                 else if (CreatureModels.TryGetValue(entity.Type.Id, out var model))
                     DrawModel(model, entity, world, uModel, uLight);
             }
@@ -248,6 +260,49 @@ namespace MinecraftClone3API.Graphics
             var matrix = Matrix4.CreateTranslation(centre);
             GL.UniformMatrix4(uModel, false, ref matrix);
             mesh.Draw();
+        }
+
+        // A thrown projectile (ender pearl): a single flat quad of its item sprite, spherically billboarded so it
+        // always faces the camera (like Minecraft's thrown items). Entity culling is disabled, so the one quad
+        // shows whichever way its normal ends up.
+        private static void DrawProjectile(Entity entity, WorldClient world, Camera camera, int uModel, int uLight)
+        {
+            var mesh = GetProjectileMesh(entity.Type.Id);
+            if (mesh == null) return;
+
+            var pos = entity.RenderPosition;
+            SetLight(world, pos, uLight);
+
+            // Map the quad's local axes onto the camera basis (right, up, toward-camera) so it faces the viewer.
+            var right = camera.Right;
+            var up = Vector3.Cross(camera.Right, camera.Forward);
+            var toCam = -camera.Forward;
+            var billboard = new Matrix4(
+                right.X, right.Y, right.Z, 0f,
+                up.X, up.Y, up.Z, 0f,
+                toCam.X, toCam.Y, toCam.Z, 0f,
+                0f, 0f, 0f, 1f);
+
+            var matrix = billboard * Matrix4.CreateTranslation(pos);
+            GL.UniformMatrix4(uModel, false, ref matrix);
+            mesh.Draw();
+        }
+
+        private static VertexArrayObject GetProjectileMesh(ushort typeId)
+        {
+            if (ProjectileMeshes.TryGetValue(typeId, out var mesh)) return mesh;
+            if (!ProjectileTextures.TryGetValue(typeId, out var tex)) return ProjectileMeshes[typeId] = null;
+
+            const float r = 0.125f;                                   // half-extent → a 0.25-block sprite
+            var size = BlockTextureManager.Sizes[tex.ArrayId];        // the sprite fills its whole array layer
+            mesh = new VertexArrayObject();
+            // One quad in the local XY plane (normal +Z); the billboard matrix orients it to the camera.
+            Quad(mesh, tex, size, new Vector3(0, 0, 1),
+                new Vector3(-r, r, 0), new Vector3(r, r, 0), new Vector3(-r, -r, 0), new Vector3(r, -r, 0),
+                0, 0, size, size);
+            mesh.Upload();
+            ProjectileMeshes[typeId] = mesh;
+            return mesh;
         }
 
         private static VertexArrayObject GetItemMesh(ushort blockId)

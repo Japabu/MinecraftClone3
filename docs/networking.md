@@ -43,6 +43,7 @@ tolerates the server mutating the source chunk concurrently (a torn entry self-c
   C→S  PlayerFall            completed fall distance (blocks); server applies fall damage (player owns position)
   C→S  SetGameModeRequest    pause-menu game-mode toggle (server-authoritative)
   C→S  RespawnRequest        death-screen respawn (honoured only while dead)
+  S→C  PlayerTeleport        relocate the owning player (landed ender pearl); client snaps + clears fall
 ```
 
 **Inventory is server-authoritative** (see [inventory.md](inventory.md)). The server owns each

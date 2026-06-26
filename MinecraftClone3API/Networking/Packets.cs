@@ -531,4 +531,16 @@ namespace MinecraftClone3API.Networking
         public override void Write(BinaryWriter writer) { }
         public override void Read(BinaryReader reader) { }
     }
+
+    /// <summary>Server → client command to move the player to a position (a landed ender pearl). The player is
+    /// position-authoritative, so this is the only relocation outside the respawn snap; the client obeys by
+    /// snapping its local player there and clearing its fall accumulator.</summary>
+    public class PlayerTeleportPacket : Packet
+    {
+        public Vector3 Position;
+
+        public override PacketId Id => PacketId.PlayerTeleport;
+        public override void Write(BinaryWriter writer) => WriteVector3(writer, Position);
+        public override void Read(BinaryReader reader) => Position = ReadVector3(reader);
+    }
 }

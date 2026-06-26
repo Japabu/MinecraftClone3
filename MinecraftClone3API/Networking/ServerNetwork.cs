@@ -197,6 +197,9 @@ namespace MinecraftClone3API.Networking
             while (_world.PendingDespawns.Count > 0)
                 Broadcast(new EntityDespawnPacket {EntityId = _world.PendingDespawns.Dequeue()}, null);
 
+            while (_world.PendingTeleports.Count > 0)
+                TeleportPlayer(_world.PendingTeleports.Dequeue());
+
             CollectItems();
 
             foreach (var entity in _world.Entities)
@@ -209,6 +212,24 @@ namespace MinecraftClone3API.Networking
                     Pitch = entity.Pitch,
                     Yaw = entity.Yaw
                 }, null);
+            }
+        }
+
+        /// <summary>Carries out a landed ender pearl's teleport: commands the owning client to snap there (the
+        /// player is position-authoritative), mirrors it on the server copy, and applies Minecraft's 5 points of
+        /// pearl fall damage in survival (the existing death path handles Health ≤ 0).</summary>
+        private void TeleportPlayer(WorldServer.Teleport tp)
+        {
+            foreach (var session in _sessions)
+            {
+                if (!session.LoggedIn || session.EntityId != tp.OwnerId) continue;
+
+                session.Connection.Send(new PlayerTeleportPacket {Position = tp.Position});
+                session.Player.Position = tp.Position;
+                session.Player.LastTickPosition = tp.Position;
+                if (session.Player.GameMode != GameMode.Creative)
+                    session.Player.Health = Math.Max(0f, session.Player.Health - 5f);
+                return;
             }
         }
 
