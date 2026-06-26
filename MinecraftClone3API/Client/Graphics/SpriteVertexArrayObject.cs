@@ -19,6 +19,10 @@ namespace MinecraftClone3API.Graphics
         public int VertexCount => (Positions?.Count).GetValueOrDefault();
         public int IndicesCount => (Indices?.Count).GetValueOrDefault();
 
+        // FREEZE DIAG accessors.
+        public int DebugVaoId => VaoId;
+        public int DebugIndexBufferId => IndicesId;
+
         public SpriteVertexArrayObject()
         {
             VaoId = GL.GenVertexArray();

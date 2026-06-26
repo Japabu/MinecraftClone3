@@ -11,5 +11,10 @@
         public abstract void Update(bool focused);
         public abstract void Render();
         public virtual void Exit() { }
+
+        /// <summary>Whether this overlay should freeze the underlying singleplayer world while it is open.
+        /// Only the pause menu does; container/inventory screens leave the world running (mobs keep moving,
+        /// furnaces keep smelting), exactly as vanilla. Read by <see cref="StateEngine.WorldPaused"/>.</summary>
+        public virtual bool PausesWorld => false;
     }
 }

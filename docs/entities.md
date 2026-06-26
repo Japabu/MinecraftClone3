@@ -17,6 +17,12 @@ network data is needed). Subclasses:
   collision via `EntityPhysics`, hopping 1-block steps. `ServerWorld` is the back-reference its AI reads.
 - **`EntityItem`** — a dropped `ItemStack`. Falls under gravity, settles, and despawns after ~5 min; `CanPickup`
   gates a short delay so a just-broken block isn't instantly re-collected.
+- **`EntityFallingBlock`** — a block (sand, gravel) mid-fall. Spawned by `BlockFalling` via
+  `WorldServer.SpawnFallingBlock` when the block is unsupported (see [world-model.md](world-model.md)); falls via
+  `EntityPhysics` and on landing turns back into a placed block at its rest cell (stacking one cell up if that
+  cell was filled the same tick). `Position` is the block's bottom-centre. It carries its block id on a
+  `FallingBlockData` so the client renders the right full-size block (`EntityRenderer.DrawFallingBlock`, reusing
+  the dropped-item block mesh at full scale, no spin).
 - **`EntityPlayer`** — the player (its own tuned [PlayerPhysics](../MinecraftClone3API/Entities/PlayerPhysics.cs);
   remote copies are bare `Entity`s with `Type == null`).
 
@@ -27,7 +33,8 @@ width/height. It runs **server-side only** and reuses the same collision contrac
 ## Types & registry
 
 An `EntityType` ([Entities/EntityType.cs](../MinecraftClone3API/Entities/EntityType.cs)) is a registered species:
-collision `Width`/`Height`, AI fields (`Hostile`, `MoveSpeed`, `MaxHealth`), an `EntityKind` (`Creature`/`Item`),
+collision `Width`/`Height`, AI fields (`Hostile`, `MoveSpeed`, `MaxHealth`), an `EntityKind`
+(`Creature`/`Item`/`FallingBlock`),
 and the **client-only** render data (`TexturePath` + a `ModelPath` resource key). Plugins register them with
 `context.Register(EntityType)`; the `EntityRegistry` assigns each a sequential numeric `Id` in registration order.
 **Client and server load the same plugins in the same order, so the ids agree on the wire** — the same
@@ -37,6 +44,15 @@ The in-memory model (`EntityModel`/`ModelPart`/`ModelBox`,
 [Client/Graphics/EntityModel.cs](../MinecraftClone3API/Client/Graphics/EntityModel.cs)) is GL-free data — a flat
 list of parts, each a group of texture-offset boxes that pivots for animation. The server never builds it; only
 the client loads it (from a data file — see Rendering) and turns it into GPU buffers.
+
+**Per-entity state (`EntityData`).** Mob-specific state lives in one nullable `Entity.Data` slot — the entity
+analog of `BlockData` (see [world-model.md](world-model.md)): an abstract `EntityData`
+([Entities/EntityData.cs](../MinecraftClone3API/Entities/EntityData.cs)) with `Serialize`/`Deserialize`, concrete
+subclasses (`SheepData { Sheared }`) registered by type (`PluginContext.RegisterEntityData<T>`) and (de)serialized
+behind a registry-key tag. It's **wire-only** (entities aren't saved): an `EntityType.DataFactory` builds the
+instance a creature spawns with, it rides `EntitySpawnPacket`, and changes broadcast via `EntityDataPacket`. The
+base class is GL-free; `EntityData.OverlayVisible` lets it drive the renderer (hide a sheared sheep's wool)
+without the API knowing the concrete subclass. The base `Entity` stays free of per-mob flags.
 
 ## Networking
 
@@ -59,6 +75,14 @@ holding the `EntityType` to spawn and the official spawn-egg sprite). Right-clic
 `UseItemRequestPacket` with the targeted cell; the server reads the held item from its own authoritative
 inventory copy (so the request can't spoof the item) and calls `Item.OnUseServer`, which spawns the creature.
 Fresh players are seeded the spawn eggs on the first hotbar slots (then blocks) so entities are testable at once.
+
+**Item use on an entity (shears).** An `Item` with `UsableOnEntity = true` (the shears) takes precedence on
+right-click: `PlayerController.PickEntity` ray-casts the held look direction against each entity's collision AABB
+(nearer than the targeted block), and a hit sends `UseItemOnEntityRequestPacket` with the entity id. The server
+resolves the id against its **own** `WorldServer.FindEntity` list (so it can't act on an arbitrary id), runs
+`Item.OnUseOnEntity`, then broadcasts the entity's (possibly changed) `EntityData`. `ItemShears.OnUseOnEntity`
+shears a woolly sheep — flips `SheepData.Sheared` (which the client uses to drop the wool layer) and `DropItem`s
+1–3 wool.
 
 ## Rendering
 
@@ -84,6 +108,13 @@ coordinates into our +Z-facing convention (`z → −z`) and rebases each cube's
 it honors per-cube `uv`/`inflate` and X-axis bone rotation (the quadruped body pitch), but not bone parenting,
 cube `mirror`, or Y/Z rotation conventions (unused by the built-in models). Bone names drive animation, so author
 them `head`/`body`/`leg0..3`/`arm0..1`/`wing0..1`.
+
+**Overlay layers.** An `EntityType` may name a second model + texture (`OverlayModelPath`/`OverlayTexturePath`) —
+the sheep's wool. It's built as a separate `RenderModel` (its own texture indexes into the array, so each VAO's
+vertices already reference the right layer — no extra bind) and drawn over the base with the **same** per-part
+matrices, since the overlay reuses the base bone names/pivots. The renderer skips it when the entity's
+`EntityData.OverlayVisible` is false (a sheared sheep). The player's hat/jacket layer is instead baked into
+`player.geo.json` because it shares the player's one skin texture.
 
 Some humanoid sheets (e.g. the zombie) use the **legacy single-layer layout**: the left arm/leg regions are
 blank and the right-limb texels serve both sides. At model-build time `MirrorEmptyLimbs` detects a fully

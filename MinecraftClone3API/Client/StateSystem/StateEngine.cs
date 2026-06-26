@@ -10,10 +10,19 @@ namespace MinecraftClone3API.Client.StateSystem
         private static readonly List<StateBase> _overlaysToRemove = new List<StateBase>();
         private static StateBase _pendingState;
 
+        /// <summary>True while an open overlay declares it pauses the world (the Esc menu). The active state
+        /// reads this to freeze the singleplayer simulation; other overlays (inventory, furnace, …) leave it
+        /// running. Recomputed every <see cref="Update"/> from the current overlay stack.</summary>
+        public static bool WorldPaused { get; private set; }
+
         public static void Update()
         {
             var stateFocused = _overlays.Count == 0;
             var topOverlay = _overlays.Count > 0 ? _overlays[_overlays.Count - 1] : null;
+
+            WorldPaused = false;
+            for (var i = 0; i < _overlays.Count; i++)
+                if (_overlays[i].PausesWorld) { WorldPaused = true; break; }
 
             _overlaysToRemove.Clear();
             for (var i = _overlays.Count - 1; i >= 0; i--)

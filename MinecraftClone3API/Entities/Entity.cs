@@ -29,6 +29,10 @@ namespace MinecraftClone3API.Entities
         /// <summary>Set by the server when the entity should be removed; drained by the world next tick.</summary>
         public bool Dead;
 
+        /// <summary>Optional polymorphic per-entity state (the entity analog of block data) — e.g. a sheep's
+        /// wool/sheared state. Null for entities that need none; server-authoritative and synced to clients.</summary>
+        public EntityData Data;
+
         // Client walk-cycle animation. LimbSwing is the phase accumulator (advanced by horizontal speed) and
         // LimbSwingAmount is how strongly the limbs swing (0 standing .. ~1 walking), both driven purely from
         // the interpolated motion of incoming position updates so no extra network data is needed.

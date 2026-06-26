@@ -159,7 +159,6 @@ namespace MinecraftClone3API.Entities
 
         private static void PlaceBlock(WorldBase world, KeyboardState ks)
         {
-            if (_blockRaytrace == null) return;
             if (!(world is WorldClient client)) return;
 
             var held = client.Inventory.SelectedItem;
@@ -167,6 +166,15 @@ namespace MinecraftClone3API.Entities
             var item = held.Item;
             if (item == null) return;
 
+            // Aiming at an entity with an entity-usable item (shears on a sheep)? That takes precedence and
+            // doesn't need a block under the crosshair.
+            if (item.UsableOnEntity)
+            {
+                var entity = PickEntity(client);
+                if (entity != null) { client.SendUseItemOnEntity(entity.EntityId); return; }
+            }
+
+            if (_blockRaytrace == null) return;
             var target = _blockRaytrace.BlockPos + _blockRaytrace.Face.GetNormali();
             var block = item.GetBlock();
             if (block != null)
@@ -178,6 +186,59 @@ namespace MinecraftClone3API.Entities
 
             // Usable non-block items (a spawn egg) ask the server to act; other items do nothing.
             if (item.IsUsable) client.SendUseItem(target);
+        }
+
+        // The entity the player is aiming at within reach (and nearer than the targeted block, so you can't
+        // reach through a wall), or null. A ray–AABB test against each entity's collision box.
+        private static Entity PickEntity(WorldClient client)
+        {
+            const float reach = 8f;
+            var origin = PlayerEntity.RenderPosition + PlayerEntity.EyeOffset;
+            var dir = PlayerEntity.Forward;
+            var maxDist = reach;
+            if (_blockRaytrace != null)
+                maxDist = MathF.Min(maxDist,
+                    (_blockRaytrace.BlockPos.ToVector3() + new Vector3(0.5f) - origin).Length);
+
+            Entity best = null;
+            foreach (var entity in client.Entities.Values)
+            {
+                if (entity.Type == null) continue;
+                var half = entity.Type.Width * 0.5f;
+                var min = entity.RenderPosition - new Vector3(half, 0, half);
+                var max = entity.RenderPosition + new Vector3(half, entity.Type.Height, half);
+                if (RayAabb(origin, dir, min, max, out var dist) && dist <= maxDist)
+                {
+                    maxDist = dist;
+                    best = entity;
+                }
+            }
+
+            return best;
+        }
+
+        private static bool RayAabb(Vector3 origin, Vector3 dir, Vector3 min, Vector3 max, out float t)
+        {
+            var tmin = 0f;
+            var tmax = float.MaxValue;
+            t = 0f;
+            if (!Slab(origin.X, dir.X, min.X, max.X, ref tmin, ref tmax)) return false;
+            if (!Slab(origin.Y, dir.Y, min.Y, max.Y, ref tmin, ref tmax)) return false;
+            if (!Slab(origin.Z, dir.Z, min.Z, max.Z, ref tmin, ref tmax)) return false;
+            t = tmin;
+            return true;
+        }
+
+        private static bool Slab(float o, float d, float lo, float hi, ref float tmin, ref float tmax)
+        {
+            if (MathF.Abs(d) < 1e-6f) return o >= lo && o <= hi;
+            var inv = 1f / d;
+            var t1 = (lo - o) * inv;
+            var t2 = (hi - o) * inv;
+            if (t1 > t2) { var tmp = t1; t1 = t2; t2 = tmp; }
+            if (t1 > tmin) tmin = t1;
+            if (t2 < tmax) tmax = t2;
+            return tmin <= tmax;
         }
 
         /// <summary>Hotbar slot selection: number keys 1-9 jump to a slot, the scroll wheel steps through

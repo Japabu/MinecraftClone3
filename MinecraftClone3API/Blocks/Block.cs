@@ -119,6 +119,13 @@ namespace MinecraftClone3API.Blocks
         /// on the client). Reads/writes the block's stored <see cref="BlockData"/>.</summary>
         public virtual void OnServerTick(WorldServer world, Vector3i blockPos) { }
 
+        /// <summary>Server-side: a block in one of the six face-adjacent positions changed (placed, broken, or
+        /// fell). Default no-op. Overriders must stay light — only schedule a tick
+        /// (<see cref="WorldServer.ScheduleBlockTick"/>) or touch their own block data; do not call back into
+        /// <c>SetBlock</c>, which would recurse through this notification. Falling blocks use it to start falling
+        /// when the block beneath them is removed.</summary>
+        public virtual void OnNeighborChanged(WorldServer world, Vector3i blockPos, Vector3i changedPos) { }
+
         public virtual Color4 GetTintColor(WorldBase world, Vector3i blockPos, int tintId) => Color4.White;
         public virtual LightLevel GetLightLevel(WorldBase world, Vector3i blockPos) => LightLevel.Zero;
 

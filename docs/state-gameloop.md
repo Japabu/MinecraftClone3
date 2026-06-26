@@ -1,9 +1,25 @@
 # State system & game loop
 
-`StateEngine` (static) holds a stack of `_states` plus `_overlays`. `AddOverlay` pauses the base state (it
-updates unfocused). `ReplaceState(state)` is **deferred to end of frame** and calls `Exit()` on every removed
+`StateEngine` (static) holds a stack of `_states` plus `_overlays`. An open overlay unfocuses the base state
+(it still updates, but ignores input). It does **not** by itself pause the world: only an overlay whose
+`PausesWorld` is true (the Esc `GuiPauseMenu`) freezes the singleplayer simulation — `StateEngine.WorldPaused`
+is recomputed from the overlay stack each `Update`, and `StateWorld` gates `simulate` on it. So a
+container/inventory/furnace screen leaves the integrated server ticking (furnaces keep smelting, mobs keep
+moving), exactly as vanilla; multiplayer never pauses (can't pause a shared server).
+`ReplaceState(state)` is **deferred to end of frame** and calls `Exit()` on every removed
 layer — that's how a world saves on "Save and Quit to Title" and on window close
-(`GameClient.OnUnload → StateEngine.Exit`). State flow:
+(`GameClient.OnUnload → StateEngine.Exit`).
+
+**World teardown is asynchronous.** `StateWorld.Exit` runs only the GL cleanup (`WorldClient.Disconnect` — VAO/
+buffer disposal) on the main/GL thread; stopping the server network and joining + saving the world (GL-free,
+but seconds-long when many chunks are dirty — a burning furnace floods light and dirties every chunk it
+touches) runs on a foreground `World Teardown` thread. Blocking the render thread for that save would leave
+OpenTK unable to draw or pump events; on macOS the window then goes unresponsive and its OpenGL-over-Metal
+drawable **wedges**, freezing the on-screen image on the last frame even though the game has moved on. "Save and
+Quit to Title" therefore routes through `GuiSavingWorld`, which keeps drawing a "Saving world..." screen each
+frame and `ReplaceState`s to `GuiMainMenu` once `StateWorld.IsTearingDown` clears. Opening another world calls
+`StateWorld.WaitForPendingTeardown()` first (and the foreground thread keeps the process alive to finish a save
+on app exit), so a save never races the next world on disk. State flow:
 
 ```
 GuiResourceLoading ──(done)──▶ GuiMainMenu ──Multiplayer──────────────────────────▶ StateWorld(window, multiplayer:true)

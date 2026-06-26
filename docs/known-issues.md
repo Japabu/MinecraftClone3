@@ -185,9 +185,22 @@ relevant permanent doc. Not a changelog.
   not load faithfully): bone `parent` hierarchies (our `EntityModel` is a flat part list — the renderer pivots
   each part independently, no parent transform), cube `mirror` (we author explicit per-box UVs instead), and the
   Y/Z bone-rotation sign conventions (only the X-axis quadruped pitch is exercised + verified). Supporting
-  parented bones would mean giving the renderer a real bone matrix stack. Geometry is transcribed from the
-  **official Mojang Bedrock** `.geo.json` (verified cube-for-cube), so the built-in mobs match vanilla exactly.
-- **The sheep renders sheared (no wool layer).** Vanilla's wool is a second, inflated body/head/leg geometry
-  (`geometry.sheep.v1.8`, `inflate` 0.6–1.75) drawn over the bare sheep with the dyeable wool texture; we ship
-  only the sheared body, so the sheep looks thin. Now that the loader supports `inflate`, it's an added overlay
-  model (like the player's) plus the `wool` texture — deferred.
+  parented bones would mean giving the renderer a real bone matrix stack. Cube **`origin`/`size`/`uv` and the
+  leg pivots are transcribed from the official Mojang Bedrock `.geo.json` and verified cube-for-cube**, so the
+  built-in mobs' geometry matches vanilla exactly. The one un-applied detail is cube **`mirror`** (vanilla
+  mirrors the right-side legs and one arm/leg of the humanoid): we render those faces un-mirrored, which is
+  near-invisible on the near-symmetric limb textures. Applying it means swapping the left/right face regions
+  and reversing U in `EntityRenderer.AddBox`.
+- **Entities are stored/queried by linear scan — fine now, wants a spatial index eventually.** The server keeps
+  a flat `WorldServer.Entities` `HashSet`; `FindEntity` (entity-targeted use), `EntityCreature.NearestPlayer`
+  (every creature, every tick), and the client's `PlayerController.PickEntity` (every right-click) all scan the
+  whole set O(n). Bounded today by the ambient-spawn soft cap (few entities), but a dense world (big herds,
+  many dropped items) would make the per-tick `NearestPlayer` scan the hot one. The fix is a **uniform spatial
+  hash** (entities bucketed by cell, updated on move) so AI/picking/lookup query only nearby cells; defer until
+  entity counts justify it. Entity ids could also use a `Dictionary<int, Entity>` to make `FindEntity` O(1)
+  cheaply, independent of the spatial work.
+- **Sheep wool is white-only (no dye colours), and the sheared sheep doesn't regrow it.** The wool overlay
+  renders from `sheep_wool.png` (untinted), so all sheep are white; vanilla tints the wool by the sheep's dye
+  colour. And there's no grass-eating, so a sheared sheep stays bare. Both deferred — the wiring (a per-sheep
+  `SheepData`, the overlay layer) is in place, so colour is a tint on the overlay draw + a colour field in
+  `SheepData`, and regrow is a server-side timer flipping `Sheared` back.

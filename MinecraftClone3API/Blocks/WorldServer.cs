@@ -245,7 +245,34 @@ namespace MinecraftClone3API.Blocks
 
             EnqueueBlockChange(chunkInWorld, blockInChunk, block.Id, chunk.GetLightLevel(blockInChunk).Binary,
                 (ushort) chunk.GetSkyLight(blockInChunk));
+
+            NotifyNeighbors(worldPos);
         }
+
+        private static readonly Vector3i[] NeighborOffsets =
+        {
+            new Vector3i(-1, 0, 0), new Vector3i(1, 0, 0),
+            new Vector3i(0, -1, 0), new Vector3i(0, 1, 0),
+            new Vector3i(0, 0, -1), new Vector3i(0, 0, 1)
+        };
+
+        // Tells each face-adjacent block its neighbour at changedPos changed, so reactive blocks (falling
+        // sand/gravel) can respond. Only the server propagates updates; the client world replays deltas.
+        private void NotifyNeighbors(Vector3i changedPos)
+        {
+            foreach (var offset in NeighborOffsets)
+            {
+                var pos = changedPos + offset;
+                GetBlock(pos.X, pos.Y, pos.Z).OnNeighborChanged(this, pos, changedPos);
+            }
+        }
+
+        /// <summary>Schedules a position to receive <see cref="Block.OnServerTick"/> on the next tick and onward
+        /// until it deregisters. Used by falling blocks to begin falling once their support is removed.</summary>
+        public void ScheduleBlockTick(Vector3i pos) => _tickingBlocks[pos] = 0;
+
+        /// <summary>Stops a position from ticking. A falling block calls this once it has come to rest.</summary>
+        public void UnscheduleBlockTick(Vector3i pos) => _tickingBlocks.TryRemove(pos, out _);
 
         public override Block GetBlock(int x, int y, int z)
         {
@@ -405,6 +432,15 @@ namespace MinecraftClone3API.Blocks
         /// <summary>Convenience: spawns one entity of the given registered type.</summary>
         public Entity SpawnEntity(EntityType type, Vector3 position) => SpawnEntity(type.CreateEntity(), position);
 
+        /// <summary>Finds a live world entity by id (used to resolve an entity-targeted item use), or null.
+        /// Tick-thread only.</summary>
+        public Entity FindEntity(int entityId)
+        {
+            foreach (var entity in Entities)
+                if (entity.EntityId == entityId) return entity;
+            return null;
+        }
+
         /// <summary>Spawns a dropped-item entity carrying <paramref name="stack"/>, given a registered item
         /// entity type (the first <see cref="EntityKind.Item"/> type). No-op if none is registered.</summary>
         public EntityItem DropItem(ItemStack stack, Vector3 position)
@@ -422,6 +458,24 @@ namespace MinecraftClone3API.Blocks
                 (float) (_spawnRng.NextDouble() - 0.5) * 0.2f, 0.2f,
                 (float) (_spawnRng.NextDouble() - 0.5) * 0.2f);
             return item;
+        }
+
+        /// <summary>Spawns a falling-block entity for the block id at <paramref name="blockPos"/> (whose cell the
+        /// caller has just cleared to air), positioned so it begins exactly where the block was. No-op if no
+        /// <see cref="EntityKind.FallingBlock"/> type is registered.</summary>
+        public EntityFallingBlock SpawnFallingBlock(ushort blockId, Vector3i blockPos)
+        {
+            EntityType type = null;
+            foreach (var t in GameRegistry.EntityTypes)
+                if (t.Kind == EntityKind.FallingBlock) { type = t; break; }
+            if (type == null) return null;
+
+            // Position is the block's bottom-centre: a block at by spans by-0.5..by+0.5, so its floor is by-0.5.
+            var spawnPos = new Vector3(blockPos.X, blockPos.Y - 0.5f, blockPos.Z);
+            var falling = (EntityFallingBlock) SpawnEntity(type, spawnPos);
+            falling.BlockId = blockId;
+            falling.Data = new FallingBlockData {BlockId = blockId};
+            return falling;
         }
 
         public override void Update()

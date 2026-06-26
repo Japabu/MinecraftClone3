@@ -38,6 +38,15 @@ namespace MinecraftClone3API.Items
         /// <paramref name="position"/> is the world cell the player clicked toward. No-op by default.</summary>
         public virtual void OnUseServer(WorldServer world, EntityPlayer player, Vector3 position) { }
 
+        /// <summary>Whether right-clicking this item while aiming at an entity triggers <see cref="OnUseOnEntity"/>
+        /// (e.g. shears on a sheep) — lets the client send an entity-targeted use only when it's meaningful.</summary>
+        public virtual bool UsableOnEntity => false;
+
+        /// <summary>Server-side right-click action against a targeted entity (server-authoritative). The target is
+        /// resolved from the server's own entity list, so a request can't act on an arbitrary id. No-op by
+        /// default.</summary>
+        public virtual void OnUseOnEntity(WorldServer world, EntityPlayer player, Entity target) { }
+
         /// <summary>Resource-pack path of the 2D inventory sprite for a non-block item (e.g.
         /// <c>"minecraft:item/stick"</c>); null for block items, which render a 3D isometric icon instead.</summary>
         public virtual string TexturePath => null;
