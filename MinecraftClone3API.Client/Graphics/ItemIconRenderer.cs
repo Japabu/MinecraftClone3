@@ -102,7 +102,6 @@ namespace MinecraftClone3API.Graphics
                 GpuBindGroup.Texture(2, BlockTextureUploader.ArrayAt(2).View),
                 GpuBindGroup.Texture(3, BlockTextureUploader.ArrayAt(3).View),
                 GpuBindGroup.Sampler(4, GpuSamplers.Block),
-                GpuBindGroup.Sampler(5, GpuSamplers.BlockAniso),
             }, "itemIcon.atlas");
         }
 

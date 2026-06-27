@@ -35,8 +35,7 @@ struct GeoParams {
 @group(2) @binding(1) var tex64: texture_2d_array<f32>;
 @group(2) @binding(2) var tex256: texture_2d_array<f32>;
 @group(2) @binding(3) var tex1024: texture_2d_array<f32>;
-@group(2) @binding(4) var atlasSampler: sampler;        // nearest-mag, trilinear-min: crisp up close
-@group(2) @binding(5) var atlasSamplerAniso: sampler;   // all-linear + 16x anisotropy: sharp when minified
+@group(2) @binding(4) var atlasSampler: sampler;
 
 // var<private> (not const): WGSL only allows a *constant* index into a module-scope const array, and these
 // are indexed dynamically (by the packed normal/material bits and the screen-space Bayer cell).
@@ -104,16 +103,16 @@ fn lodDiscard(worldPos: vec3<f32>, fragCoord: vec2<f32>) -> bool {
     return dither >= fade;                               // LOD: shows where the chunk is gone
 }
 
-fn sampleAtlas(texCoord: vec4<f32>, s: sampler, ddx: vec2<f32>, ddy: vec2<f32>) -> vec4<f32> {
+fn sampleAtlas(texCoord: vec4<f32>, ddx: vec2<f32>, ddy: vec2<f32>) -> vec4<f32> {
     let uv = texCoord.xy;
     let layer = i32(texCoord.z);
     let arr = i32(texCoord.w);
     // textureSampleGrad takes explicit gradients, so it is legal in the non-uniform array selection below
     // (plain textureSample, which needs implicit derivatives, is not). Derivatives are hoisted by the caller.
-    if (arr == 0) { return textureSampleGrad(tex16, s, uv, layer, ddx, ddy); }
-    if (arr == 1) { return textureSampleGrad(tex64, s, uv, layer, ddx, ddy); }
-    if (arr == 2) { return textureSampleGrad(tex256, s, uv, layer, ddx, ddy); }
-    if (arr == 3) { return textureSampleGrad(tex1024, s, uv, layer, ddx, ddy); }
+    if (arr == 0) { return textureSampleGrad(tex16, atlasSampler, uv, layer, ddx, ddy); }
+    if (arr == 1) { return textureSampleGrad(tex64, atlasSampler, uv, layer, ddx, ddy); }
+    if (arr == 2) { return textureSampleGrad(tex256, atlasSampler, uv, layer, ddx, ddy); }
+    if (arr == 3) { return textureSampleGrad(tex1024, atlasSampler, uv, layer, ddx, ddy); }
     return vec4<f32>(0.0);
 }
 
@@ -128,29 +127,12 @@ fn fs_main(i: VsOut) -> GBuffer {
     } else {
         let ddx = dpdx(i.texCoord.xy);
         let ddy = dpdy(i.texCoord.xy);
-
-        // Pick the sampler by minification. WebGPU forbids one sampler mixing nearest magnification with
-        // anisotropy, but anisotropy is a no-op under magnification, so split: crisp nearest-mag up close, and
-        // a 16x-anisotropic linear sampler once the texel footprint exceeds a pixel (distant/grazing). Blend
-        // across the boundary so the switch isn't itself a seam. Array layer size = 16 * 4^arrayId.
-        let arrSize = 16.0 * pow(4.0, i.texCoord.w);
-        let footprint = max(length(ddx), length(ddy)) * arrSize;
-        let anisoMix = clamp(footprint - 1.0, 0.0, 1.0);
-        var texColor: vec4<f32>;
-        if (anisoMix <= 0.0) {
-            texColor = sampleAtlas(i.texCoord, atlasSampler, ddx, ddy);
-        } else if (anisoMix >= 1.0) {
-            texColor = sampleAtlas(i.texCoord, atlasSamplerAniso, ddx, ddy);
-        } else {
-            texColor = mix(sampleAtlas(i.texCoord, atlasSampler, ddx, ddy),
-                           sampleAtlas(i.texCoord, atlasSamplerAniso, ddx, ddy), anisoMix);
-        }
+        var texColor = sampleAtlas(i.texCoord, ddx, ddy);
         texColor = vec4<f32>(texColor.rgb * i.color, texColor.a);
 
         if (geo.cutoff != 0u) {
-            // Anti-aliased alpha test: sharpen the sampled alpha by its screen-space gradient so cutout foliage
-            // keeps a ~1px edge at every mip instead of dissolving (the median-preserving alpha test). With the
-            // anisotropic sampler keeping the minified mip sharp, leaf coverage holds at distance.
+            // Anti-aliased alpha test: sharpen sampled alpha by its screen-space gradient so cutout foliage
+            // keeps a ~1px edge at every mip instead of dissolving (the median-preserving alpha test).
             let a = (texColor.a - 0.5) / max(fwidth(texColor.a), 0.0001) + 0.5;
             if (a < 0.5) { discard; }
         }

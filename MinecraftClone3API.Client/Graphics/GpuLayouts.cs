@@ -34,7 +34,6 @@ namespace MinecraftClone3API.Graphics
                 GpuBindGroupLayout.Texture(2, ShaderStage.Fragment, TextureSampleType.Float, TextureViewDimension.Dimension2DArray),
                 GpuBindGroupLayout.Texture(3, ShaderStage.Fragment, TextureSampleType.Float, TextureViewDimension.Dimension2DArray),
                 GpuBindGroupLayout.Sampler(4, ShaderStage.Fragment, SamplerBindingType.Filtering),
-                GpuBindGroupLayout.Sampler(5, ShaderStage.Fragment, SamplerBindingType.Filtering),
             }, "blockAtlas");
 
             ScreenTexture = new GpuBindGroupLayout(new[]
