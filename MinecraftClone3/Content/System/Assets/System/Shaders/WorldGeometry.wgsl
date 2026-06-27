@@ -131,9 +131,14 @@ fn fs_main(i: VsOut) -> GBuffer {
         texColor = vec4<f32>(texColor.rgb * i.color, texColor.a);
 
         if (geo.cutoff != 0u) {
-            // Anti-aliased alpha test: sharpen sampled alpha by its screen-space gradient so cutout foliage
-            // keeps a ~1px edge at every mip instead of dissolving (the median-preserving alpha test).
-            let a = (texColor.a - 0.5) / max(fwidth(texColor.a), 0.0001) + 0.5;
+            // Cutout foliage (leaves): the box-averaged mip alpha loses coverage at distance, dissolving leaves
+            // so the mip-transition band reads as a seam that crawls with the camera. The GL build kept the mip
+            // sharp with 16x anisotropy, which WebGPU forbids alongside nearest magnification. So re-read the
+            // alpha one mip sharper (halved gradients) for the TEST only — the colour keeps its trilinear mip, so
+            // solid blocks don't shimmer — then sharpen that by its screen-space gradient (the median-preserving
+            // anti-aliased alpha test) so the cutout edge stays ~1px at every mip and leaf coverage holds.
+            let sharpA = sampleAtlas(i.texCoord, ddx * 0.5, ddy * 0.5).a;
+            let a = (sharpA - 0.5) / max(fwidth(sharpA), 0.0001) + 0.5;
             if (a < 0.5) { discard; }
         }
         diffuse = texColor;

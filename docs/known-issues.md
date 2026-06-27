@@ -28,7 +28,9 @@ relevant permanent doc. Not a changelog.
     Gameplay/visuals are unaffected; `docs/profiling.md` documents the current 0 state.
   - **16× anisotropic block-atlas filtering is dropped** — WebGPU forbids combining nearest-magnification (the
     crisp pixel-art look) with hardware anisotropy, so the block sampler keeps trilinear mips but no aniso;
-    grazing-angle distant terrain is slightly blurrier than the GL build. Intrinsic platform trade-off.
+    grazing-angle distant terrain is slightly blurrier than the GL build. Intrinsic platform trade-off. The
+    foliage **mip-dissolve seam** this used to mask is handled directly: the cutout (leaf) alpha test re-reads
+    the alpha one mip sharper (`WorldGeometry.wgsl`), so leaf coverage holds at distance without the seam.
   - **Deliberate, not defects** (don't "fix"): the `Gpu` static facade (global device access, single-threaded
     init) and the split where Core uses literal Silk types while Client/exe keep readability aliases
     (`Vector3`, `Matrix4`, …) — both documented in-code.
