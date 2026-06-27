@@ -407,8 +407,10 @@ namespace MinecraftClone3API.Graphics
 
             // Mesh the block's model centred at the origin in the void icon world (all faces, full light), the
             // same geometry the inventory icon uses; the entity shader replaces the baked light with the UBO light.
+            // The -0.5 origin offset re-centres the corner-origin [0,1] cell mesh so the dropped/icon pose spins
+            // about its middle.
             var buffer = new MeshBuffer();
-            ChunkMesher.AddBlockToVao(IconWorld.Instance, Vector3i.Zero, 0, 0, 0, block, buffer, buffer);
+            ChunkMesher.AddBlockToVao(IconWorld.Instance, Vector3i.Zero, 0, 0, 0, block, buffer, buffer, new Vector3(-0.5f));
             mesh = buffer.IndicesCount > 0 ? new PartMesh(buffer) : null;
             buffer.Clear();
             ItemMeshes[blockId] = mesh;

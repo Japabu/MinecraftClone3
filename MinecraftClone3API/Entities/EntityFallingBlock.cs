@@ -48,12 +48,13 @@ namespace MinecraftClone3API.Entities
             var block = GameRegistry.GetBlock(BlockId);
             if (block == BlockRegistry.BlockAir) return;
 
-            // The cell whose bottom edge sits where the entity came to rest (a resting block at by leaves the
-            // feet at by + 0.5, so the occupied cell is by + 1).
+            // The cell the entity came to rest in (corner-origin: block P fills [P, P+1]). The feet sit on the
+            // support's top face — an integer Y, the resting cell's bottom — so Y rounds; X/Z are the block's
+            // horizontal centre (cell + 0.5), so they floor.
             var cell = new Vector3D<int>(
-                (int) MathF.Round(Position.X),
-                (int) MathF.Round(Position.Y + 0.5f),
-                (int) MathF.Round(Position.Z));
+                (int) MathF.Floor(Position.X),
+                (int) MathF.Round(Position.Y),
+                (int) MathF.Floor(Position.Z));
 
             // Normally the rest cell is empty; if another block from the same column already filled it this tick,
             // settle one cell higher. If both are taken (a tight pocket) the block is simply lost — rare enough

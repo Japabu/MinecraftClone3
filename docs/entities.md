@@ -22,11 +22,15 @@ client walk-cycle accumulators (`LimbSwing`/`LimbSwingAmount`, advanced from int
 network data is needed). Subclasses:
 
 - **`EntityCreature`** — a walking animal or mob. Server `Update()` runs wander AI (random heading every few
-  seconds; a `Hostile` type instead steers toward the nearest player in `SightRange`), then gravity + block
-  collision via `EntityPhysics`, hopping 1-block steps. `ServerWorld` is the back-reference its AI reads. Carries
-  combat state: `Health` (lazily seeded to `Type.MaxHealth` on the first tick) and a `HurtCooldown` invuln
-  counter, both mutated by `EntityCombat`. A `Hostile` type with `Type.AttackDamage > 0` also deals melee
-  **contact damage** to a player in range on its ~1 s attack cadence (`TryAttack` → `PlayerSurvival.ApplyContactDamage`).
+  seconds; a `Hostile` type instead steers toward the nearest player in `SightRange`; a `NeutralUntilProvoked`
+  type — the enderman — wanders until a player's look ray falls within a tight cone of its head, then latches
+  onto and chases that player until they drift past `LoseRange`, looking away no longer calming it), then
+  gravity + block collision via `EntityPhysics`, hopping 1-block steps. `ServerWorld` is the back-reference its
+  AI reads. Carries combat state: `Health` (lazily seeded to `Type.MaxHealth` on the first tick) and a
+  `HurtCooldown` invuln counter, both mutated by `EntityCombat`. A `Hostile` type with `Type.AttackDamage > 0`
+  also deals melee **contact damage** to a player in range on its ~1 s attack cadence (`TryAttack` →
+  `PlayerSurvival.ApplyContactDamage`).
+
 - **`EntityItem`** — a dropped `ItemStack`. Falls under gravity, settles, and despawns after ~5 min; `CanPickup`
   gates a short delay so a just-broken block isn't instantly re-collected.
 - **`EntityFallingBlock`** — a block (sand, gravel) mid-fall. Spawned by `BlockFalling` via
@@ -35,6 +39,11 @@ network data is needed). Subclasses:
   cell was filled the same tick). `Position` is the block's bottom-centre. It carries its block id on a
   `FallingBlockData` so the client renders the right full-size block (`EntityRenderer.DrawFallingBlock`, reusing
   the dropped-item block mesh at full scale, no spin).
+- **`EntityProjectile`** — a thrown ender pearl. Flies under light gravity with a **sub-stepped** swept block
+  check (so a fast pearl can't tunnel a thin wall); on entering a solid collision box it queues a teleport of
+  its thrower (`OwnerId`) onto `WorldServer.PendingTeleports` and dies. Rendered client-side as a single
+  **camera-facing billboard** quad of the pearl item sprite (`EntityRenderer.DrawProjectile`, oriented from the
+  camera basis), not a box model. Thrown by `ItemEnderPearl.OnUseServer` along the player's look vector.
 - **`EntityPlayer`** — the player (its own tuned [PlayerPhysics](../MinecraftClone3API/Entities/PlayerPhysics.cs);
   remote copies are bare `Entity`s with `Type == null`). Also carries the survival stats
   (`Health`/`Hunger`/`Saturation`/`Exhaustion`/`Air`/`GameMode`, see below) — server-authoritative, mirrored on
@@ -73,8 +82,10 @@ without the API knowing the concrete subclass. The base `Entity` stays free of p
 
 ## Networking
 
-`EntitySpawnPacket` carries `TypeId` (+ an `ItemStack` for items); `EntityMovePacket`/`EntityDespawnPacket` are
-unchanged. `WorldServer` owns id allocation (`NextEntityId`, shared with players) and `SpawnEntity`/`DropItem`,
+`EntitySpawnPacket` carries `TypeId` (+ an `ItemStack` for items); `EntityMovePacket` also carries `HurtTime`
+(damage flash) and `HeldItemId` (the player's main-hand item, so others can see what's held — a session-local id,
+safe on the live wire as the client and server share the plugin load); `EntityDespawnPacket` is unchanged.
+`WorldServer` owns id allocation (`NextEntityId`, shared with players) and `SpawnEntity`/`DropItem`,
 queuing spawns/despawns onto `PendingSpawns`/`PendingDespawns`. Each `Pump`, `ServerNetwork.SyncEntities` drains
 those queues (broadcasting spawn/despawn), lets players collect nearby pickup-ready items into their inventory,
 and relays every live world entity's position. A joining client is sent a spawn for every existing entity. The
@@ -93,6 +104,16 @@ holding the `EntityType` to spawn and the official spawn-egg sprite). Right-clic
 inventory copy (so the request can't spoof the item) and calls `Item.OnUseServer`, which spawns the creature.
 Fresh players are seeded the spawn eggs on the first hotbar slots (then blocks) so entities are testable at once.
 
+**Thrown items (ender pearl).** An `Item` with `RequiresBlockTarget == false` (the ender pearl) fires its
+`OnUseServer` even when the crosshair is on no block (aiming at the sky), so `PlayerController` sends a
+`UseItemRequest` with a dummy cell the action ignores. `ItemEnderPearl` spawns an `EntityProjectile` at the
+player's eye along their look vector, tagged with the thrower's `EntityId`. When it lands, the projectile queues
+`(ownerId, position)` on `WorldServer.PendingTeleports`; `ServerNetwork.SyncEntities` drains it, sends the owner
+a **`PlayerTeleportPacket`**, mirrors the position on the server copy, and applies 5 points of pearl fall damage
+in survival. The player is position-authoritative, so this packet is the only relocation outside the respawn
+snap: the client obeys by snapping its local player there and clearing its fall accumulator
+(`StateWorld.UpdateTeleport` → `PlayerController.ResetFall`).
+
 **Item use on an entity (shears).** An `Item` with `UsableOnEntity = true` (the shears) takes precedence on
 right-click: `PlayerController.PickEntity` ray-casts the held look direction against each entity's collision AABB
 (nearer than the targeted block), and a hit sends `UseItemOnEntityRequestPacket` with the entity id. The server
@@ -107,8 +128,10 @@ creature is hit (nearer than the targeted block) the click is an **attack**, not
 server resolves the id against its own `FindEntity` list and runs `EntityCombat.DamageEntity` with the held
 item's `Item.AttackDamage` (bare hand = `EntityCombat.BaseHandDamage` = 1; swords raise it). `EntityCombat`
 ([Entities/EntityCombat.cs](../MinecraftClone3API/Entities/EntityCombat.cs)) is the GL-free, stateless server
-combat sink: it gates on the target's `HurtCooldown` (0.5 s invuln), subtracts `Health`, applies horizontal +
-upward knockback to the target's `Velocity`, and on death rolls the type's `LootTable`
+combat sink: it gates on the target's `HurtCooldown` (0.5 s invuln), subtracts `Health`, sets a `HurtTime`
+flash timer (streamed in `EntityMovePacket`; the client renders the model red while it runs — see
+[rendering.md](rendering.md)), applies horizontal + upward knockback to the target's `Velocity`, and on death
+rolls the type's `LootTable`
 ([Entities/LootTable.cs](../MinecraftClone3API/Entities/LootTable.cs)) — `DropItem`-ing each stack — before
 setting `Dead`. Death/despawn then streams through the existing `PendingDespawns` path, so **no new server→client
 packet is needed**. Loot is declared on the `EntityType` by item registry key (resolved lazily, like the shears'
@@ -152,7 +175,9 @@ flat light value sampled at its position, so it shades/shadows like the surround
 Mojang's texture offsets + dimensions so the sheet maps straight on, with UVs normalized by the texture array's
 layer size. (Current Minecraft splits some mob sheets by climate variant, so the paths carry a suffix —
 `entity/pig/pig_temperate`, `entity/cow/cow_temperate`, `entity/chicken/chicken_temperate`.) Dropped items render as the spinning, bobbing 3D icon of their block (the same mesh
-[ItemIconRenderer](../MinecraftClone3API/Client/Graphics/ItemIconRenderer.cs) uses for the inventory).
+[ItemIconRenderer](../MinecraftClone3API/Client/Graphics/ItemIconRenderer.cs) uses for the inventory). A
+projectile (the ender pearl) instead renders as a single **camera-facing billboard** quad of its item sprite —
+the quad's local axes are mapped onto the camera's `Right`/`Up`/forward each frame so it always faces the viewer.
 
 The **local player** is normally excluded from rendering (it isn't in `world.Entities`), but in a third-person
 view (F5, see [state-gameloop.md](state-gameloop.md)) `EntityRenderer.Render` also draws it with the built-in

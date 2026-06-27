@@ -93,6 +93,15 @@ uniform float uSkyDistance;
 uniform float uFogStart;
 uniform float uFogEnd;
 
+// Underwater murk: when the camera's eye is inside a liquid block (uUnderwater = 1) the whole scene (and the
+// sky) fogs into uUnderwaterColor over a short distance, with a slight permanent tint near the camera --
+// Minecraft's "you're underwater" look. uUnderwaterColor is already dimmed by the daylight on the CPU side.
+uniform float uUnderwater;
+uniform vec3 uUnderwaterColor;
+const float UnderwaterFogStart = 0.5;
+const float UnderwaterFogEnd = 24.0;
+const float UnderwaterMinTint = 0.12;
+
 // Joint-bilateral upsample sharpness (in normalized-depth units, i.e. view depth / uShadowDistance). Larger
 // = a smaller depth difference rejects a tap, so the half-res shadow doesn't bleed across silhouette edges;
 // too large and same-surface taps get rejected too (the half-res shadow shows through as blocky). Tunable.
@@ -260,6 +269,15 @@ vec3 ApplyFog(vec3 color, float viewDepth)
 	return mix(color, uHorizonColor, fog*fog);
 }
 
+// Underwater murk: fog into the water colour over a short distance (dense water), keeping a slight permanent
+// tint right at the camera. Sky pixels pass a huge viewDepth so they become the water colour entirely.
+vec3 ApplyUnderwater(vec3 color, float viewDepth)
+{
+	float fog = clamp((viewDepth - UnderwaterFogStart) / (UnderwaterFogEnd - UnderwaterFogStart), 0.0, 1.0);
+	fog = max(fog, UnderwaterMinTint);
+	return mix(color, uUnderwaterColor, fog);
+}
+
 vec4 GetColor(vec3 worldPos, float viewDepth)
 {
 	vec4 diffuse = texture(uDiffuse, vTexCoord);
@@ -327,9 +345,12 @@ void main()
 	// farthest drawn terrain. Render the sky along the pixel's view ray; reuse worldPos as the far ray point.
 	if (viewDepth >= uSkyDistance)
 	{
-		outColor = vec4(SkyColor(normalize(worldPos - uCameraPos)), 1.0);
+		vec3 sky = SkyColor(normalize(worldPos - uCameraPos));
+		if (uUnderwater > 0.5) sky = ApplyUnderwater(sky, uSkyDistance);
+		outColor = vec4(sky, 1.0);
 		return;
 	}
 
 	outColor = GetColor(worldPos, viewDepth);
+	if (uUnderwater > 0.5) outColor.rgb = ApplyUnderwater(outColor.rgb, viewDepth);
 }

@@ -13,7 +13,11 @@ namespace MinecraftClone3API.Entities
 
         /// <summary>A block falling under gravity (sand, gravel): rendered as a full-size block, turns back into
         /// a placed block when it lands.</summary>
-        FallingBlock
+        FallingBlock,
+
+        /// <summary>A thrown projectile (the ender pearl): flies under light gravity until it hits a block, then
+        /// acts on its thrower. Rendered as a small flat sprite of its item texture.</summary>
+        Projectile
     }
 
     /// <summary>
@@ -37,6 +41,10 @@ namespace MinecraftClone3API.Entities
 
         /// <summary>Hostile creatures path toward the nearest player within sight; non-hostile ones only wander.</summary>
         public readonly bool Hostile;
+
+        /// <summary>A neutral mob (the enderman): wanders peacefully until a player looks directly at it, then
+        /// chases that player until they escape. Independent of <see cref="Hostile"/> (which is chase-on-sight).</summary>
+        public readonly bool NeutralUntilProvoked;
 
         /// <summary>Wander/chase ground speed in blocks per tick.</summary>
         public readonly float MoveSpeed;
@@ -69,7 +77,7 @@ namespace MinecraftClone3API.Entities
         public EntityType(string name, EntityKind kind, float width, float height, float maxHealth,
             float moveSpeed, bool hostile, string texturePath, string modelPath,
             string overlayModelPath = null, string overlayTexturePath = null, Func<EntityData> dataFactory = null,
-            float attackDamage = 0f, LootTable loot = null)
+            float attackDamage = 0f, LootTable loot = null, bool neutralUntilProvoked = false)
             : base(name)
         {
             Kind = kind;
@@ -78,6 +86,7 @@ namespace MinecraftClone3API.Entities
             MaxHealth = maxHealth;
             MoveSpeed = moveSpeed;
             Hostile = hostile;
+            NeutralUntilProvoked = neutralUntilProvoked;
             TexturePath = texturePath;
             ModelPath = modelPath;
             OverlayModelPath = overlayModelPath;
@@ -95,6 +104,7 @@ namespace MinecraftClone3API.Entities
             {
                 case EntityKind.Item: entity = new EntityItem(); break;
                 case EntityKind.FallingBlock: entity = new EntityFallingBlock(); break;
+                case EntityKind.Projectile: entity = new EntityProjectile(); break;
                 default: entity = new EntityCreature(); break;
             }
             entity.Type = this;

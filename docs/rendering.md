@@ -173,6 +173,17 @@ restore keeps RenderState's single `Blend` bool the whole description. Side effe
 writes its front pane's own normal/light instead of blending them, removing a latent `normal.w` corruption
 when glass overlapped an unlit pixel. `WorldGeometry.vs/.fs` are untouched.
 
+**Underwater murk.** When the camera's eye sits inside a liquid block (`WorldRenderer` samples the block at the
+camera position with `floor(v)` — corner-origin, block `P` fills `[P, P+1]` — matching `PlayerPhysics`' liquid
+test, so it triggers whenever the eye is
+submerged — including only half-submerged at the surface), the composition fogs the **whole scene and the
+background sky** into a water colour over a short distance (`UnderwaterFogStart`/`End` consts in
+`Composition.fs`), with a slight permanent tint right at the camera (`UnderwaterMinTint`) — Minecraft's
+"you're underwater" look, no extra pass. `WorldRenderer` uploads `uUnderwater` (0/1) and `uUnderwaterColor`
+(a deep water blue **dimmed on the CPU side by the current daylight** — sun + ambient — so it's bright blue by
+day, near-black at night or in a flooded cave); the shader applies it last, after distance fog, in both the
+sky and the geometry path. The HUD draws on top, so it stays clear.
+
 **Breaking crack overlay.** `BlockBreakRenderer` (in the overlay pass, while a survival player mines) draws a
 slightly-inflated textured cube of the `destroy_stage_0..9` sprite over the targeted block with the `BlockBreak`
 shader. Same attachment trick as above, taken further: it **masks attachments 1 (normal) and 2 (light)** with
@@ -180,6 +191,72 @@ shader. Same attachment trick as above, taken further: it **masks attachments 1 
 composition lights the darkened surface — the cracks read as part of the block. Depth-test `Lequal` with
 **depth-write off** keeps the far cube faces culled against the block's own depth (so face culling isn't needed).
 The dark, mostly-transparent crack texture `discard`s its empty texels.
+
+**Block-entity rendering.** Blocks flagged `Block.RendersAsBlockEntity` (chests) are **skipped by the chunk
+mesher** and drawn instead by `BlockEntityRenderer` in the overlay pass, as box models — the same Bedrock-geo
+pipeline as entities (`EntityRenderer.BuildModelFromPaths`/`DrawStaticParts`, reused via `internal` helpers and
+the shared `EntityRenderer.BindShader`). Each block type's model is built once in `LoadModels` (run alongside
+`EntityRenderer.LoadModels`, before the texture upload, so its `entity/*` texture lands in the arrays). At draw
+time it scans the **sparse** per-chunk block-data (`Chunk.BlockDataPositions`) of chunks within a few chunks of
+the camera, placing each instance in its cell and orienting it by the block's stored facing. The same prebuilt
+model also backs that block's **inventory icon** and its **held viewmodel**.
+
+**Box UV — the Y-flip convention.** `EntityRenderer.AddBox` lays out each box with Minecraft's exact
+`ModelPart$Cube` unwrap (down face → first top-row region, up face → second, V inverted). Minecraft draws
+**living entities** through `LivingEntityRenderer` with a `scale(-1,-1,1)` geometric Y-flip and **block
+entities** (the chest, via `ChestRenderer`) with **no flip** — that single per-renderer difference is why mob
+skins paint the top-of-head art in the *down* region while the chest paints its lid top in the *up* region.
+We author both kinds of model Y-up (feet at y=0) rather than flipping geometry, so `BuildModel` reproduces the
+mob flip by **swapping the box's top/bottom UV regions** (`flipUv: true`); block-entity models build with
+`flipUv: false` and keep the raw unwrap. The flag lives on the build path (entity vs block-entity renderer),
+**not** per cube — matching Minecraft's renderer-class split exactly.
+
+For the icon, `ItemIconRenderer`
+draws the box model with the **`ItemIcon` shader** (its single output matches the 1-attachment icon FBO; the
+entity shader's 3 G-buffer outputs render nothing into it on macOS) — the box-model VAO shares the packed
+chunk-vertex format, so the icon shader handles it with a per-part `uModel`. Block-entity geos are authored
+**centred on x/z with feet at y=0**, and seat at the cell's **bottom-centre**: coordinates are corner-origin
+(block `P` fills `[P, P+1]`), so a block-entity at `P` translates by `(P.x+0.5, P.y, P.z+0.5)` with a
+centre-pivot yaw. The **chest** geo
+(`chest.geo.json`) reproduces Minecraft's exact `ChestModel` boxes/UVs (bottom/lid/lock), with the lid+lock
+bones pivoted at the **back-top hinge** so they swing as one. When this client has a chest's screen open
+(`BlockEntityRenderer.SetChestOpen`, driven by `GuiChest`), `BlockEntityRenderer` eases a per-chest lid
+progress and rotates the lid/lock about that hinge (MC's `-(1-(1-p)³)·90°`); other parts draw at rest.
+
+**Held item on the player body.** Players draw their main-hand item hanging off the **right-arm bone** so it
+swings with the walk cycle and is visible in third person and to other clients. `EntityRenderer.DrawHeldItem`
+(called from `DrawModel` only for the player model) takes the arm bone's matrix and draws the item — a block as
+its icon mesh, a block entity as its box model, a flat item as its extruded sprite (`HeldItemMeshes`). The held
+item id is `Entity.HeldItemId`: for remote players the server streams it in `EntityMovePacket` (session-local
+ids, safe on the live wire like block changes); the local player fills its own from the inventory before the
+third-person self-draw.
+
+**First-person held-item viewmodel.** `HeldItemRenderer` (last in the overlay pass) draws the held item in the
+lower-right as a true 3D model: a held block as its 3D block model (or the box model for a block entity like a
+chest), and a **flat item as its extruded sprite mesh** — `HeldItemMeshes` builds a front+back face plus a
+one-pixel-thick side wall along every opaque/transparent edge (Minecraft's "generated" item model). For the
+entity shader to sample flat-item sprites they are registered into the block-texture arrays at load
+(`HeldItemMeshes.RegisterTextures`, before the GPU upload). The viewmodel draws into the G-buffer with the
+entity shader (so composition lights it), **pinned to a fixed view-space pose** via `uModel = pose · view⁻¹`. It
+must **not** clear the shared depth buffer (composition reconstructs world position from it), so it instead
+compresses its draw into the front `glDepthRange(0, 0.1)` to beat all terrain while its own faces self-occlude,
+restoring the range after. Only in first-person (`PlayerController.Perspective`); `PlayerController.SwingPhase`
+drives the swing on attack/mine/place/use. An empty hand draws nothing.
+
+**The held pose comes from the resource pack, exactly like Minecraft** (`ItemDisplay`). Minecraft composes the
+item model's `display.firstperson_righthand` transform (data, in the pack JSON) with `ItemInHandRenderer`'s
+hand constants and swing (code). We do the same: the per-stack pose is
+`displayMatrix · swing · translate(0.56,-0.52,-0.72)` (the MC `ITEM_POS` arm base), where `displayMatrix` is
+the model's `display.firstperson_righthand` (`scale → rotateZ·Y·X → translate/16`, MC's `ItemTransform.apply`)
+and `swing` is MC's exact `swingArm`+`applyItemArmAttackTransform` (identity at rest). A **held block** reads its
+already-parsed `BlockModel.Display`; a **flat item** resolves its model's display on demand from the pack
+(parent chain followed, transforms only — no texture load), so a resource pack that retunes a model's display
+block retunes our viewmodel too. Models with no display block fall back to the vanilla `item/generated` /
+`block/block` firstperson values.
+
+**Entity hurt flash.** `EntityGeometry.fs` has a per-draw `uTint` (white by default, set once in `BindShader`);
+`EntityRenderer.DrawModel` sets it red while an entity's `HurtTime` is non-zero (then resets to white), so a
+just-damaged mob flashes. `HurtTime` is server-authoritative, streamed in `EntityMovePacket`.
 
 OpenGL is capped at **4.1 Core / GLSL 4.10** (macOS limit). Consequences: **uniform and sampler locations are
 queried by name** (no `layout(location=)`/`layout(binding=)` on uniforms); vertex-attribute and

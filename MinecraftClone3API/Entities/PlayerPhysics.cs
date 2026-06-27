@@ -20,6 +20,7 @@ namespace MinecraftClone3API.Entities
         private const float SprintMultiplier = 1.3f;
 
         private const float WaterAccel = 0.02f;
+        private const float WaterSprintAccel = 0.04f;
         private const float WaterDrag = 0.8f;
         private const float WaterGravity = 0.02f;
         private const float SwimImpulse = 0.04f;
@@ -30,13 +31,12 @@ namespace MinecraftClone3API.Entities
         private const float GroundProbe = 1e-3f;
         private const float StepHeight = 0.6f;
 
-        public static void Tick(WorldBase world, EntityPlayer p, Vector2D<float> wishDir, bool jump, bool sprint)
+        /// <summary>One walk/swim physics step. Returns true if a horizontal axis was blocked by terrain this
+        /// tick (the player ran into a wall) — the caller uses it to drop sprint, as Minecraft does.</summary>
+        public static bool Tick(WorldBase world, EntityPlayer p, Vector2D<float> wishDir, bool jump, bool sprint)
         {
             if (IsInLiquid(world, p))
-            {
-                TickInWater(world, p, wishDir, jump);
-                return;
-            }
+                return TickInWater(world, p, wishDir, jump, sprint);
 
             var friction = p.OnGround ? GroundFriction : AirFriction;
             var accel = (p.OnGround ? GroundAccel : AirAccel) * (sprint ? SprintMultiplier : 1f);
@@ -49,28 +49,31 @@ namespace MinecraftClone3API.Entities
             // Minecraft order: move with the current velocity (so a jump's first tick rises the full
             // 0.42), THEN apply gravity + friction for the next tick. Applying gravity before the move
             // ate the jump impulse and capped the apex at ~0.83 blocks — too low to reach a 1-block step.
-            MoveWithCollision(world, p);
+            var collided = MoveWithCollision(world, p);
 
             p.Velocity.Y = (p.Velocity.Y - Gravity) * VerticalDrag;
             p.Velocity.X *= friction;
             p.Velocity.Z *= friction;
+            return collided;
         }
 
-        /// <summary>The "80%" swim model: gentle water accel, Space buoys up, otherwise sink slowly; all
-        /// velocity damped by <see cref="WaterDrag"/>. Liquid never collides (it's pass-through), so the
-        /// swept-collision and ground probe still run via <see cref="MoveWithCollision"/>.</summary>
-        private static void TickInWater(WorldBase world, EntityPlayer p, Vector2D<float> wishDir, bool jump)
+        /// <summary>The "80%" swim model: gentle water accel (faster while sprint-swimming), Space buoys up,
+        /// otherwise sink slowly; all velocity damped by <see cref="WaterDrag"/>. Liquid never collides (it's
+        /// pass-through), so the swept-collision and ground probe still run via <see cref="MoveWithCollision"/>.</summary>
+        private static bool TickInWater(WorldBase world, EntityPlayer p, Vector2D<float> wishDir, bool jump, bool sprint)
         {
-            p.Velocity.X += wishDir.X * WaterAccel;
-            p.Velocity.Z += wishDir.Y * WaterAccel;
+            var accel = sprint ? WaterSprintAccel : WaterAccel;
+            p.Velocity.X += wishDir.X * accel;
+            p.Velocity.Z += wishDir.Y * accel;
 
             if (jump) p.Velocity.Y += SwimImpulse;
 
-            MoveWithCollision(world, p);
+            var collided = MoveWithCollision(world, p);
 
             p.Velocity.X *= WaterDrag;
             p.Velocity.Z *= WaterDrag;
             p.Velocity.Y = p.Velocity.Y * WaterDrag - WaterGravity;
+            return collided;
         }
 
         private static bool IsInLiquid(WorldBase world, EntityPlayer p)
@@ -83,9 +86,9 @@ namespace MinecraftClone3API.Entities
         private static bool IsLiquidAt(WorldBase world, float x, float y, float z)
             => world.GetBlock(BlockCoord(x), BlockCoord(y), BlockCoord(z)).IsLiquid;
 
-        private static int BlockCoord(float v) => (int) Math.Floor(v + 0.5f);
+        private static int BlockCoord(float v) => (int) Math.Floor(v);
 
-        private static void MoveWithCollision(WorldBase world, EntityPlayer p)
+        private static bool MoveWithCollision(WorldBase world, EntityPlayer p)
         {
             var velX = p.Velocity.X;
             var velY = p.Velocity.Y;
@@ -139,6 +142,9 @@ namespace MinecraftClone3API.Entities
             // with Velocity.Y==0 (spawn, just un-flew) or lands exactly flush would otherwise read
             // airborne for one tick (no jump, wrong friction).
             p.OnGround = ClipYFrom(world, feet, -GroundProbe) != -GroundProbe;
+
+            // A wall hit: a non-zero horizontal wish was clipped to zero on either axis (after auto-step).
+            return (resVelX == 0f && velX != 0f) || (resVelZ == 0f && velZ != 0f);
         }
 
         private static float ClipYFrom(WorldBase world, Vector3D<float> feet, float dy)

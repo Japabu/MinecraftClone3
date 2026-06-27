@@ -130,7 +130,10 @@ fn sampleTex(t: texture_2d<f32>, uv: vec2<f32>) -> vec4<f32> {
 // REVERSE-Z: depth is WebGPU clip-space z in [0,1] already, used as-is. ndcXY follows the GL source (uv*2-1)
 // and Tonemap's UV orientation; uViewProjectionInv is supplied for reverse-Z.
 fn PositionFromDepth(uv: vec2<f32>, depth: f32) -> vec3<f32> {
-    let clipSpace = vec4<f32>(uv * 2.0 - 1.0, depth, 1.0);
+    // ndc.y is negated vs uv: the uv basis (used to sample the G-buffer) runs y-down relative to clip-space y,
+    // so reconstructing with a plain uv*2-1 yields a vertically-mirrored world position.
+    let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    let clipSpace = vec4<f32>(ndc, depth, 1.0);
     let homogenousCoord = params.uViewProjectionInv * clipSpace;
     return homogenousCoord.xyz / homogenousCoord.w;
 }
@@ -356,15 +359,23 @@ fn GetColor(uv: vec2<f32>, worldPos: vec3<f32>, viewDepth: f32) -> ColorResult {
 
 @fragment
 fn fs_main(i: VsOut) -> @location(0) vec4<f32> {
-    // Depth32float, read as-is (no depth*2-1 remap): textureLoad with integer fragment coords (no derivatives).
-    let depthRaw = textureLoad(uDepth, vec2<i32>(i.clip.xy), 0);
+    // Depth32float, read as-is (no depth*2-1 remap). The texel is addressed from uv — the SAME basis the
+    // G-buffer colour/normal/light are sampled with — not from the fragment's framebuffer position, which runs
+    // y-inverted relative to uv and would pair each pixel's colour with the vertically-mirrored pixel's depth.
+    let depthDim = vec2<f32>(textureDimensions(uDepth));
+    let depthRaw = textureLoad(uDepth, vec2<i32>(min(i.uv * depthDim, depthDim - 1.0)), 0);
 
     // Background = pixels the geometry pass never wrote, still at the reverse-Z far clear (depth == 0). Under the
     // infinite-far projection that point is literally at infinity (w -> 0), so its reconstruction is undefined;
     // sample the view ray at a finite depth instead (any depth along the pixel ray gives the same direction).
     if (depthRaw == 0.0) {
-        let rayPoint = PositionFromDepth(i.uv, 0.5);
-        return vec4<f32>(SkyColor(normalize(rayPoint - params.uCameraPos)), 1.0);
+        // Reconstruct the view ray from two points off the inverse view-projection (reverse-Z: depth 1 = near,
+        // 0.5 = further along the ray) and take their difference. This is robust where a single depth-0.5 point
+        // minus the camera position is not — the inverse matrix is exact (geometry reconstructs from it), so the
+        // ray direction is too, with no dependence on a separately-supplied camera position.
+        let nearP = PositionFromDepth(i.uv, 1.0);
+        let farP = PositionFromDepth(i.uv, 0.5);
+        return vec4<f32>(SkyColor(normalize(farP - nearP)), 1.0);
     }
 
     let worldPos = PositionFromDepth(i.uv, depthRaw);

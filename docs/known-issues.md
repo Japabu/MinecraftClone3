@@ -3,36 +3,43 @@
 This list is for *open* work only — when an item is resolved, delete it or move its rationale into the
 relevant permanent doc. Not a changelog.
 
-- **WebGPU renderer — runs on Metal and draws the world; a few corners are still unconfirmed.** The
-  GL→WebGPU (Silk.NET.WebGPU) migration is code-complete and verified by a benchmark fly-through on Apple
-  M4 Pro: zero validation errors, correct reverse-Z depth ordering, procedural sky, lit terrain, and the
-  rewritten water (animated wave normals + Fresnel sky reflection + sun/moon specular). The camera uses an
-  **infinite-far** reverse-Z projection (`Projection.ReverseZPerspective`); there is no far clip, so the
-  composition detects background by the exact reverse-Z far clear (`depth == 0`) and reconstructs the sky
-  ray from a finite depth (the far point is at infinity → undefined). What still needs eyes-on confirmation:
-  - **`Frustum.Set` uses the GL `[-1,1]` near-plane formula** (`col3 + col2`) while WebGPU clip-z is `[0,1]`
-    (near plane should be `col2` alone). The 4 side planes — which do the real chunk culling — are correct;
-    the near/far planes are approximate, and under the infinite-far projection the far plane is a no-op
-    (distance is bounded by the cull compute's `maxDistance`). Harmless for chunk culling; tighten if a
-    near-camera clipping artifact ever shows.
-  - **Reverse-Z depth-bias sign for the shadow pass.** The shadow pass uses a `Projection.ReverseZOrtho`
-    light projection with `depthBias(2)/slopeScale(4)`; watch for shadow acne / peter-panning at low sun
-    angles and adjust the bias if needed (midday captures looked clean).
-  - **Item-icon orientation.** `ItemStackRenderer` no longer V-flips the icon (WebGPU's framebuffer origin is
-    top-left, unlike GL's bottom-left), so the 3-D block icons should already be upright — confirm they are
-    and aren't mirrored vertically.
-  - **The two overlay pipelines render into the live G-buffer.** Block-selection outline + chunk-border
-    (`OutlineRenderer`, LineList, depth `Greater` no-write, light attachment masked) and the block-break
-    crack (`BlockBreakRenderer`, alpha-blended diffuse only, normal+light masked, depth `GreaterEqual`) —
-    not exercised by the benchmark; confirm they appear and depth-test against terrain.
+- **WebGPU renderer — matches the GL renderer's image closely; a few overlay features aren't ported yet.**
+  The GL→WebGPU (Silk.NET.WebGPU) migration runs on Metal and was diffed against the OpenGL `master` build
+  with a seeded benchmark fly-through (10 frames/scene, same camera path): **the sky is pixel-identical** and
+  terrain/water/shadows are within a few percent. The world is composited in display (gamma) space and the
+  present pass just clamps to [0,1] — no tonemap curve and no gamma re-encode — to match the GL output exactly.
+  Reverse-Z reconstruction (`PositionFromDepth` in Composition/ShadowResolve) negates ndc.y vs the uv basis and
+  addresses the depth texel from uv (not the fragment's framebuffer position — wrong in the half-res shadow
+  pass); the sky ray is rebuilt from two inverse-projection points (not a camera-relative single point). Open:
+  - **`Frustum.Set` uses the GL `[-1,1]` near-plane formula** (`col3 + col2`) while WebGPU clip-z is `[0,1]`.
+    The 4 side planes — which do the real chunk culling — are correct; near/far are approximate and, under the
+    infinite-far projection, the far plane is a no-op (distance is bounded by the cull compute's `maxDistance`).
+    Harmless for chunk culling; tighten if a near-camera clip artifact ever shows.
   - **Off-thread chunk upload is NOT done (migration level-up 3, deferred).** `ChunkRenderData` creation +
-    `GpuBuffer` upload still run on the main thread (the threading model is unchanged from the GL era); the
-    WebGPU queue is thread-safe, so moving meshing→upload fully onto the mesh pool is the remaining
-    performance level-up. `docs/threading.md` Invariants 1 & 2 still describe the main-thread model.
+    `GpuBuffer` upload still run on the main thread; the WebGPU queue is thread-safe, so moving meshing→upload
+    onto the mesh pool is the remaining performance level-up. `docs/threading.md` Invariants 1 & 2 still
+    describe the main-thread model.
   - **Deliberate, not defects** (don't "fix"): the `Gpu` static facade (global device access, single-threaded
     init) and the split where Core uses literal Silk types while Client/exe keep readability aliases
     (`Vector3`, `Matrix4`, …) — both documented in-code.
 
+- **Master content layered after the fork is not yet drawn under WebGPU.** The chest + held-item + ender-pearl
+  features were GL-only renderers on `master`; the merge keeps their **server/gameplay logic** (chest storage,
+  pearl flight + teleport, enderman stare AI) but their **client rendering was not ported**, so under WebGPU:
+  - **No first-person / body-attached held-item viewmodel** (`HeldItemRenderer`/`HeldItemMeshes`/`ItemDisplay`
+    were removed). The hand is empty on screen; benchmark frames therefore lack the lower-right item the GL
+    build shows.
+  - **The chest renders invisibly** (`RendersAsBlockEntity` is honoured — it's skipped in the chunk mesh — but
+    `BlockEntityRenderer` is gone) and **can't be opened** (`GuiChest` removed; `BlockChest.OnActivated` is a
+    no-op). Storage still works server-side and breaking it still drops contents.
+  - **Thrown ender pearls don't render** (the WebGPU `EntityRenderer` has no projectile billboard path).
+  - Porting these to the WebGPU entity/GUI pipelines is the follow-up; until then they are the main visual gap
+    vs the GL build.
+
+- **Benchmark screenshots omit the HUD.** `Screenshot` reads the HDR scene target, which is captured *before*
+  `Renderer.EndFrame` tonemaps it to the surface and flushes the GUI (`GuiBatch`) over it — so the hotbar,
+  crosshair, REC indicator and other overlays are on screen but not in the PNG. Capturing them needs the
+  present pass to render into a readable LDR offscreen that the screenshot reads (a present-path change).
 - **Nether is the "core, one-biome" slice.** Implemented: the dimension + generator (netherrack/lava/soul-sand/
   glowstone/quartz-ore), obsidian portals lit with flint & steel (`VanillaPortals`), 8:1 Overworld↔Nether
   travel with find-or-build destination portals, the multi-dimension server, and the sunless red-fog render
@@ -256,6 +263,13 @@ relevant permanent doc. Not a changelog.
   colour. And there's no grass-eating, so a sheared sheep stays bare. Both deferred — the wiring (a per-sheep
   `SheepData`, the overlay layer) is in place, so colour is a tint on the overlay draw + a colour field in
   `SheepData`, and regrow is a server-side timer flipping `Sheared` back.
+- **Ender pearl can still strand you in a thick wall.** Throwing a pearl at a block teleports you to its impact
+  point (`EntityProjectile` → `WorldServer.PendingTeleports` → `PlayerTeleportPacket`, see [entities.md](entities.md));
+  when that point would embed the player, `TryResolveLanding` pushes back along the pearl's incoming path (then
+  up/horizontals) to a player-clear spot, and refuses to teleport if it finds none. This handles the common
+  head-on wall hit, but a dead-on hit into a **thick** wall (or a pocket where the back-off direction is also
+  blocked) can still drop you inside the geometry rather than in front of it. A proper swept depenetration
+  (resolve the player AABB out along the minimum-translation axis, multi-block) is the real fix; deferred.
 - **Tools/weapons/armor — accepted limitations.** Mining tools (`ItemTool`), swords (`ItemSword`), and armor
   (`ItemArmor`) exist with Minecraft-exact speed/tier, attack damage, and defense points, but **none have
   durability** (they never wear out — `ItemStack.Metadata` is free to repurpose as a damage value later). There

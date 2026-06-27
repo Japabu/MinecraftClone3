@@ -50,6 +50,7 @@ in deterministic plugin order, so client and server agree within a session.
   C→S  PlayerFall            completed fall distance (blocks); server applies fall damage (player owns position)
   C→S  SetGameModeRequest    pause-menu game-mode toggle (server-authoritative)
   C→S  RespawnRequest        death-screen respawn (honoured only while dead)
+  S→C  PlayerTeleport        relocate the owning player (landed ender pearl); client snaps + clears fall
   S→C  DimensionChange       drop the cached world + re-enter loading; carries generic visuals (HasSky, fog, ambient)
 ```
 

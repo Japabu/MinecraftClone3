@@ -179,6 +179,7 @@ the linked doc; this is the short "don't violate this" list.
 | Mobs/animals/dropped items/remote players: types, server AI, box models, entity rendering | [docs/entities.md](docs/entities.md) |
 | Items/registry, inventory, hotbar HUD, creative screen, 3D icons, crafting (recipes + 2x2/3x3) | [docs/inventory.md](docs/inventory.md) |
 | Resource cascade, plugin loading, resource packs, models/textures | [docs/resources.md](docs/resources.md) |
+| Reading 1:1 behavior/models/recipes out of the user's MC jar (assets + cfr-decompiling hardcoded Java) | [docs/minecraft-reference.md](docs/minecraft-reference.md) |
 | F1/F3/F4/F7/F10 debug keys, the profiler CSVs, dotnet-trace, GPU frame capture | [docs/profiling.md](docs/profiling.md) |
 | Hot-path code — why it's shaped that way (**don't regress these**) | [docs/performance.md](docs/performance.md) |
 | Open work, deferred features, accepted limitations | [docs/known-issues.md](docs/known-issues.md) |

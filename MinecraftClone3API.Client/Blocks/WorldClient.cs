@@ -110,6 +110,10 @@ namespace MinecraftClone3API.Client.Blocks
         public bool SpawnReceived;
         public bool Ready;
 
+        /// <summary>A server-commanded player relocation (a landed ender pearl) the client hasn't applied yet.
+        /// StateWorld polls it and snaps the position-authoritative local player there. Null when none pending.</summary>
+        public Vector3? PendingTeleport;
+
         // Server-authoritative world clock: the last received world time plus the wall-clock since it
         // arrived, so the day/night cycle advances smoothly between the periodic WorldTime packets and is
         // shared across multiplayer clients (WorldRenderer reads this).
@@ -663,7 +667,11 @@ namespace MinecraftClone3API.Client.Blocks
                 case EntityMovePacket move when move.EntityId != LocalEntityId:
                     // A move for an entity we haven't been told about yet is dropped; its spawn arrives first.
                     if (Entities.TryGetValue(move.EntityId, out var entity))
+                    {
                         entity.SetInterpTarget(move.Position, move.Pitch, move.Yaw);
+                        entity.HurtTime = move.HurtTime;
+                        entity.HeldItemId = move.HeldItemId;
+                    }
                     break;
                 case EntityDespawnPacket despawn:
                     Entities.Remove(despawn.EntityId);
@@ -695,6 +703,9 @@ namespace MinecraftClone3API.Client.Blocks
                     GameMode = (GameMode) stats.GameMode;
                     PlayerDead = stats.Dead;
                     StatsReceived = true;
+                    break;
+                case PlayerTeleportPacket tp:
+                    PendingTeleport = tp.Position;
                     break;
             }
         }

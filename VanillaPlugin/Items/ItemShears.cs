@@ -22,6 +22,7 @@ namespace VanillaPlugin.Items
 
         public override string TexturePath => "minecraft/textures/item/shears.png";
         public override string MinecraftId => "minecraft:shears";
+        public override int MaxStackSize => 1;
         public override bool UsableOnEntity => true;
 
         public override void OnUseOnEntity(WorldServer world, EntityPlayer player, Entity target)

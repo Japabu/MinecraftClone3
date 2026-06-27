@@ -38,6 +38,11 @@ namespace MinecraftClone3API.Items
         /// <paramref name="position"/> is the world cell the player clicked toward. No-op by default.</summary>
         public virtual void OnUseServer(WorldServer world, EntityPlayer player, Vector3D<float> position) { }
 
+        /// <summary>Whether <see cref="IsUsable"/> only fires when the crosshair is on a block (a spawn egg needs
+        /// the targeted cell). A thrown item (the ender pearl) sets this false so it can be used aiming at the
+        /// sky, ignoring <c>position</c>.</summary>
+        public virtual bool RequiresBlockTarget => true;
+
         /// <summary>Whether right-clicking this item while aiming at an entity triggers <see cref="OnUseOnEntity"/>
         /// (e.g. shears on a sheep) — lets the client send an entity-targeted use only when it's meaningful.</summary>
         public virtual bool UsableOnEntity => false;

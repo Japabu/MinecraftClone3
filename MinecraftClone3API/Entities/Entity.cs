@@ -33,6 +33,16 @@ namespace MinecraftClone3API.Entities
         /// wool/sheared state. Null for entities that need none; server-authoritative and synced to clients.</summary>
         public EntityData Data;
 
+        /// <summary>Ticks remaining on the damage flash. Set when the entity takes a hit and counted down each
+        /// tick (server-authoritative, streamed in the entity snapshot); the client renders the model red while
+        /// it is non-zero so a hit reads visually.</summary>
+        public int HurtTime;
+
+        /// <summary>The session-local id of the item this entity is holding in its main hand (0 = nothing), so the
+        /// client can draw it in the hand. For remote players the server streams it in the move snapshot; the local
+        /// player fills its own from the inventory at draw time. Only the player model renders a held item.</summary>
+        public ushort HeldItemId;
+
         // Client walk-cycle animation. LimbSwing is the phase accumulator (advanced by horizontal speed) and
         // LimbSwingAmount is how strongly the limbs swing (0 standing .. ~1 walking), both driven purely from
         // the interpolated motion of incoming position updates so no extra network data is needed.

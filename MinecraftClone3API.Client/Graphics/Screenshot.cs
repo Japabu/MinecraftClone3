@@ -102,13 +102,14 @@ namespace MinecraftClone3API.Graphics
         }
 
         /// <summary>Tonemap (Narkowicz ACES) + gamma-encode each rgba16float texel to RGBA8, mirroring
-        /// <c>Tonemap.wgsl</c>, writing rows top-down (no flip) and skipping the 256-alignment row padding.</summary>
+        /// <c>Tonemap.wgsl</c>, and skipping the 256-alignment row padding. The HDR scene's row 0 is the bottom
+        /// of the displayed image (Tonemap samples it y-up via uv), so rows are flipped to land top-down.</summary>
         private static void DecodeHdr(byte* src, byte[] dst, int width, int height, int paddedRow)
         {
             for (var y = 0; y < height; y++)
             {
                 var rowPtr = (Half*)(src + (long)y * paddedRow);
-                var dstRow = y * width * 4;
+                var dstRow = (height - 1 - y) * width * 4;
                 for (var x = 0; x < width; x++)
                 {
                     var s = x * 4;
@@ -125,13 +126,12 @@ namespace MinecraftClone3API.Graphics
             }
         }
 
+        // Mirrors Tonemap.wgsl: the scene colour is composited in display space, so the PNG just clamps to
+        // [0,1] — no tonemap curve, no gamma re-encode.
         private static byte Encode(float x)
         {
-            const float a = 2.51f, b = 0.03f, c = 2.43f, d = 0.59f, e = 0.14f;
-            var mapped = (x * (a * x + b)) / (x * (c * x + d) + e);
-            mapped = mapped < 0f ? 0f : mapped > 1f ? 1f : mapped;
-            var gamma = MathF.Pow(mapped, 1f / 2.2f);
-            var v = (int)(gamma * 255f + 0.5f);
+            var clamped = x < 0f ? 0f : x > 1f ? 1f : x;
+            var v = (int)(clamped * 255f + 0.5f);
             return (byte)(v < 0 ? 0 : v > 255 ? 255 : v);
         }
 

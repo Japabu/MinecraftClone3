@@ -62,20 +62,21 @@ namespace VanillaPlugin.Blocks
         {
             Decode(world, blockPos, out var facing, out var top);
 
-            // The full-footprint slab fills one Y half; the tall step fills the other Y half on the facing side.
-            var slabMinY = top ? 0f : -0.5f;
-            var slabMaxY = top ? 0.5f : 0f;
-            boxes.Add(new AxisAlignedBoundingBox(new Vector3D<float>(-0.5f, slabMinY, -0.5f), new Vector3D<float>(0.5f, slabMaxY, 0.5f)));
+            // Block-local boxes are corner-origin (0..1). The full-footprint slab fills one Y half; the tall
+            // step fills the other Y half on the facing side (midline at 0.5).
+            var slabMinY = top ? 0.5f : 0f;
+            var slabMaxY = top ? 1f : 0.5f;
+            boxes.Add(new AxisAlignedBoundingBox(new Vector3D<float>(0f, slabMinY, 0f), new Vector3D<float>(1f, slabMaxY, 1f)));
 
-            var stepMinY = top ? -0.5f : 0f;
-            var stepMaxY = top ? 0f : 0.5f;
-            float sxMin = -0.5f, sxMax = 0.5f, szMin = -0.5f, szMax = 0.5f;
+            var stepMinY = top ? 0f : 0.5f;
+            var stepMaxY = top ? 0.5f : 1f;
+            float sxMin = 0f, sxMax = 1f, szMin = 0f, szMax = 1f;
             switch (facing)
             {
-                case East: sxMin = 0f; break;
-                case West: sxMax = 0f; break;
-                case South: szMin = 0f; break;
-                default: szMax = 0f; break; // North
+                case East: sxMin = 0.5f; break;
+                case West: sxMax = 0.5f; break;
+                case South: szMin = 0.5f; break;
+                default: szMax = 0.5f; break; // North
             }
             boxes.Add(new AxisAlignedBoundingBox(new Vector3D<float>(sxMin, stepMinY, szMin), new Vector3D<float>(sxMax, stepMaxY, szMax)));
         }

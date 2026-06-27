@@ -110,7 +110,9 @@ namespace MinecraftClone3API.Graphics
             EnsureLoaded();
 
             var mesh = new MeshBuffer();
-            ChunkMesher.AddBlockToVao(IconWorld.Instance, Vector3i.Zero, 0, 0, 0, block, mesh, mesh);
+            // The -0.5 origin offset re-centres the corner-origin [0,1] cell mesh on the origin (where the iso
+            // camera looks).
+            ChunkMesher.AddBlockToVao(IconWorld.Instance, Vector3i.Zero, 0, 0, 0, block, mesh, mesh, new Vector3(-0.5f));
 
             var colorTex = new GpuTexture(Size, Size, ColorFormat,
                 TextureUsage.RenderAttachment | TextureUsage.TextureBinding, label: "itemIcon.color");

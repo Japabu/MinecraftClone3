@@ -1,7 +1,6 @@
-// Final tonemap pass: the HDR scene (rgba16float, written by Composition) → the surface (LDR UNORM).
-// A vertex-less fullscreen triangle samples the HDR colour, applies ACES filmic tonemapping, then encodes
-// gamma (the surface is a non-sRGB UNORM format — see GpuContext.ConfigurePreferredFormat — so the shader
-// owns the gamma curve rather than letting an sRGB swapchain double-encode).
+// Final present pass: the HDR scene (rgba16float, written by Composition) → the surface (LDR UNORM). A
+// vertex-less fullscreen triangle samples the scene colour and clamps it to [0,1]. The lighting is composited
+// in display (gamma) space, so no tonemap curve or gamma re-encode is applied here.
 
 @group(0) @binding(0) var hdrTex: texture_2d<f32>;
 @group(0) @binding(1) var hdrSampler: sampler;
@@ -21,20 +20,10 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
     return o;
 }
 
-// Narkowicz ACES filmic approximation.
-fn aces(x: vec3<f32>) -> vec3<f32> {
-    let a = 2.51;
-    let b = 0.03;
-    let c = 2.43;
-    let d = 0.59;
-    let e = 0.14;
-    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
-}
-
 @fragment
 fn fs_main(i: VsOut) -> @location(0) vec4<f32> {
+    // The lighting is composited directly in display space, so the present pass just clamps to [0,1] — no
+    // tonemap curve and no gamma re-encode (both would shift the look away from the composited colour).
     let hdr = textureSample(hdrTex, hdrSampler, i.uv).rgb;
-    let mapped = aces(hdr);
-    let gamma = pow(mapped, vec3<f32>(1.0 / 2.2));
-    return vec4<f32>(gamma, 1.0);
+    return vec4<f32>(clamp(hdr, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
 }

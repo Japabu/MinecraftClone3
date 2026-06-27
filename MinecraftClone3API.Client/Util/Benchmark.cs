@@ -99,12 +99,27 @@ namespace MinecraftClone3API.Util
         private static readonly List<Sample> _samples = new List<Sample>(64 * 1024);
 
         // Frames to snapshot to PNG (recorded-elapsed fraction → name), so a render change can be checked
-        // visually, not just by FPS. Taken once each when the recorded clock passes the fraction.
-        private static readonly (double Frac, string Name)[] _captureSchedule =
+        // visually, not just by FPS. Ten equally-spaced captures within each recorded scene
+        // (streaming/orbit/return/edit), sampled at the centre of each tenth so they sit clear of the phase
+        // transitions. Taken once each when the recorded clock passes the fraction.
+        private static readonly (double Frac, string Name)[] _captureSchedule = BuildCaptureSchedule();
+        private static readonly bool[] _captureTaken = new bool[_captureSchedule.Length];
+
+        private static (double Frac, string Name)[] BuildCaptureSchedule()
         {
-            (0.16, "streaming"), (0.62, "return"), (0.90, "edit")
-        };
-        private static readonly bool[] _captureTaken = new bool[3];
+            var phases = new (string Name, double Start, double Duration)[]
+            {
+                ("streaming", 0.0,                            FStreaming),
+                ("orbit",     FStreaming,                     FOrbit),
+                ("return",    FStreaming + FOrbit,            FReturn),
+                ("edit",      FStreaming + FOrbit + FReturn,  FEdit),
+            };
+            var list = new System.Collections.Generic.List<(double, string)>();
+            foreach (var (name, start, dur) in phases)
+                for (var k = 0; k < 10; k++)
+                    list.Add((start + (k + 0.5) / 10.0 * dur, $"{name}-{k:00}"));
+            return list.ToArray();
+        }
 
         /// <summary>Applies CLI/env config. Call once before the window is created.</summary>
         public static void Configure(string[] args)

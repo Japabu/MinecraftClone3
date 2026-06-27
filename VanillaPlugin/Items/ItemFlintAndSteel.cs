@@ -20,6 +20,7 @@ namespace VanillaPlugin.Items
 
         public override string MinecraftId => "minecraft:flint_and_steel";
         public override string TexturePath => "minecraft/textures/item/flint_and_steel.png";
+        public override int MaxStackSize => 1;
         public override bool IsUsable => true;
 
         public override void OnUseServer(WorldServer world, EntityPlayer player, Vector3D<float> position)

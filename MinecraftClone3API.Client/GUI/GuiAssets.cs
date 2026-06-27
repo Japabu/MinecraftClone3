@@ -30,6 +30,7 @@ namespace MinecraftClone3API.Client.GUI
         public const string FurnaceBurn = "minecraft/textures/gui/sprites/container/furnace/burn_progress.png";
         public const string CraftingTable = "minecraft/textures/gui/container/crafting_table.png";
         public const string Inventory = "minecraft/textures/gui/container/inventory.png";
+        public const string Generic54 = "minecraft/textures/gui/container/generic_54.png";
 
         private static readonly Dictionary<string, Texture> Cache = new Dictionary<string, Texture>();
 

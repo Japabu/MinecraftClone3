@@ -280,6 +280,9 @@ namespace MinecraftClone3API.Networking
                     BroadcastTo(world, new EntityDespawnPacket {EntityId = world.PendingDespawns.Dequeue()}, null);
             }
 
+            while (_world.PendingTeleports.Count > 0)
+                TeleportPlayer(_world.PendingTeleports.Dequeue());
+
             CollectItems();
 
             foreach (var world in _worldList)
@@ -291,8 +294,27 @@ namespace MinecraftClone3API.Networking
                     EntityId = entity.EntityId,
                     Position = entity.Position,
                     Pitch = entity.Pitch,
-                    Yaw = entity.Yaw
+                    Yaw = entity.Yaw,
+                    HurtTime = (byte) Math.Min(255, Math.Max(0, entity.HurtTime))
                 }, null);
+            }
+        }
+
+        /// <summary>Carries out a landed ender pearl's teleport: commands the owning client to snap there (the
+        /// player is position-authoritative), mirrors it on the server copy, and applies Minecraft's 5 points of
+        /// pearl fall damage in survival (the existing death path handles Health ≤ 0).</summary>
+        private void TeleportPlayer(WorldServer.Teleport tp)
+        {
+            foreach (var session in _sessions)
+            {
+                if (!session.LoggedIn || session.EntityId != tp.OwnerId) continue;
+
+                session.Connection.Send(new PlayerTeleportPacket {Position = tp.Position});
+                session.Player.Position = tp.Position;
+                session.Player.LastTickPosition = tp.Position;
+                if (session.Player.GameMode != GameMode.Creative)
+                    session.Player.Health = Math.Max(0f, session.Player.Health - 5f);
+                return;
             }
         }
 
@@ -377,7 +399,8 @@ namespace MinecraftClone3API.Networking
                         EntityId = session.EntityId,
                         Position = move.Position,
                         Pitch = move.Pitch,
-                        Yaw = move.Yaw
+                        Yaw = move.Yaw,
+                        HeldItemId = (ushort) session.Inventory.SelectedItem.ItemId
                     }, session);
                     break;
                 case PlaceBlockRequestPacket place when session.LoggedIn:
@@ -574,14 +597,14 @@ namespace MinecraftClone3API.Networking
             {
                 if (slot >= Inventory.HotbarSize) break;
                 if (!item.IsUsable && !item.UsableOnEntity) continue;
-                inventory.Slots[slot++] = new ItemStack(item.Id, ItemStack.MaxStackSize);
+                inventory.Slots[slot++] = new ItemStack(item.Id, item.MaxStackSize);
             }
 
             foreach (var item in GameRegistry.Items)
             {
                 if (slot >= Inventory.HotbarSize) break;
                 if (item.GetBlock() == null) continue;
-                inventory.Slots[slot++] = new ItemStack(item.Id, ItemStack.MaxStackSize);
+                inventory.Slots[slot++] = new ItemStack(item.Id, item.MaxStackSize);
             }
         }
 
@@ -596,6 +619,7 @@ namespace MinecraftClone3API.Networking
                 if (broken.Id != 0 && GameRegistry.TryGetItem(broken.RegistryKey, out var dropped))
                     world.DropItem(new ItemStack(dropped.Id, 1),
                         place.Position.ToVector3() + new Vector3D<float>(0.5f, 0.25f, 0.5f));
+                broken.OnBroken(world, place.Position);
                 world.SetBlock(place.Position, BlockRegistry.BlockAir);
             }
             else

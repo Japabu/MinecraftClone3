@@ -198,6 +198,7 @@ namespace MinecraftClone3.States
             _player.GameMode = _world.GameMode;
             if (_world.GameMode == GameMode.Survival) _player.Flying = false;
             UpdateDeathScreen();
+            UpdateTeleport();
 
             // The automated benchmark drives the camera itself (no player input / no pause overlay). Esc (pause)
             // and the inventory key are handled in OnKeyDown — opening an overlay makes this state no longer the
@@ -329,6 +330,20 @@ namespace MinecraftClone3.States
             }
         }
 
+        /// <summary>Applies a server-commanded teleport (a landed ender pearl): snaps the position-authoritative
+        /// local player to the impact point and clears its fall accumulator so the jump isn't billed as a fall.</summary>
+        private void UpdateTeleport()
+        {
+            if (!(_world.PendingTeleport is Vector3 target)) return;
+            _world.PendingTeleport = null;
+
+            _player.Position = target;
+            _player.PrevPosition = target;
+            _player.InterpolatedPosition = target;
+            _player.Velocity = Vector3.Zero;
+            PlayerController.ResetFall();
+        }
+
         /// <summary>One fixed 20 tps simulation step: the player physics (only when <paramref name="stepPlayer"/>,
         /// i.e. focused and not paused), then the server tick, network pump, and the client's send-move.
         /// Called zero or more times per display frame by the accumulator in <see cref="Update"/>.</summary>
@@ -417,12 +432,14 @@ namespace MinecraftClone3.States
             }
 
             var aspect = (float)ClientResources.Width / ClientResources.Height;
+            // Sprinting widens the FOV (eased in PlayerController), clamped so a high base FOV can't exceed 179°.
+            var fov = MathF.Min(GraphicsSettings.Fov * PlayerController.FovScale, 179f);
             // Infinite-far reverse-Z: no far clip (the LOD horizon always reaches), and float depth keeps
             // near-uniform precision to infinity, so the distant ring never z-fights against near terrain.
             // Distance is bounded by the GPU cull compute, not a far plane. The near plane stays at 0.1 so it
             // only clips when the camera is right against a block.
             var projection = Projection.ReverseZPerspective(
-                (GraphicsSettings.Fov * (MathF.PI / 180f)), aspect, 0.1f);
+                (fov * (MathF.PI / 180f)), aspect, 0.1f);
             WorldRenderer.RenderWorld(_world, projection);
 
             if (ClientResources.Input.CursorMode == CursorMode.Raw && !PlayerController.RenderSelf)

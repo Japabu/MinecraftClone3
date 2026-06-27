@@ -16,6 +16,12 @@ namespace MinecraftClone3API.Entities
         private const float JumpVelocity = 0.42f;
         private const int AttackCooldownTicks = 20; // hostile melee cadence (~1 s)
 
+        // Neutral-mob (enderman) provoke: a player whose look ray falls within this cone of the mob's head
+        // provokes it; once angry it chases until the target drifts past LoseRange (looking away no longer calms it).
+        private const float StareRange = 24f;
+        private const float LoseRange = 32f;
+        private const float StareDot = 0.99f;
+
         private readonly Random _rng = new Random();
 
         /// <summary>Current health. Server-authoritative; mutated by <see cref="EntityCombat"/>. Lazily seeded
@@ -30,6 +36,7 @@ namespace MinecraftClone3API.Entities
         private int _wanderTicks;
         private float _heading;
         private bool _walking;
+        private EntityPlayer _provoker;
 
         public override void Update()
         {
@@ -38,6 +45,7 @@ namespace MinecraftClone3API.Entities
 
             if (!_healthInit) { Health = Type.MaxHealth; _healthInit = true; }
             if (HurtCooldown > 0) HurtCooldown--;
+            if (HurtTime > 0) HurtTime--;
             if (_attackCooldown > 0) _attackCooldown--;
 
             ChooseGoal(world);
@@ -88,10 +96,16 @@ namespace MinecraftClone3API.Entities
                 var target = NearestPlayer(world);
                 if (target != null && (target.Position - Position).LengthSquared < SightRange * SightRange)
                 {
-                    var dx = target.Position.X - Position.X;
-                    var dz = target.Position.Z - Position.Z;
-                    _heading = MathF.Atan2(dx, dz);
-                    _walking = true;
+                    SteerToward(target);
+                    return;
+                }
+            }
+            else if (Type.NeutralUntilProvoked)
+            {
+                var target = Provoker(world);
+                if (target != null)
+                {
+                    SteerToward(target);
                     return;
                 }
             }
@@ -102,6 +116,40 @@ namespace MinecraftClone3API.Entities
             _wanderTicks = 30 + _rng.Next(60);
             _walking = _rng.NextDouble() < 0.7;
             if (_walking) _heading = (float) (_rng.NextDouble() * (MathF.PI * 2f));
+        }
+
+        private void SteerToward(EntityPlayer target)
+        {
+            _heading = MathF.Atan2(target.Position.X - Position.X, target.Position.Z - Position.Z);
+            _walking = true;
+        }
+
+        /// <summary>Keeps chasing the current provoker until it escapes <see cref="LoseRange"/>; otherwise looks
+        /// for a player whose aim falls within the stare cone of this mob's head and latches onto them.</summary>
+        private EntityPlayer Provoker(WorldServer world)
+        {
+            if (_provoker != null &&
+                (_provoker.Position - Position).LengthSquared <= LoseRange * LoseRange)
+                return _provoker;
+
+            _provoker = null;
+            var head = Position + new Vector3D<float>(0, Type.Height * 0.9f, 0);
+            lock (world.PlayerEntities)
+            {
+                foreach (var player in world.PlayerEntities)
+                {
+                    var toHead = head - (player.Position + new Vector3D<float>(0, EntityPlayer.EyeHeight, 0));
+                    if (toHead.LengthSquared > StareRange * StareRange || toHead.LengthSquared < 1e-4f) continue;
+
+                    var look = new Vector3D<float>(
+                        MathF.Sin(player.Yaw) * MathF.Cos(player.Pitch),
+                        MathF.Sin(player.Pitch),
+                        MathF.Cos(player.Yaw) * MathF.Cos(player.Pitch));
+                    if (Vector3D.Dot(look, Vector3D.Normalize(toHead)) > StareDot) { _provoker = player; break; }
+                }
+            }
+
+            return _provoker;
         }
 
         internal override void SerializeState(System.IO.BinaryWriter writer)

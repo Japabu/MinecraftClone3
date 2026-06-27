@@ -94,8 +94,10 @@ fn DecodeNormal(normal: vec4<f32>) -> vec4<f32> {
 }
 
 fn PositionFromDepth(vTexCoord: vec2<f32>, depth: f32) -> vec3<f32> {
-    // ndc.xy = uv*2-1 (matches Tonemap.wgsl's triangle); depth is reverse-Z clip z in [0,1], used AS-IS.
-    let clipSpace = vec4<f32>(vTexCoord * 2.0 - 1.0, depth, 1.0);
+    // ndc.y is negated vs uv (the uv basis used to sample the G-buffer runs y-down relative to clip-space y),
+    // so a plain uv*2-1 reconstructs a vertically-mirrored world position. depth is reverse-Z clip z, AS-IS.
+    let ndc = vec2<f32>(vTexCoord.x * 2.0 - 1.0, 1.0 - vTexCoord.y * 2.0);
+    let clipSpace = vec4<f32>(ndc, depth, 1.0);
     let homogenousCoord = params.uViewProjectionInv * clipSpace;
     return homogenousCoord.xyz / homogenousCoord.w;
 }
@@ -145,8 +147,11 @@ fn fs_main(i: VsOut) -> @location(0) vec4<f32> {
     // unlit geometry (normal.w == 1), night/dusk (uSunFade ~ 0), sky-occluded surfaces (lightSample.a ~ 0),
     // and past the shadow distance. Those pixels write shadow = 1.
     if (normal.w != 1.0 && params.uShadowsEnabled > 0.5 && params.uSunFade > 0.0 && lightSample.a > 0.004) {
-        // Depth32float depth read via textureLoad (used AS-IS; reverse-Z clip z in [0,1]).
-        let depth = textureLoad(uDepth, vec2<i32>(i.clip.xy), 0);
+        // Depth32float depth read via textureLoad (used AS-IS; reverse-Z clip z in [0,1]). The texel is
+        // addressed from vTexCoord (this is a half-res pass, so the fragment's own framebuffer position does
+        // NOT index the full-res camera depth) — the SAME uv basis the normal/light/worldPos use.
+        let depthDim = vec2<f32>(textureDimensions(uDepth));
+        let depth = textureLoad(uDepth, vec2<i32>(min(i.vTexCoord * depthDim, depthDim - 1.0)), 0);
         let worldPos = PositionFromDepth(i.vTexCoord, depth);
         viewDepth = -(params.uView * vec4<f32>(worldPos, 1.0)).z;
         if (viewDepth < params.uShadowDistance) {

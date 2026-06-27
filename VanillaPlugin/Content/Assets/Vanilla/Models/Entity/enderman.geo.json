@@ -1,0 +1,80 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": {
+        "identifier": "geometry.enderman",
+        "texture_width": 64,
+        "texture_height": 32
+      },
+      "bones": [
+        {
+          "name": "head",
+          "pivot": [0, 38, 0],
+          "cubes": [
+            {
+              "origin": [-4, 38, -4],
+              "size": [8, 8, 8],
+              "uv": [0, 0]
+            }
+          ]
+        },
+        {
+          "name": "body",
+          "pivot": [0, 26, 0],
+          "cubes": [
+            {
+              "origin": [-4, 26, -2],
+              "size": [8, 12, 4],
+              "uv": [32, 16]
+            }
+          ]
+        },
+        {
+          "name": "arm0",
+          "pivot": [-5, 38, 0],
+          "cubes": [
+            {
+              "origin": [-6, 8, -1],
+              "size": [2, 30, 2],
+              "uv": [56, 0]
+            }
+          ]
+        },
+        {
+          "name": "arm1",
+          "pivot": [5, 38, 0],
+          "cubes": [
+            {
+              "origin": [4, 8, -1],
+              "size": [2, 30, 2],
+              "uv": [56, 0]
+            }
+          ]
+        },
+        {
+          "name": "leg0",
+          "pivot": [-2, 30, 0],
+          "cubes": [
+            {
+              "origin": [-3, 0, -1],
+              "size": [2, 30, 2],
+              "uv": [56, 0]
+            }
+          ]
+        },
+        {
+          "name": "leg1",
+          "pivot": [2, 30, 0],
+          "cubes": [
+            {
+              "origin": [1, 0, -1],
+              "size": [2, 30, 2],
+              "uv": [56, 0]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

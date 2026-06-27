@@ -171,6 +171,17 @@ namespace MinecraftClone3API.Blocks
         public readonly Queue<Entity> PendingSpawns = new Queue<Entity>();
         public readonly Queue<int> PendingDespawns = new Queue<int>();
 
+        /// <summary>A pending "teleport this player to here", produced by a landed projectile (ender pearl) and
+        /// drained each Pump by ServerNetwork, which owns the sessions and so can command the owning client.</summary>
+        public readonly struct Teleport
+        {
+            public readonly int OwnerId;
+            public readonly Vector3D<float> Position;
+            public Teleport(int ownerId, Vector3D<float> position) { OwnerId = ownerId; Position = position; }
+        }
+
+        public readonly Queue<Teleport> PendingTeleports = new Queue<Teleport>();
+
         // Ambient creature spawning: every so often try to drop a small group near a random player.
         private readonly Random _spawnRng = new Random();
 
@@ -192,7 +203,9 @@ namespace MinecraftClone3API.Blocks
 
         public const string OverworldDimensionKey = "Vanilla:Overworld";
 
-        public Vector3D<float> SpawnPosition => _generator.Spawn().ToVector3();
+        // Spawn() returns the feet cell (the air above the surface); offset to the cell's horizontal centre so
+        // the player stands centred in the column (corner-origin: block P fills [P, P+1]).
+        public Vector3D<float> SpawnPosition => _generator.Spawn().ToVector3() + new Vector3D<float>(0.5f, 0f, 0.5f);
 
         public readonly string WorldDir;
 
@@ -546,8 +559,9 @@ namespace MinecraftClone3API.Blocks
                 if (t.Kind == EntityKind.FallingBlock) { type = t; break; }
             if (type == null) return null;
 
-            // Position is the block's bottom-centre: a block at by spans by-0.5..by+0.5, so its floor is by-0.5.
-            var spawnPos = new Vector3D<float>(blockPos.X, blockPos.Y - 0.5f, blockPos.Z);
+            // Position is the block's bottom-centre: a block at by spans by..by+1 (corner-origin), so its floor
+            // is by and its horizontal centre is (bx+0.5, bz+0.5).
+            var spawnPos = new Vector3D<float>(blockPos.X + 0.5f, blockPos.Y, blockPos.Z + 0.5f);
             var falling = (EntityFallingBlock) SpawnEntity(type, spawnPos);
             falling.BlockId = blockId;
             falling.Data = new FallingBlockData {BlockId = blockId};
@@ -692,9 +706,9 @@ namespace MinecraftClone3API.Blocks
             {
                 var ox = _spawnRng.Next(-24, 25);
                 var oz = _spawnRng.Next(-24, 25);
-                var baseX = (int) MathF.Round(anchor.Position.X) + ox;
-                var baseZ = (int) MathF.Round(anchor.Position.Z) + oz;
-                if (!TryFindGround(baseX, (int) MathF.Round(anchor.Position.Y), baseZ, out var groundY)) continue;
+                var baseX = (int) MathF.Floor(anchor.Position.X) + ox;
+                var baseZ = (int) MathF.Floor(anchor.Position.Z) + oz;
+                if (!TryFindGround(baseX, (int) MathF.Floor(anchor.Position.Y), baseZ, out var groundY)) continue;
                 SpawnEntity(chosen, new Vector3D<float>(baseX + 0.5f, groundY, baseZ + 0.5f));
             }
         }

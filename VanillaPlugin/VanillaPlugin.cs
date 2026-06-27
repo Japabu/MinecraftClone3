@@ -99,6 +99,7 @@ namespace VanillaPlugin
             context.Register(new BlockStairs());
             context.Register(new BlockCraftingTable());
             context.Register(new BlockFurnace());
+            context.Register(new BlockChest());
             context.Register(new BlockGlowstone());
             context.Register(new BlockBasic("WhiteWool", "minecraft:block/white_wool", true, 0.8f));
             context.Register(new BlockGlass());
@@ -188,6 +189,7 @@ namespace VanillaPlugin
 
             context.Register<BlockDataMetadata>();
             context.Register<BlockDataFurnace>();
+            context.Register<BlockDataChest>();
 
             context.RegisterEntityData<FallingBlockData>();
 
@@ -272,21 +274,38 @@ namespace VanillaPlugin
             var zombie = new EntityType("Zombie", EntityKind.Creature, 0.6f, 1.95f, 20f, 0.13f, true,
                 "minecraft:entity/zombie/zombie", "System/Models/Entity/biped.geo.json",
                 attackDamage: 3f, loot: new LootTable(new LootDrop("Vanilla:RottenFlesh", 0, 2)));
+            // The Enderman: a tall, fast neutral mob with the long-limbed humanoid silhouette. Its slender
+            // geometry (2x30 limbs, 8x12x4 body, 8x8x8 head) maps the official 64x32 enderman sheet directly.
+            // Neutral until provoked: it wanders peacefully until a player looks straight at it, then gives chase;
+            // killing it drops an ender pearl, as in Minecraft.
+            var enderman = new EntityType("Enderman", EntityKind.Creature, 0.6f, 2.9f, 40f, 0.17f, false,
+                "minecraft:entity/enderman/enderman", "Vanilla/Models/Entity/enderman.geo.json",
+                neutralUntilProvoked: true,
+                loot: new LootTable(new LootDrop("Vanilla:EnderPearl", 0, 1)));
 
             context.Register(pig);
             context.Register(cow);
             context.Register(sheep);
             context.Register(chicken);
             context.Register(zombie);
+            context.Register(enderman);
             context.Register(new EntityType("Item", EntityKind.Item, 0.25f, 0.25f, 1f, 0f, false, null, null));
             context.Register(new EntityType("FallingBlock", EntityKind.FallingBlock,
                 EntityFallingBlock.Size, EntityFallingBlock.Size, 1f, 0f, false, null, null));
+
+            // The thrown ender pearl: a small projectile rendered from the pearl item sprite. The ItemEnderPearl
+            // throws it; on impact it teleports the thrower (see EntityProjectile / PlayerTeleportPacket).
+            var enderPearlProjectile = new EntityType("EnderPearlProjectile", EntityKind.Projectile,
+                0.25f, 0.25f, 1f, 0f, false, "minecraft:item/ender_pearl", null);
+            context.Register(enderPearlProjectile);
+            context.Register(new ItemEnderPearl(enderPearlProjectile));
 
             context.Register(new ItemSpawnEgg(pig, "minecraft/textures/item/pig_spawn_egg.png"));
             context.Register(new ItemSpawnEgg(cow, "minecraft/textures/item/cow_spawn_egg.png"));
             context.Register(new ItemSpawnEgg(sheep, "minecraft/textures/item/sheep_spawn_egg.png"));
             context.Register(new ItemSpawnEgg(chicken, "minecraft/textures/item/chicken_spawn_egg.png"));
             context.Register(new ItemSpawnEgg(zombie, "minecraft/textures/item/zombie_spawn_egg.png"));
+            context.Register(new ItemSpawnEgg(enderman, "minecraft/textures/item/enderman_spawn_egg.png"));
         }
 
         public void PostLoad(PluginContext context)

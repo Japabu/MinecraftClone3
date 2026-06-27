@@ -7,6 +7,12 @@ others.
 
 ## Item model (`Items/`, GL-free, shared)
 
+- **Stack sizes** are code-defined, not pack data — as in Minecraft, where they live in item code, not the
+  assets. `Item.MaxStackSize` defaults to 64; item subclasses override it to match MC (tools/swords/armor/
+  shears/flint &amp; steel → 1, ender pearl → 16). Everything that merges stacks honors the **per-item** value
+  (`stack.Item?.MaxStackSize ?? ItemStack.MaxStackSize`): `Inventory.Add`, `ContainerScreen`, `CraftingState`,
+  `BlockFurnace`, and the creative-hotbar seed. `ItemStack.MaxStackSize` (64) is only the fallback for an empty
+  stack with no resolvable item.
 - **`Item`** (`Items/Item.cs`) — a `RegistryEntry` with a ushort `Id`, a `MaxStackSize`, `GetBlock()` (the
   block it places, or null), a 2D inventory-sprite `TexturePath` (for non-block items), a `MinecraftId` (its
   `namespace:name` content id), and `GetName()` (the localized display name). The base class is GL-free so the
@@ -108,9 +114,22 @@ container*. The pieces:
   left-to-right) drawn from the sheet's progress sprites. Output is an `IsOutput` slot (take-only); shift-click
   moves furnace↔inventory (smeltables to input, fuels to fuel). No XP (the engine has no XP system).
 
+## Chest (a second container block)
+
+A chest reuses the whole furnace container machinery, minus the smelting tick (it has **no** `SyncFields` and
+no `OnServerTick`): `BlockDataChest` (`VanillaPlugin/BlockDatas/`) is a `ContainerBlockData` with facing + 27
+`ItemStack` slots; `GuiChest` (`Client/GUI/GuiChest.cs`) lays them out over `container/generic_54.png` (two
+blits — the container rows from the top of the sheet, the player-inventory portion from `y=126`). Opening,
+streaming and slot edits are the same `OpenContainer`/`ContainerState`/`ContainerSlot` flow. Two differences
+from the furnace: a chest **drops its contents when broken** — `Block.OnBroken` (a server hook called before the
+block is set to air) dumps every stored stack — and it **renders as a block entity** (a chest box model, not a
+chunk-mesh cube; see [rendering.md](rendering.md)) via `Block.RendersAsBlockEntity` + `BlockEntityModelPath`/
+`BlockEntityTexturePath`. The crafting recipe loads from the pack by `MinecraftId = "minecraft:chest"`.
+
 **Right-click interaction.** `Block.OnActivated(window, world, pos, player)` (default false) lets a block
 handle a right-click (and suppress placing the held item). It is **client-only** — `PlayerController` calls it
-before `PlaceBlock`; the headless server never does — so a block may open a GUI there (`BlockCraftingTable`).
+before `PlaceBlock`; the headless server never does — so a block may open a GUI there (`BlockCraftingTable`,
+`BlockFurnace`, `BlockChest`).
 
 ## Container screens & slot interaction (`Client/GUI/ContainerScreen.cs`, `Slot.cs`)
 

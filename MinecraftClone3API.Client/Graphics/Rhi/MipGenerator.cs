@@ -39,11 +39,12 @@ namespace MinecraftClone3API.Graphics.Rhi
             if (texture.MipLevels <= 1) return;
 
             var encoder = GpuCommandEncoder.Create("mipgen");
-            var pass = ComputePass.Begin(encoder, "mipgen");
-            pass.SetPipeline(_pipeline);
 
             var views = new System.Collections.Generic.List<IntPtr>();
             var groups = new System.Collections.Generic.List<GpuBindGroup>();
+            // Each level reads the one above, so every transition is its own compute pass: WebGPU only makes a
+            // storage-texture write visible to a later read across a pass boundary, never between two dispatches
+            // in the same pass. One shared pass would let mip N+1 read mip N before it was written (garbage mips).
             for (uint mip = 1; mip < texture.MipLevels; mip++)
             {
                 var srcView = texture.CreateView(TextureViewDimension.Dimension2DArray, mip - 1, 1, 0, texture.Layers);
@@ -58,13 +59,15 @@ namespace MinecraftClone3API.Graphics.Rhi
                 }, $"mipgen-{mip}");
                 groups.Add(group);
 
+                var pass = ComputePass.Begin(encoder, $"mipgen-{mip}");
+                pass.SetPipeline(_pipeline);
                 pass.SetBindGroup(0, group);
                 var dstW = Math.Max(1u, texture.Width >> (int)mip);
                 var dstH = Math.Max(1u, texture.Height >> (int)mip);
                 pass.Dispatch((dstW + 7) / 8, (dstH + 7) / 8, texture.Layers);
+                pass.End();
+                pass.Release();
             }
-            pass.End();
-            pass.Release();
 
             var cmd = encoder.Finish("mipgen");
             var cmdLocal = cmd;

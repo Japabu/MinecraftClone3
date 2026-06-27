@@ -44,7 +44,7 @@ namespace MinecraftClone3API.Util
             Vector4D<float> light, BlockFace face, Vector3D<float> t0, Vector3D<float> t1, int neighbourY, int scanBottom)
         {
             if (neighbourY != int.MinValue && neighbourY >= sy) return;            // neighbour covers the gap
-            var yBot = (neighbourY == int.MinValue ? scanBottom : neighbourY) + 0.5f;
+            var yBot = (neighbourY == int.MinValue ? scanBottom : neighbourY) + 1f;
             if (yBot >= yTop || !TryGetFace(block, face, out var sideFace)) return;
             var shade = face == BlockFace.Right || face == BlockFace.Left ? LodSideShadeEW : LodSideShadeNS;
             EmitLodQuad(vao, sideFace, new Vector4D<float>(face.GetNormal(), 0), Tint(world, block, pos, sideFace),
@@ -156,11 +156,11 @@ namespace MinecraftClone3API.Util
                 var pos = new Vector3D<int>(baseX + scx * cellSize, sy, baseZ + scz * cellSize);
                 var isWater = block.GetRenderMaterial(null, pos) == RenderMaterial.Water;
                 var light = new Vector4D<float>(0, 0, 0, CustomLightLevelToBrightness(LodColumn.Sky(packed)));
-                var x0 = baseX + scx * cellSize - 0.5f;
-                var x1 = baseX + (scx + h) * cellSize - 0.5f;
-                var z0 = baseZ + scz * cellSize - 0.5f;
-                var z1 = baseZ + (scz + w) * cellSize - 0.5f;
-                var yTop = sy + 0.5f;
+                var x0 = baseX + scx * cellSize;
+                var x1 = baseX + (scx + h) * cellSize;
+                var z0 = baseZ + scz * cellSize;
+                var z1 = baseZ + (scz + w) * cellSize;
+                var yTop = sy + 1f;
                 EmitLodQuad(vao, topFace, new Vector4D<float>(0, 1, 0, isWater ? WaterNormalW : 0f),
                     Tint(null, block, pos, topFace),
                     new Vector3D<float>(x0, yTop, z0), new Vector3D<float>(x1, yTop, z0),
@@ -178,11 +178,11 @@ namespace MinecraftClone3API.Util
                 var sy = LodColumn.SurfaceY(packed);
                 var pos = new Vector3D<int>(baseX + scx * cellSize, sy, baseZ + scz * cellSize);
                 var light = new Vector4D<float>(0, 0, 0, CustomLightLevelToBrightness(LodColumn.Sky(packed)));
-                var x0 = baseX + scx * cellSize - 0.5f;
-                var x1 = baseX + (scx + 1) * cellSize - 0.5f;
-                var z0 = baseZ + scz * cellSize - 0.5f;
-                var z1 = baseZ + (scz + 1) * cellSize - 0.5f;
-                var yTop = sy + 0.5f;
+                var x0 = baseX + scx * cellSize;
+                var x1 = baseX + (scx + 1) * cellSize;
+                var z0 = baseZ + scz * cellSize;
+                var z1 = baseZ + (scz + 1) * cellSize;
+                var yTop = sy + 1f;
 
                 EmitSkirt(null, vao, block, pos, sy, yTop, light, BlockFace.Right,
                     new Vector3D<float>(x1, yTop, z1), new Vector3D<float>(x1, yTop, z0),
@@ -234,22 +234,24 @@ namespace MinecraftClone3API.Util
         }
 
         public static void AddBlockToVao(WorldBase world, Vector3D<int> blockPos, int x, int y, int z, Block block,
-            MeshBuffer vao, MeshBuffer transparentVao)
+            MeshBuffer vao, MeshBuffer transparentVao, Vector3D<float> originOffset = default)
         {
             //If block is invisible or does not have a model for some reason ignore it
             var (model, orient) = block.GetRenderModel(world, blockPos);
             if (!block.IsVisible(world, blockPos) || model == null) return;
 
             // Block-state orientation (a stair's facing, a furnace's blockstate variant rotation) applied after
-            // the element transform, so it rotates the centred element about the block origin. Identity for
-            // every normal block.
+            // the element transform: the -0.5 shift centres the element on the block origin so `orient` rotates
+            // about the block centre, then the +0.5 shift moves it into the [0,1] cell so block P fills
+            // [P, P+1] (corner-origin, matching Minecraft). Identity orient for every normal block.
 
             foreach (var element in model.Elements)
             {
                 var transform = Matrix4X4.CreateScale((element.To - element.From) / 16) *
                                 Matrix4X4.CreateTranslation((element.To - element.From) / 32 + element.From / 16) *
                                 Matrix4X4.CreateTranslation(new Vector3D<float>(-0.5f)) *
-                                orient;
+                                orient *
+                                Matrix4X4.CreateTranslation(new Vector3D<float>(0.5f));
 
                 foreach (var entry in element.Faces)
                 {
@@ -274,12 +276,12 @@ namespace MinecraftClone3API.Util
                         otherTransparency == TransparencyType.None && fullBlock && otherFullBlock) continue;
 
                     AddFaceToVao(world, blockPos, x, y, z, block, face, entry.Value,
-                        transparency == TransparencyType.Transparent ? transparentVao : vao, transform);
+                        transparency == TransparencyType.Transparent ? transparentVao : vao, transform, originOffset);
                 }
             }
         }
 
-        public static void AddFaceToVao(WorldBase world, Vector3D<int> blockPos, int x, int y, int z, Block block, BlockFace face, BlockModel.FaceData data, MeshBuffer vao, Matrix4X4<float> transform, Vector4D<float>? lodLight = null)
+        public static void AddFaceToVao(WorldBase world, Vector3D<int> blockPos, int x, int y, int z, Block block, BlockFace face, BlockModel.FaceData data, MeshBuffer vao, Matrix4X4<float> transform, Vector3D<float> originOffset = default, Vector4D<float>? lodLight = null)
         {
             var faceId = (int) face - 1;
             var baseVertex = vao.VertexCount;
@@ -307,7 +309,7 @@ namespace MinecraftClone3API.Util
                 // Bake WORLD-space position (chunk origin folded in) so the renderer needs no per-chunk model
                 // matrix — that's what lets every chunk's opaque mesh share one buffer + one batched multidraw.
                 var transformed = new Vector4D<float>(vertexPosition, 1) * transform;
-                var position = new Vector3D<float>(transformed.X, transformed.Y, transformed.Z) + blockPos.ToVector3();
+                var position = new Vector3D<float>(transformed.X, transformed.Y, transformed.Z) + blockPos.ToVector3() + originOffset;
 
                 //tex coords are -1 if texture is null; texCoord z = texId, w = textureArrayId
                 var texCoord = texture == null ? new Vector4D<float>(-1) : new Vector4D<float>(texCoords[j].X, texCoords[j].Y, 0f, 0f) {Z = texture.TextureId, W = texture.ArrayId};

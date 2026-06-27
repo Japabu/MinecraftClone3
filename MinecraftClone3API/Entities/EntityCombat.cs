@@ -27,6 +27,7 @@ namespace MinecraftClone3API.Entities
 
             target.Health -= damage;
             target.HurtCooldown = HurtCooldownTicks;
+            target.HurtTime = HurtCooldownTicks;
 
             var dx = target.Position.X - sourcePos.X;
             var dz = target.Position.Z - sourcePos.Z;

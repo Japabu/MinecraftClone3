@@ -32,6 +32,20 @@ namespace MinecraftClone3API.Entities
         /// <summary>True when the local player's own body should be drawn (any third-person view).</summary>
         public static bool RenderSelf => Perspective != CameraPerspective.FirstPerson;
 
+        // Sprinting (survival + creative walk): started by holding the Sprint key or double-tapping Forward
+        // while moving forward, and (in survival) only while not too hungry. Sticky once started — it keeps
+        // going on held Forward alone — until Forward is released, hunger runs low, or a wall is hit. Boosts
+        // walk speed (PlayerPhysics.SprintMultiplier) and widens the FOV like Minecraft.
+        private const float SprintFovScale = 1.15f;
+        private const float ForwardDoubleTapSeconds = 0.3f;
+        private const float SprintHungerThreshold = 6f;
+        private static bool _sprinting;
+        private static bool _horizontalCollision;
+        private static readonly Stopwatch _forwardTapTimer = Stopwatch.StartNew();
+        // Eased multiplier on the configured FOV: 1 normally, easing toward SprintFovScale while sprinting.
+        public static float FovScale = 1f;
+        private static readonly Stopwatch _fovTimer = Stopwatch.StartNew();
+
         private static BlockRaytraceResult _blockRaytrace;
         private static bool _skipMouseDelta;
         private static readonly Stopwatch _spaceTapTimer = Stopwatch.StartNew();
@@ -56,6 +70,33 @@ namespace MinecraftClone3API.Entities
         // (OnKeyDown/OnMouseDown/OnScroll, routed from StateWorld) act without it being threaded through.
         private static WorldBase _world;
 
+        // First-person swing: a one-shot 0..1 arc (re)started by Swing() on attack/mine/place/use and advanced
+        // each frame; the held-item viewmodel maps it to the arm/item arc. Mining re-triggers it so it loops.
+        private const float SwingSeconds = 0.25f;
+        private static readonly Stopwatch _swingTimer = Stopwatch.StartNew();
+        private static bool _swinging;
+        private static float _swingProgress;
+
+        /// <summary>The current swing arc position (0..1), or 0 when no swing is in progress.</summary>
+        public static float SwingPhase => _swinging ? _swingProgress : 0f;
+
+        /// <summary>(Re)starts the first-person swing animation (a melee/mine/place gesture).</summary>
+        public static void Swing()
+        {
+            _swinging = true;
+            _swingProgress = 0f;
+        }
+
+        private static void AdvanceSwing()
+        {
+            var dt = (float) _swingTimer.Elapsed.TotalSeconds;
+            _swingTimer.Restart();
+            if (!_swinging) return;
+            if (dt > 0.25f) dt = 0.25f;
+            _swingProgress += dt / SwingSeconds;
+            if (_swingProgress >= 1f) { _swinging = false; _swingProgress = 0f; }
+        }
+
         public static void SetEntity(EntityPlayer playerEntity)
         {
             PlayerEntity = playerEntity;
@@ -70,6 +111,8 @@ namespace MinecraftClone3API.Entities
             _world = world;
             _blockRaytrace = world.BlockRaytrace(PlayerEntity.RenderPosition + PlayerEntity.EyeOffset,
                 PlayerEntity.Forward, 8);
+
+            AdvanceSwing();
 
             if (!focused) return;
 
@@ -110,6 +153,14 @@ namespace MinecraftClone3API.Entities
                     PlayerEntity.Velocity = Vector3.Zero;
                 }
                 _spaceTapTimer.Restart();
+            }
+
+            // Forward double-tap engages sprint (the held-key path is handled per-tick in UpdateSprint).
+            if (Keybinds.Matches(GameAction.Forward, key))
+            {
+                if (_forwardTapTimer.Elapsed.TotalSeconds < ForwardDoubleTapSeconds && CanSprint())
+                    _sprinting = true;
+                _forwardTapTimer.Restart();
             }
 
             if (_world is WorldClient client)
@@ -211,6 +262,10 @@ namespace MinecraftClone3API.Entities
             if (dy < 0f) _fallDistance += -dy;
         }
 
+        /// <summary>Clears the accumulated fall distance — used after a server teleport (an ender pearl) so the
+        /// jump in position isn't billed as a fall on the next landing.</summary>
+        public static void ResetFall() => _fallDistance = 0f;
+
         public static void ApplyInterpolation(float alpha)
         {
             PlayerEntity.InterpolatedPosition =
@@ -248,11 +303,35 @@ namespace MinecraftClone3API.Entities
             var wish = new Vector2(right.X, right.Z) * inputX + forward * inputZ;
             if (wish.LengthSquared > 1f) wish = Vector2D.Normalize(wish);
 
+            UpdateSprint();
             var jump = Keybinds.IsDown(GameAction.Jump);
-            var sprint = Keybinds.IsDown(GameAction.Sprint) && inputZ > 0;
 
-            PlayerPhysics.Tick(world, PlayerEntity, wish, jump, sprint);
+            _horizontalCollision = PlayerPhysics.Tick(world, PlayerEntity, wish, jump, _sprinting);
         }
+
+        /// <summary>Sprint state machine (Minecraft-style). Engages on a held Sprint key or a Forward
+        /// double-tap while pushing forward and (in survival) not too hungry; stays engaged on held Forward
+        /// alone until Forward is released, hunger drops, or a wall is hit. Also eases the sprint FOV. Idle
+        /// while flying — creative free-flight has its own fast modifier.</summary>
+        private static void UpdateSprint()
+        {
+            var forwardDown = Keybinds.IsDown(GameAction.Forward);
+
+            if (Keybinds.IsDown(GameAction.Sprint) && forwardDown && CanSprint())
+                _sprinting = true;
+
+            if (!forwardDown || !CanSprint() || _horizontalCollision || PlayerEntity.Flying)
+                _sprinting = false;
+
+            var dt = (float) _fovTimer.Elapsed.TotalSeconds;
+            _fovTimer.Restart();
+            var target = _sprinting ? SprintFovScale : 1f;
+            FovScale += (target - FovScale) * MathF.Min(1f, dt * 12f);
+        }
+
+        // Survival can't sprint while too hungry (Minecraft: hunger must be above 6); creative always can.
+        private static bool CanSprint()
+            => PlayerEntity.GameMode != GameMode.Survival || PlayerEntity.Hunger > SprintHungerThreshold;
 
         private static void BreakBlock(WorldBase world)
         {
@@ -272,6 +351,7 @@ namespace MinecraftClone3API.Entities
                 {
                     attackClient.SendAttackEntity(entity.EntityId);
                     _attacking = true;
+                    Swing();
                     return;
                 }
             }
@@ -312,6 +392,9 @@ namespace MinecraftClone3API.Entities
 
             var breakSeconds = BreakSeconds(_blockRaytrace.Block, tool);
             if (breakSeconds < 0f) { _miningProgress = 0f; return; }   // unbreakable (bedrock)
+
+            // Loop the swing while actively mining.
+            if (!_swinging) Swing();
 
             if (breakSeconds <= 0f) _miningProgress = 1f;
             else _miningProgress += dt / breakSeconds;
@@ -368,21 +451,30 @@ namespace MinecraftClone3API.Entities
             if (item.UsableOnEntity)
             {
                 var entity = PickEntity(client);
-                if (entity != null) { client.SendUseItemOnEntity(entity.EntityId); return; }
+                if (entity != null) { client.SendUseItemOnEntity(entity.EntityId); Swing(); return; }
             }
 
-            if (_blockRaytrace == null) return;
-            var target = _blockRaytrace.BlockPos + _blockRaytrace.Face.GetNormali();
             var block = item.GetBlock();
             if (block != null)
             {
+                if (_blockRaytrace == null) return;
+                var target = _blockRaytrace.BlockPos + _blockRaytrace.Face.GetNormali();
                 world.PlaceBlock(PlayerEntity, target, block,
                     block.GetPlacementMetadata(PlayerEntity, _blockRaytrace));
+                Swing();
                 return;
             }
 
-            // Usable non-block items (a spawn egg) ask the server to act; other items do nothing.
-            if (item.IsUsable) client.SendUseItem(target);
+            // Usable non-block items ask the server to act. A spawn egg needs a targeted cell; a thrown item
+            // (ender pearl) doesn't (RequiresBlockTarget false), so it fires even aiming at the sky.
+            if (!item.IsUsable) return;
+            if (_blockRaytrace != null)
+                client.SendUseItem(_blockRaytrace.BlockPos + _blockRaytrace.Face.GetNormali());
+            else if (item.RequiresBlockTarget)
+                return;
+            else
+                client.SendUseItem(Vector3i.Zero);
+            Swing();
         }
 
         // The entity the player is aiming at within reach (and nearer than the targeted block, so you can't
