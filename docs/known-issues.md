@@ -26,11 +26,6 @@ relevant permanent doc. Not a changelog.
     (the CPU visible set is intentionally gone under GPU-driven culling — would need a count buffer map-back).
     The profiler CSV `gapMs` column is also 0 (the inter-frame gap timer wasn't carried onto the Silk loop).
     Gameplay/visuals are unaffected; `docs/profiling.md` documents the current 0 state.
-  - **16× anisotropic block-atlas filtering is dropped** — WebGPU forbids combining nearest-magnification (the
-    crisp pixel-art look) with hardware anisotropy, so the block sampler keeps trilinear mips but no aniso;
-    grazing-angle distant terrain is slightly blurrier than the GL build. Intrinsic platform trade-off. The
-    foliage **mip-dissolve seam** this used to mask is handled directly: the cutout (leaf) alpha test re-reads
-    the alpha one mip sharper (`WorldGeometry.wgsl`), so leaf coverage holds at distance without the seam.
   - **Deliberate, not defects** (don't "fix"): the `Gpu` static facade (global device access, single-threaded
     init) and the split where Core uses literal Silk types while Client/exe keep readability aliases
     (`Vector3`, `Matrix4`, …) — both documented in-code.

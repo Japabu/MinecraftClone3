@@ -5,15 +5,20 @@ namespace MinecraftClone3API.Graphics.Rhi
     /// <summary>
     /// The shared samplers. Built once after the device exists.
     ///
-    /// <para><b>Block atlas:</b> nearest magnification (crisp pixel-art — the Minecraft look) with trilinear
-    /// minification. WebGPU forbids combining nearest magnification with hardware anisotropy (anisotropy
-    /// requires all-linear filters), so hardware aniso is dropped here; the mip chain plus the foliage
-    /// anti-aliased alpha test carry minification quality. <b>Repeat</b> wrap, since block UVs tile per face.</para>
+    /// <para><b>Block atlas:</b> two samplers, picked per fragment by the world shader. WebGPU forbids combining
+    /// nearest magnification with hardware anisotropy (anisotropy requires all-linear filters) <i>in one
+    /// sampler</i> — but anisotropy only matters under <i>minification</i>, where nearest-vs-linear is moot, so
+    /// the split costs nothing visible: <see cref="Block"/> (nearest-mag, trilinear-min) keeps crisp pixel-art
+    /// up close, and <see cref="BlockAniso"/> (all-linear + 16× anisotropy) sharpens distant/grazing surfaces.
+    /// <b>Repeat</b> wrap, since block UVs tile per face.</para>
     /// </summary>
     public static class GpuSamplers
     {
-        /// <summary>Trilinear-min / nearest-mag, repeat — the block atlas arrays.</summary>
+        /// <summary>Trilinear-min / nearest-mag, repeat — crisp magnified block faces.</summary>
         public static GpuSampler Block { get; private set; }
+
+        /// <summary>All-linear + 16× anisotropy, repeat — minified (distant/grazing) block faces.</summary>
+        public static GpuSampler BlockAniso { get; private set; }
 
         /// <summary>Nearest, no mips, clamp — sampling the G-buffer / HDR offscreen attachments.</summary>
         public static GpuSampler Framebuffer { get; private set; }
@@ -31,6 +36,8 @@ namespace MinecraftClone3API.Graphics.Rhi
         {
             Block = new GpuSampler(FilterMode.Linear, FilterMode.Nearest, MipmapFilterMode.Linear,
                 AddressMode.Repeat, label: "block");
+            BlockAniso = new GpuSampler(FilterMode.Linear, FilterMode.Linear, MipmapFilterMode.Linear,
+                AddressMode.Repeat, maxAnisotropy: 16, label: "blockAniso");
             Framebuffer = new GpuSampler(FilterMode.Nearest, FilterMode.Nearest, MipmapFilterMode.Nearest,
                 AddressMode.ClampToEdge, label: "framebuffer");
             Gui = new GpuSampler(FilterMode.Nearest, FilterMode.Nearest, MipmapFilterMode.Nearest,
