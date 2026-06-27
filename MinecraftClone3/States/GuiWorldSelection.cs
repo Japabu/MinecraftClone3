@@ -98,10 +98,9 @@ namespace MinecraftClone3.States
 
         public override void Render()
         {
-            var width = (int) ScaledResolution.GuiResolution.X;
-            var height = (int) ScaledResolution.GuiResolution.Y;
-            GuiRenderer.DrawTexture(_background, new Rectangle(0, 0, width, height), null);
+            GuiRenderer.DrawCover(_background);
 
+            var width = (int) ScaledResolution.GuiResolution.X;
             var titleX = (width - Font.MeasureWidth(Title, TitleScale)) / 2;
             Font.DrawString(Title, titleX, 18, TitleScale, new Vector4D<float>(1f,1f,1f,1f));
 

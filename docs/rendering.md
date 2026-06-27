@@ -194,8 +194,9 @@ The dark, mostly-transparent crack texture `discard`s its empty texels.
 
 **Block-entity rendering.** Blocks flagged `Block.RendersAsBlockEntity` (chests) are **skipped by the chunk
 mesher** and drawn instead by `BlockEntityRenderer` in the overlay pass, as box models — the same Bedrock-geo
-pipeline as entities (`EntityRenderer.BuildModelFromPaths`/`DrawStaticParts`, reused via `internal` helpers and
-the shared `EntityRenderer.BindShader`). Each block type's model is built once in `LoadModels` (run alongside
+pipeline as entities (`EntityRenderer.BuildModelFromPaths`/`EnqueueStaticParts`, reused via `internal` helpers,
+each renderer owning its own `EntityRenderer.EntityDrawList` — the dynamic-offset `{model, light}` slot UBO over
+the shared entity pipeline). Each block type's model is built once in `LoadModels` (run alongside
 `EntityRenderer.LoadModels`, before the texture upload, so its `entity/*` texture lands in the arrays). At draw
 time it scans the **sparse** per-chunk block-data (`Chunk.BlockDataPositions`) of chunks within a few chunks of
 the camera, placing each instance in its cell and orienting it by the block's stored facing. The same prebuilt

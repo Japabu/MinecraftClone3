@@ -23,18 +23,9 @@ relevant permanent doc. Not a changelog.
     init) and the split where Core uses literal Silk types while Client/exe keep readability aliases
     (`Vector3`, `Matrix4`, …) — both documented in-code.
 
-- **Master content layered after the fork is not yet drawn under WebGPU.** The chest + held-item + ender-pearl
-  features were GL-only renderers on `master`; the merge keeps their **server/gameplay logic** (chest storage,
-  pearl flight + teleport, enderman stare AI) but their **client rendering was not ported**, so under WebGPU:
-  - **No first-person / body-attached held-item viewmodel** (`HeldItemRenderer`/`HeldItemMeshes`/`ItemDisplay`
-    were removed). The hand is empty on screen; benchmark frames therefore lack the lower-right item the GL
-    build shows.
-  - **The chest renders invisibly** (`RendersAsBlockEntity` is honoured — it's skipped in the chunk mesh — but
-    `BlockEntityRenderer` is gone) and **can't be opened** (`GuiChest` removed; `BlockChest.OnActivated` is a
-    no-op). Storage still works server-side and breaking it still drops contents.
-  - **Thrown ender pearls don't render** (the WebGPU `EntityRenderer` has no projectile billboard path).
-  - Porting these to the WebGPU entity/GUI pipelines is the follow-up; until then they are the main visual gap
-    vs the GL build.
+- **Entity hurt-flash is not ported to WebGPU.** Master tinted a damaged entity red for its hurt timer via a
+  per-draw `uTint` uniform; the WebGPU `EntityDraw` UBO carries only `{model, light}`, so a hit entity no
+  longer flashes. Add a tint to `EntityDraw` + `EntityGeometry.wgsl` to restore it.
 
 - **Benchmark screenshots omit the HUD.** `Screenshot` reads the HDR scene target, which is captured *before*
   `Renderer.EndFrame` tonemaps it to the surface and flushes the GUI (`GuiBatch`) over it — so the hotbar,

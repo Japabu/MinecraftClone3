@@ -45,9 +45,7 @@ namespace MinecraftClone3.States
 
         public override void Render()
         {
-            var screen = new Vector2D<int>(ClientResources.Width, ClientResources.Height);
-            GuiRenderer.DrawTexture(_background, new Rectangle(0, 0, screen.X, screen.Y), CoverSource(_background, screen),
-                false);
+            GuiRenderer.DrawCover(_background);
 
             var width = (int) ScaledResolution.GuiResolution.X;
             var height = (int) ScaledResolution.GuiResolution.Y;
@@ -55,26 +53,6 @@ namespace MinecraftClone3.States
             Font.DrawString(Title, titleX, height / 6, TitleScale, new Vector4D<float>(1f,1f,1f,1f));
 
             base.Render();
-        }
-
-        /// <summary>
-        /// A centered source rectangle that crops <paramref name="texture"/> to <paramref name="screen"/>'s
-        /// aspect ratio, so drawing it across the whole framebuffer fills the screen without distorting
-        /// the image (cover scaling).
-        /// </summary>
-        private static Rectangle CoverSource(Texture texture, Vector2D<int> screen)
-        {
-            var textureAspect = (float) texture.Width / texture.Height;
-            var screenAspect = (float) screen.X / screen.Y;
-
-            var width = texture.Width;
-            var height = texture.Height;
-            if (screenAspect > textureAspect)
-                height = (int) (texture.Width / screenAspect);
-            else
-                width = (int) (texture.Height * screenAspect);
-
-            return Rectangle.FromSize((texture.Width - width) / 2, (texture.Height - height) / 2, width, height);
         }
     }
 }

@@ -412,7 +412,10 @@ namespace MinecraftClone3API.Graphics
                 new ColorTargetDesc(colorFormats[1]),
                 new ColorTargetDesc(colorFormats[2]),
             };
-            var geoDepth = new DepthDesc(GBufferTargets.DepthFormat, true, CompareFunction.Greater);
+            // GreaterEqual (the reverse-Z equivalent of GL's Lequal): a coplanar face at exactly the same depth
+            // still draws, so a block model's overlay layer (e.g. the grass-side tinted overlay over its base)
+            // isn't depth-rejected — a strict Greater would drop it and lose the tint.
+            var geoDepth = new DepthDesc(GBufferTargets.DepthFormat, true, CompareFunction.GreaterEqual);
             // NOTE: if all terrain renders inside-out/invisible, flip FrontFace or CullMode — winding-convention check
             _geometryPipeline = new GpuRenderPipeline(_geometryPipeLayout, _geometryModule, "vs_main", "fs_main",
                 ChunkMeshArena.GeometryVertexLayout, opaqueTargets, geoDepth,
@@ -675,8 +678,11 @@ namespace MinecraftClone3API.Graphics
                 chunk.DrawTransparent(geomPass);
 
             EntityRenderer.Render(geomPass, world, camera);
+            BlockEntityRenderer.Render(geomPass, world, camera);
             PlayerController.Render(geomPass, camera);
             ChunkBorderRenderer.Render(geomPass, camera);
+            // Last: the first-person viewmodel compresses its depth band so it sits on top of the world.
+            HeldItemRenderer.Render(geomPass, world, camera);
 
             geomPass.End();
             geomPass.Release();

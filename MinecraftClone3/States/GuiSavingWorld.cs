@@ -37,7 +37,7 @@ namespace MinecraftClone3.States
 
         public override void Render()
         {
-            GuiRenderer.DrawTexture(_background, new Rectangle(0, 0, 960, 540), null);
+            GuiRenderer.DrawCover(_background);
 
             var width = (int) ScaledResolution.GuiResolution.X;
             var height = (int) ScaledResolution.GuiResolution.Y;

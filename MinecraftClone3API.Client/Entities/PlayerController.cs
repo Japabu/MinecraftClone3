@@ -355,7 +355,7 @@ namespace MinecraftClone3API.Entities
                     return;
                 }
             }
-            if (PlayerEntity.GameMode == GameMode.Creative) BreakBlock(world);
+            if (PlayerEntity.GameMode == GameMode.Creative) { BreakBlock(world); Swing(); }
         }
 
         /// <summary>Survival mining while left-click is held: accrues progress on the targeted block at the

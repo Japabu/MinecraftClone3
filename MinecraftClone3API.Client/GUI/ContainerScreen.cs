@@ -385,8 +385,10 @@ namespace MinecraftClone3API.Client.GUI
 
         public override void Render()
         {
+            // Full-screen dim, sized in framebuffer pixels (gui: false bypasses the GUI-space transform), so it
+            // covers the whole window regardless of the GUI scale/letterbox.
             GuiRenderer.DrawTexture(ClientResources.WhitePixel,
-                new Rectangle(0, 0, (int) ScaledResolution.GuiResolution.X, (int) ScaledResolution.GuiResolution.Y),
+                new Rectangle(0, 0, ClientResources.Width, ClientResources.Height),
                 null, new Vector4D<float>(0f, 0f, 0f, 0.4f), false);
 
             DrawBackground();

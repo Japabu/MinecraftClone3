@@ -109,10 +109,19 @@ namespace MinecraftClone3API.Graphics
         {
             EnsureLoaded();
 
-            var mesh = new MeshBuffer();
-            // The -0.5 origin offset re-centres the corner-origin [0,1] cell mesh on the origin (where the iso
-            // camera looks).
-            ChunkMesher.AddBlockToVao(IconWorld.Instance, Vector3i.Zero, 0, 0, 0, block, mesh, mesh, new Vector3(-0.5f));
+            MeshBuffer mesh;
+            if (block.RendersAsBlockEntity && block.BlockEntityModelPath != null)
+                // Block entities (chests) have no chunk-mesh cube; bake their box model at rest, lowered to sit
+                // centred in the icon frame (the model is authored centred on x/z with its feet at y=0).
+                mesh = EntityRenderer.BuildBlockEntityIconMesh(block.BlockEntityModelPath, block.BlockEntityTexturePath,
+                    Matrix4X4.CreateTranslation(0f, -0.45f, 0f));
+            else
+            {
+                mesh = new MeshBuffer();
+                // The -0.5 origin offset re-centres the corner-origin [0,1] cell mesh on the origin (where the iso
+                // camera looks).
+                ChunkMesher.AddBlockToVao(IconWorld.Instance, Vector3i.Zero, 0, 0, 0, block, mesh, mesh, new Vector3(-0.5f));
+            }
 
             var colorTex = new GpuTexture(Size, Size, ColorFormat,
                 TextureUsage.RenderAttachment | TextureUsage.TextureBinding, label: "itemIcon.color");

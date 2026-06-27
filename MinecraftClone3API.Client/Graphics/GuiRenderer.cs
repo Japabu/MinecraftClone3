@@ -1,3 +1,4 @@
+using MinecraftClone3API.Client;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.Util;
 
@@ -13,6 +14,23 @@ namespace MinecraftClone3API.Client.Graphics
     {
         public static void DrawTexture(Texture texture, Rectangle rect, Rectangle? uvRect, bool gui = true)
             => DrawTexture(texture, rect, uvRect, new Vector4(1f, 1f, 1f, 1f), gui);
+
+        /// <summary>Draws a texture across the whole framebuffer, cropping its source to the screen aspect
+        /// (cover-fit) so a full-screen background fills any window aspect without letterboxing or stretching.</summary>
+        public static void DrawCover(Texture texture)
+        {
+            int screenX = ClientResources.Width, screenY = ClientResources.Height;
+            var textureAspect = (float) texture.Width / texture.Height;
+            var screenAspect = (float) screenX / screenY;
+
+            var w = texture.Width;
+            var h = texture.Height;
+            if (screenAspect > textureAspect) h = (int) (texture.Width / screenAspect);
+            else w = (int) (texture.Height * screenAspect);
+
+            var src = Rectangle.FromSize((texture.Width - w) / 2, (texture.Height - h) / 2, w, h);
+            DrawTexture(texture, new Rectangle(0, 0, screenX, screenY), src, false);
+        }
 
         public static void DrawTexture(Texture texture, Rectangle rect, Rectangle? uvRect, Vector4 color, bool gui = true)
         {

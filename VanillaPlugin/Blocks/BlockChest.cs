@@ -1,5 +1,9 @@
 using System;
 using MinecraftClone3API.Blocks;
+using MinecraftClone3API.Client;
+using MinecraftClone3API.Client.Blocks;
+using MinecraftClone3API.Client.GUI;
+using MinecraftClone3API.Client.StateSystem;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
@@ -62,6 +66,13 @@ namespace VanillaPlugin.Blocks
             var centre = blockPos.ToVector3() + new Vector3D<float>(0.5f, 0.5f, 0.5f);
             foreach (var slot in data.Slots)
                 if (!slot.IsEmpty) world.DropItem(slot, centre);
+        }
+
+        public override bool OnActivated(WorldBase world, Vector3D<int> blockPos, EntityPlayer player)
+        {
+            if (!(world is WorldClient client)) return false;
+            StateEngine.AddOverlay(new GuiChest(client, blockPos));
+            return true;
         }
 
         private static BlockDataChest Data(WorldBase world, Vector3D<int> blockPos)

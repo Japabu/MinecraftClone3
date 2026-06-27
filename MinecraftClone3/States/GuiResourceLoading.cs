@@ -55,7 +55,7 @@ namespace MinecraftClone3.States
 
         public override void Render()
         {
-            GuiRenderer.DrawTexture(_background, new Rectangle(0, 0, 960, 540), null);
+            GuiRenderer.DrawCover(_background);
             GuiRenderer.DrawTexture(_progressBar, new Rectangle(100, 340, (int)ScaledResolution.GuiResolution.X - 100, 420), null);
             GuiRenderer.DrawTexture(_progressBarFull, Rectangle.FromSize(100, 340, 800 / 100 * _progress, 80), null);
 
@@ -121,6 +121,7 @@ namespace MinecraftClone3.States
             // constructors have run, but before the upload — LoadModels registers the entity sheet textures into
             // the same arrays, so they must be indexed before BlockTextureManager.Upload bakes them to the GPU.
             EntityRenderer.LoadModels();
+            BlockEntityRenderer.LoadModels();
 
             BlockTextureUploader.Upload();
 

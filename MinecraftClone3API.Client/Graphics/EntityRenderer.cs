@@ -46,7 +46,7 @@ namespace MinecraftClone3API.Graphics
 
         /// <summary>A part's GPU mesh: the five packed vertex streams + index buffer. Built from a CPU
         /// <see cref="MeshBuffer"/> once at load.</summary>
-        private sealed class PartMesh
+        internal sealed class PartMesh
         {
             private static readonly int[] AttribBytes = {12, 8, 4, 4, 4};
 
@@ -84,7 +84,7 @@ namespace MinecraftClone3API.Graphics
             }
         }
 
-        private class RenderModel
+        internal class RenderModel
         {
             public BlockTexture Texture;
             // Optional second layer drawn over this one with its own texture (the sheep's wool); suppressed when
@@ -99,6 +99,9 @@ namespace MinecraftClone3API.Graphics
         // Dropped-item meshes (the block's icon geometry), built lazily — block textures are already uploaded.
         private static readonly Dictionary<ushort, PartMesh> ItemMeshes = new Dictionary<ushort, PartMesh>();
 
+        // Projectile billboard-quad meshes, keyed by entity-type id, built lazily.
+        private static readonly Dictionary<ushort, PartMesh> ProjectileMeshes = new Dictionary<ushort, PartMesh>();
+
         private static readonly Stopwatch AnimClock = Stopwatch.StartNew();
 
         private static GpuShaderModule _module;
@@ -106,15 +109,80 @@ namespace MinecraftClone3API.Graphics
         private static GpuPipelineLayout _pipelineLayout;
         private static GpuRenderPipeline _pipeline;
 
-        // The dynamic-offset slot UBO + its bind group, grown as the per-frame draw count rises. The group-2
-        // atlas bind group is (re)built when the texture arrays change reference (after a texture re-upload).
-        private static GpuBuffer _drawUbo;
-        private static GpuBindGroup _drawBind;
+        // The group-2 atlas bind group is (re)built when the texture arrays change reference (after a re-upload).
         private static GpuBindGroup _atlasBind;
         private static GpuTexture[] _atlasArrays;
 
-        private static readonly List<EntityDraw> _draws = new List<EntityDraw>(256);
-        private static readonly List<(PartMesh Mesh, int Slot)> _queue = new List<(PartMesh, int)>(256);
+        // Entities' own per-frame draw list. The block-entity renderer and the held-item viewmodel each own a
+        // separate <see cref="EntityDrawList"/>, all sharing this class's pipeline + atlas bind.
+        private static readonly EntityDrawList _list = new EntityDrawList("entity");
+
+        /// <summary>A reusable per-frame list of box-model part draws sharing the entity pipeline + atlas. Each
+        /// part writes one 256-byte-aligned <see cref="EntityDraw"/> slot into a growing UBO, then binds group 1
+        /// at the slot offset to draw. <see cref="EntityRenderer"/>, the block-entity renderer, and the held-item
+        /// viewmodel each own one.</summary>
+        internal sealed class EntityDrawList
+        {
+            private readonly string _label;
+            private readonly List<EntityDraw> _draws = new List<EntityDraw>(64);
+            private readonly List<(PartMesh Mesh, int Slot)> _queue = new List<(PartMesh, int)>(64);
+            private GpuBuffer _drawUbo;
+            private GpuBindGroup _drawBind;
+
+            public EntityDrawList(string label) => _label = label;
+
+            public int Count => _queue.Count;
+
+            public void Clear()
+            {
+                _draws.Clear();
+                _queue.Clear();
+            }
+
+            public void Enqueue(PartMesh mesh, Matrix4 model, Vector4 light)
+            {
+                _queue.Add((mesh, _draws.Count));
+                _draws.Add(new EntityDraw {Model = MatrixConvert.ToGpu(model), Light = light});
+            }
+
+            public void Flush(RenderPass pass)
+            {
+                if (_queue.Count == 0 || _pipeline == null) return;
+
+                UploadDraws();
+                EnsureAtlasBind();
+
+                pass.SetPipeline(_pipeline);
+                pass.SetBindGroup(0, Renderer.FrameBindGroup);
+                pass.SetBindGroup(2, _atlasBind);
+
+                foreach (var (mesh, slot) in _queue)
+                {
+                    pass.SetBindGroup(1, _drawBind, stackalloc uint[] {(uint) (slot * SlotAlign)});
+                    mesh.Draw(pass);
+                }
+            }
+
+            private void UploadDraws()
+            {
+                var needed = (ulong) (_draws.Count * SlotAlign);
+                if (_drawUbo == null || _drawUbo.Size < needed)
+                {
+                    _drawUbo?.Dispose();
+                    _drawBind?.Dispose();
+                    var size = (ulong) SlotAlign;
+                    while (size < needed) size *= 2;
+                    _drawUbo = new GpuBuffer(size, BufferUsage.Uniform | BufferUsage.CopyDst, _label + ".draws");
+                    _drawBind = new GpuBindGroup(_entityLayout, new[]
+                    {
+                        GpuBindGroup.Buffer(0, _drawUbo, 0, (ulong) Marshal.SizeOf<EntityDraw>()),
+                    }, _label + ".draws");
+                }
+
+                for (var i = 0; i < _draws.Count; i++)
+                    _drawUbo.QueueWriteStruct(_draws[i], (ulong) (i * SlotAlign));
+            }
+        }
 
         /// <summary>Builds the entity pipeline. The per-type GPU models are built later in <see cref="LoadModels"/>,
         /// once entity types are registered.</summary>
@@ -183,7 +251,19 @@ namespace MinecraftClone3API.Graphics
         private static TextureData ReadData(string resolved) =>
             resolved == null ? null : ResourceReader.ReadTextureData(resolved);
 
-        private static RenderModel BuildModel(EntityModel model, BlockTexture texture, TextureData data)
+        /// <summary>Builds a box model from a Bedrock model + texture path, with the block-entity UV unwrap
+        /// (top/bottom not flipped). Used by the block-entity renderer (chests) and the held-item viewmodel.</summary>
+        internal static RenderModel BuildModelFromPaths(string modelPath, string texturePath)
+        {
+            var texture = ResourceReader.ReadBlockTexture(texturePath);
+            return BuildModel(LoadModel(modelPath), texture, ReadData(ResolvePath(texturePath)), flipUv: false);
+        }
+
+        // flipUv mirrors the up/down face V the way the living-entity sheets are unwrapped (so a body laid flat by
+        // a baked pitch shows its underside the right way up). Block entities (chests) author the opposite unwrap,
+        // so they pass flipUv: false.
+        private static RenderModel BuildModel(EntityModel model, BlockTexture texture, TextureData data,
+            bool flipUv = true)
         {
             var render = new RenderModel {Texture = texture};
             var layerSize = BlockTextureManager.Sizes[texture.ArrayId];
@@ -194,7 +274,7 @@ namespace MinecraftClone3API.Graphics
             {
                 var mesh = new MeshBuffer();
                 foreach (var box in part.Boxes)
-                    AddBox(mesh, box, texture, layerSize);
+                    AddBox(mesh, box, texture, layerSize, flipUv);
                 render.Parts.Add((part, new PartMesh(mesh)));
                 mesh.Clear();
             }
@@ -250,8 +330,7 @@ namespace MinecraftClone3API.Graphics
             if (world.Entities.Count == 0 && !drawSelf) return;
             if (_pipeline == null) return;
 
-            _draws.Clear();
-            _queue.Clear();
+            _list.Clear();
 
             foreach (var entity in world.Entities.Values)
             {
@@ -261,27 +340,21 @@ namespace MinecraftClone3API.Graphics
                     QueueItem((EntityItem) entity, world);
                 else if (entity.Type.Kind == EntityKind.FallingBlock)
                     QueueFallingBlock((EntityFallingBlock) entity, world);
+                else if (entity.Type.Kind == EntityKind.Projectile)
+                    QueueProjectile(entity, world, camera);
                 else if (CreatureModels.TryGetValue(entity.Type.Id, out var model))
                     QueueModel(model, entity, world);
             }
 
             if (drawSelf)
-                QueueModel(_playerModel, PlayerController.PlayerEntity, world);
-
-            if (_queue.Count == 0) return;
-
-            UploadDraws();
-            EnsureAtlasBind();
-
-            pass.SetPipeline(_pipeline);
-            pass.SetBindGroup(0, Renderer.FrameBindGroup);
-            pass.SetBindGroup(2, _atlasBind);
-
-            foreach (var (mesh, slot) in _queue)
             {
-                pass.SetBindGroup(1, _drawBind, stackalloc uint[] {(uint) (slot * SlotAlign)});
-                mesh.Draw(pass);
+                // The local player isn't network-synced to itself, so fill its held item from the live inventory
+                // so the third-person view shows what's selected.
+                PlayerController.PlayerEntity.HeldItemId = (ushort) world.Inventory.SelectedItem.ItemId;
+                QueueModel(_playerModel, PlayerController.PlayerEntity, world);
             }
+
+            _list.Flush(pass);
         }
 
         private static void QueueModel(RenderModel model, Entity entity, WorldClient world)
@@ -300,36 +373,128 @@ namespace MinecraftClone3API.Graphics
             // entity's data (e.g. a sheared sheep) can hide it.
             if (model.Overlay != null && (entity.Data?.OverlayVisible ?? true))
                 QueueParts(model.Overlay, entity, root, light);
+
+            // Players carry the main-hand item off the right arm so it swings with the body and other clients
+            // (and the third-person self) see what's held.
+            if (model == _playerModel) QueueHeldItem(entity, root, light);
         }
 
         private static void QueueParts(RenderModel model, Entity entity, Matrix4 root, Vector4 light)
         {
             foreach (var (part, mesh) in model.Parts)
+                _list.Enqueue(mesh, PartMatrix(part, entity, root), light);
+        }
+
+        private static Matrix4 PartMatrix(ModelPart part, Entity entity, Matrix4 root)
+        {
+            var rotation = part.Rotation + PartRotation(part.Name, entity);
+            return Matrix4X4.CreateRotationX(rotation.X) * Matrix4X4.CreateRotationY(rotation.Y) *
+                   Matrix4X4.CreateRotationZ(rotation.Z) *
+                   Matrix4X4.CreateTranslation(part.Pivot) * root;
+        }
+
+        // Local transforms (in the right-arm bone's space, origin at the shoulder, arm hanging to ≈y=-0.62) that
+        // seat a held item in the fist. Hand-tuned against a visual check.
+        private static readonly Matrix4 HeldBlockArm =
+            Matrix4X4.CreateScale(0.45f) * Matrix4X4.CreateTranslation(0f, -0.55f, 0.05f);
+        private static readonly Matrix4 HeldFlatArm =
+            Matrix4X4.CreateScale(0.70f) *
+            Matrix4X4.CreateRotationX(Scalar.DegreesToRadians(-90f)) *
+            Matrix4X4.CreateRotationZ(Scalar.DegreesToRadians(180f)) *
+            Matrix4X4.CreateTranslation(0f, -0.60f, 0.10f);
+
+        // Hangs the entity's main-hand item off the right-arm bone (arm0) so it follows the arm's walk swing.
+        // Blocks use their 3D icon mesh, flat items their extruded sprite, block entities their box model.
+        private static void QueueHeldItem(Entity entity, Matrix4 root, Vector4 light)
+        {
+            if (entity.HeldItemId == 0) return;
+            var item = GameRegistry.GetItem(entity.HeldItemId);
+            if (item == null) return;
+
+            ModelPart arm = null;
+            foreach (var (part, _) in _playerModel.Parts)
+                if (part.Name == "arm0") { arm = part; break; }
+            if (arm == null) return;
+            var armMatrix = PartMatrix(arm, entity, root);
+
+            var block = item.GetBlock();
+            if (block != null && block.RendersAsBlockEntity &&
+                BlockEntityRenderer.GetModel(block.Id) is RenderModel beModel)
             {
-                var rotation = part.Rotation + PartRotation(part.Name, entity);
-                var matrix = Matrix4X4.CreateRotationX(rotation.X) * Matrix4X4.CreateRotationY(rotation.Y) *
-                             Matrix4X4.CreateRotationZ(rotation.Z) *
+                EnqueueStaticParts(_list, beModel, HeldBlockArm * armMatrix, light);
+                return;
+            }
+
+            var mesh = block != null ? GetItemMesh(block.Id) : HeldItemMeshes.Get(item);
+            if (mesh == null) return;
+            _list.Enqueue(mesh, (block != null ? HeldBlockArm : HeldFlatArm) * armMatrix, light);
+        }
+
+        /// <summary>Enqueues a box model's parts at rest (no walk animation) onto <paramref name="list"/>, placed
+        /// by <paramref name="root"/>. Used for static block entities and the held-item box-model viewmodel.</summary>
+        internal static void EnqueueStaticParts(EntityDrawList list, RenderModel model, Matrix4 root, Vector4 light)
+        {
+            foreach (var (part, mesh) in model.Parts)
+            {
+                var matrix = Matrix4X4.CreateRotationX(part.Rotation.X) * Matrix4X4.CreateRotationY(part.Rotation.Y) *
+                             Matrix4X4.CreateRotationZ(part.Rotation.Z) *
                              Matrix4X4.CreateTranslation(part.Pivot) * root;
-                Enqueue(mesh, matrix, light);
+                list.Enqueue(mesh, matrix, light);
             }
         }
 
+        // A dropped item hovers, bobs and spins. A normal block uses its 3D icon mesh, a block entity (chest) its
+        // box model, and a flat item its extruded sprite.
         private static void QueueItem(EntityItem item, WorldClient world)
         {
             if (item.Stack.IsEmpty) return;
-            var block = item.Stack.Item?.GetBlock();
-            if (block == null) return;
-            var mesh = GetItemMesh(block.Id);
-            if (mesh == null) return;
+            var stackItem = item.Stack.Item;
+            if (stackItem == null) return;
+            var block = stackItem.GetBlock();
 
             var pos = item.RenderPosition;
             var light = SampleLight(world, pos + new Vector3(0, 0.25f, 0));
-
             var t = (float) AnimClock.Elapsed.TotalSeconds;
             var bob = 0.1f + 0.05f * MathF.Sin(t * 3f);
-            var matrix = Matrix4X4.CreateScale(0.4f) * Matrix4X4.CreateRotationY(t * 2f) *
-                         Matrix4X4.CreateTranslation(pos + new Vector3(0, 0.25f + bob, 0));
-            Enqueue(mesh, matrix, light);
+            var centre = pos + new Vector3(0, 0.25f + bob, 0);
+            var spin = Matrix4X4.CreateRotationY(t * 2f) * Matrix4X4.CreateTranslation(centre);
+
+            if (block != null && block.RendersAsBlockEntity &&
+                BlockEntityRenderer.GetModel(block.Id) is RenderModel beModel)
+            {
+                // Centre the box (feet at y=0, height 14/16) on the origin before scaling/spinning it.
+                EnqueueStaticParts(_list, beModel,
+                    Matrix4X4.CreateTranslation(0f, -0.4375f, 0f) * Matrix4X4.CreateScale(0.4f) * spin, light);
+                return;
+            }
+
+            PartMesh mesh;
+            float scale;
+            if (block != null) { mesh = GetItemMesh(block.Id); scale = 0.4f; }
+            else { mesh = HeldItemMeshes.Get(stackItem); scale = 0.5f; }
+            if (mesh == null) return;
+            _list.Enqueue(mesh, Matrix4X4.CreateScale(scale) * spin, light);
+        }
+
+        // A thrown projectile (the ender pearl) renders as a camera-facing billboard quad of its item sprite.
+        private static void QueueProjectile(Entity entity, WorldClient world, Camera camera)
+        {
+            var mesh = GetProjectileMesh(entity.Type);
+            if (mesh == null) return;
+
+            var pos = entity.RenderPosition;
+            var light = SampleLight(world, pos);
+
+            // Map the quad's local axes onto the camera basis (right, up, toward-camera) so it faces the viewer.
+            var right = camera.Right;
+            var up = Vector3D.Cross(camera.Right, camera.Forward);
+            var toCam = -camera.Forward;
+            var billboard = new Matrix4(
+                right.X, right.Y, right.Z, 0f,
+                up.X, up.Y, up.Z, 0f,
+                toCam.X, toCam.Y, toCam.Z, 0f,
+                0f, 0f, 0f, 1f);
+            _list.Enqueue(mesh, billboard * Matrix4X4.CreateTranslation(pos), light);
         }
 
         private static void QueueFallingBlock(EntityFallingBlock falling, WorldClient world)
@@ -343,36 +508,27 @@ namespace MinecraftClone3API.Graphics
             var centre = pos + new Vector3(0, 0.5f, 0);
             var light = SampleLight(world, centre);
 
-            Enqueue(mesh, Matrix4X4.CreateTranslation(centre), light);
+            _list.Enqueue(mesh, Matrix4X4.CreateTranslation(centre), light);
         }
 
-        private static void Enqueue(PartMesh mesh, Matrix4 model, Vector4 light)
+        // A projectile's billboard quad (one quad in the local XY plane, the sprite filling its whole array
+        // layer), built lazily and cached. Uses only the registered BlockTexture (which resolves the texture
+        // namespace), so it works for a "minecraft:item/…" location without reading the source pixels.
+        private static PartMesh GetProjectileMesh(EntityType type)
         {
-            _queue.Add((mesh, _draws.Count));
-            _draws.Add(new EntityDraw {Model = MatrixConvert.ToGpu(model), Light = light});
-        }
+            if (ProjectileMeshes.TryGetValue(type.Id, out var mesh)) return mesh;
 
-        private static void UploadDraws()
-        {
-            var needed = (ulong) (_draws.Count * SlotAlign);
-            if (_drawUbo == null || _drawUbo.Size < needed)
-            {
-                _drawUbo?.Dispose();
-                _drawBind?.Dispose();
-                var size = (ulong) SlotAlign;
-                while (size < needed) size *= 2;
-                _drawUbo = new GpuBuffer(size, BufferUsage.Uniform | BufferUsage.CopyDst, "entityDraws");
-                _drawBind = new GpuBindGroup(_entityLayout, new[]
-                {
-                    GpuBindGroup.Buffer(0, _drawUbo, 0, (ulong) Marshal.SizeOf<EntityDraw>()),
-                }, "entityDraws");
-            }
-
-            for (var i = 0; i < _draws.Count; i++)
-            {
-                var draw = _draws[i];
-                _drawUbo.QueueWriteStruct(draw, (ulong) (i * SlotAlign));
-            }
+            var tex = ResourceReader.ReadBlockTexture(type.TexturePath);
+            var size = BlockTextureManager.Sizes[tex.ArrayId];
+            const float r = 0.125f;   // half-extent → a 0.25-block sprite
+            var buffer = new MeshBuffer();
+            Quad(buffer, tex, size, new Vector3(0, 0, 1),
+                new Vector3(-r, r, 0), new Vector3(r, r, 0), new Vector3(-r, -r, 0), new Vector3(r, -r, 0),
+                0, 0, size, size);
+            mesh = buffer.IndicesCount > 0 ? new PartMesh(buffer) : null;
+            buffer.Clear();
+            ProjectileMeshes[type.Id] = mesh;
+            return mesh;
         }
 
         private static void EnsureAtlasBind()
@@ -398,7 +554,7 @@ namespace MinecraftClone3API.Graphics
             }, "entityAtlas");
         }
 
-        private static PartMesh GetItemMesh(ushort blockId)
+        internal static PartMesh GetItemMesh(ushort blockId)
         {
             if (ItemMeshes.TryGetValue(blockId, out var mesh)) return mesh;
 
@@ -446,7 +602,7 @@ namespace MinecraftClone3API.Graphics
             return Vector3.Zero;
         }
 
-        private static Vector4 SampleLight(WorldClient world, Vector3 worldPos)
+        internal static Vector4 SampleLight(WorldClient world, Vector3 worldPos)
         {
             var bp = new Vector3i(BlockCoord(worldPos.X), BlockCoord(worldPos.Y), BlockCoord(worldPos.Z));
             var rgb = world.GetBlockLightLevel(bp).Vector3;
@@ -462,7 +618,8 @@ namespace MinecraftClone3API.Graphics
 
         // Builds the six textured quads of one box into the mesh. Box coords are in blocks (relative to the part
         // pivot); UVs come from the classic Minecraft box-unwrap, normalized by the texture array's layer size.
-        private static void AddBox(MeshBuffer mesh, ModelBox box, BlockTexture tex, int layerSize)
+        private static void AddBox(MeshBuffer mesh, ModelBox box, BlockTexture tex, int layerSize, bool flipUv,
+            Matrix4? transform = null)
         {
             // Box pixel dimensions (1 block = 16 texels) drive the unwrap rectangle widths — from the base
             // (un-inflated) size so an overlay box still maps its base texture region.
@@ -479,36 +636,52 @@ namespace MinecraftClone3API.Graphics
             Quad(mesh, tex, layerSize, new Vector3(-1, 0, 0),
                 new Vector3(f.X, t.Y, t.Z), new Vector3(f.X, t.Y, f.Z),
                 new Vector3(f.X, f.Y, t.Z), new Vector3(f.X, f.Y, f.Z),
-                u, v + sz, u + sz, v + sz + sy);
+                u, v + sz, u + sz, v + sz + sy, transform);
             Quad(mesh, tex, layerSize, new Vector3(1, 0, 0),
                 new Vector3(t.X, t.Y, f.Z), new Vector3(t.X, t.Y, t.Z),
                 new Vector3(t.X, f.Y, f.Z), new Vector3(t.X, f.Y, t.Z),
-                u + sz + sx, v + sz, u + 2 * sz + sx, v + sz + sy);
+                u + sz + sx, v + sz, u + 2 * sz + sx, v + sz + sy, transform);
             // Front (+Z) and Back (-Z)
             Quad(mesh, tex, layerSize, new Vector3(0, 0, 1),
                 new Vector3(t.X, t.Y, t.Z), new Vector3(f.X, t.Y, t.Z),
                 new Vector3(t.X, f.Y, t.Z), new Vector3(f.X, f.Y, t.Z),
-                u + sz, v + sz, u + sz + sx, v + sz + sy);
+                u + sz, v + sz, u + sz + sx, v + sz + sy, transform);
             Quad(mesh, tex, layerSize, new Vector3(0, 0, -1),
                 new Vector3(f.X, t.Y, f.Z), new Vector3(t.X, t.Y, f.Z),
                 new Vector3(f.X, f.Y, f.Z), new Vector3(t.X, f.Y, f.Z),
-                u + 2 * sz + sx, v + sz, u + 2 * sz + 2 * sx, v + sz + sy);
+                u + 2 * sz + sx, v + sz, u + 2 * sz + 2 * sx, v + sz + sy, transform);
             // Top (+Y) and Bottom (-Y). Minecraft's box-unwrap mirrors the down face vertically relative to the
-            // up face, so the bottom quad's V runs the opposite way (v+sz→v) — without it a body laid horizontal
-            // by a baked pitch shows its underside texture upside-down.
+            // up face. The living-entity sheets (flipUv) expect the up/down V swapped so a body laid horizontal by
+            // a baked pitch shows its underside the right way up; block-entity sheets (chests) author the opposite
+            // unwrap, so they keep the un-swapped layout.
+            int tU0 = u + sz, tV0 = v, tU1 = u + sz + sx, tV1 = v + sz;
+            int bU0 = u + sz + sx, bV0 = v + sz, bU1 = u + sz + 2 * sx, bV1 = v;
+            if (!flipUv)
+                (tU0, tV0, tU1, tV1, bU0, bV0, bU1, bV1) = (bU0, bV0, bU1, bV1, tU0, tV0, tU1, tV1);
             Quad(mesh, tex, layerSize, new Vector3(0, 1, 0),
                 new Vector3(t.X, t.Y, f.Z), new Vector3(f.X, t.Y, f.Z),
                 new Vector3(t.X, t.Y, t.Z), new Vector3(f.X, t.Y, t.Z),
-                u + sz, v, u + sz + sx, v + sz);
+                tU0, tV0, tU1, tV1, transform);
             Quad(mesh, tex, layerSize, new Vector3(0, -1, 0),
                 new Vector3(t.X, f.Y, t.Z), new Vector3(f.X, f.Y, t.Z),
                 new Vector3(t.X, f.Y, f.Z), new Vector3(f.X, f.Y, f.Z),
-                u + sz + sx, v + sz, u + sz + 2 * sx, v);
+                bU0, bV0, bU1, bV1, transform);
         }
 
-        private static void Quad(MeshBuffer mesh, BlockTexture tex, int layerSize, Vector3 normal,
-            Vector3 tl, Vector3 tr, Vector3 bl, Vector3 br, int u0, int v0, int u1, int v1)
+        internal static void Quad(MeshBuffer mesh, BlockTexture tex, int layerSize, Vector3 normal,
+            Vector3 tl, Vector3 tr, Vector3 bl, Vector3 br, int u0, int v0, int u1, int v1,
+            Matrix4? transform = null)
         {
+            if (transform.HasValue)
+            {
+                var m = transform.Value;
+                tl = Vector3D.Transform(tl, m);
+                tr = Vector3D.Transform(tr, m);
+                bl = Vector3D.Transform(bl, m);
+                br = Vector3D.Transform(br, m);
+                normal = Vector3D.Normalize(Vector3D.TransformNormal(normal, m));
+            }
+
             var baseVertex = mesh.VertexCount;
             var n = new Vector4(normal.X, normal.Y, normal.Z, 0);
             var white = new Vector3(1);
@@ -517,6 +690,27 @@ namespace MinecraftClone3API.Graphics
             mesh.Add(bl, TexCoord(tex, layerSize, u0, v1), n, white, Vector4.Zero);
             mesh.Add(br, TexCoord(tex, layerSize, u1, v1), n, white, Vector4.Zero);
             mesh.AddFace(baseVertex, false, Vector3.Zero);
+        }
+
+        /// <summary>Builds a single origin-centred mesh of a block-entity model posed at rest, for the inventory
+        /// icon (which draws one mesh with a baked iso camera, no per-part transform). <paramref name="centre"/>
+        /// lowers the box so it sits centred in the icon frame.</summary>
+        internal static MeshBuffer BuildBlockEntityIconMesh(string modelPath, string texturePath, Matrix4 centre)
+        {
+            var texture = ResourceReader.ReadBlockTexture(texturePath);
+            var model = LoadModel(modelPath);
+            var layerSize = BlockTextureManager.Sizes[texture.ArrayId];
+
+            var mesh = new MeshBuffer();
+            foreach (var part in model.Parts)
+            {
+                var m = Matrix4X4.CreateRotationX(part.Rotation.X) * Matrix4X4.CreateRotationY(part.Rotation.Y) *
+                        Matrix4X4.CreateRotationZ(part.Rotation.Z) *
+                        Matrix4X4.CreateTranslation(part.Pivot) * centre;
+                foreach (var box in part.Boxes)
+                    AddBox(mesh, box, texture, layerSize, false, m);
+            }
+            return mesh;
         }
 
         private static Vector4 TexCoord(BlockTexture tex, int layerSize, int u, int v)
