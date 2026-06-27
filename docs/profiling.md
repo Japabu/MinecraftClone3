@@ -37,6 +37,13 @@ F4 chunk borders are the one exception (kept on `ChunkBorderRenderer.Enabled`).
     `srvStageQ/applyQ/renderReadyQ/disposeQ` — pipeline queue depths, so a balloon localizes *which* stage is
     the wall.
 
+  > ⚠️ **WebGPU state:** the GPU-side columns currently read **0** — `gpuMs`/`shadowMs`/`geomMs`/`compMs` (the
+  > WebGPU timestamp-query port, `timestampWrites`, is deferred — `GpuTimers` is a no-op), the `chunks drawn` /
+  > `lod drawn` numerators (the GPU cull compute owns the post-cull count; no CPU readback — the CPU visible set
+  > is intentionally gone under GPU-driven culling), and `gapMs` (not carried onto the Silk frame loop). The CPU
+  > columns (`frameMs`/`updateMs`/`renderMs`/`swapMs`≈present) and the denominators are live. The rest of this
+  > section describes the intended design (and the GL build's behaviour).
+
   Reading the timers: `frameMs` is the real frame interval (catches drops); `updateMs`/`renderMs` are CPU
   work. The four stalls a CPU sampler can't see: `swapMs` = the `SwapBuffers` call; `gapMs` = OpenTK's
   between-frame `NewInputFrame`+`ProcessWindowEvents` (where an **async/vsync present surfaces on

@@ -14,6 +14,7 @@ struct Frame {
 struct EntityDraw {
     model: mat4x4<f32>,
     light: vec4<f32>,   // flat block+sky light for the whole entity
+    tint: vec4<f32>,    // diffuse multiplier (white normally, red while the entity's hurt timer runs)
 };
 @group(1) @binding(0) var<uniform> entity: EntityDraw;
 
@@ -86,7 +87,7 @@ fn fs_main(i: VsOut) -> GBuffer {
     if (texColor.a < 0.5) { discard; }
 
     var o: GBuffer;
-    o.diffuse = vec4<f32>(texColor.rgb * i.color, 1.0);
+    o.diffuse = vec4<f32>(texColor.rgb * i.color * entity.tint.rgb, 1.0);
     o.normal = i.normal * 0.5 + 0.5;
     o.light = entity.light;
     return o;

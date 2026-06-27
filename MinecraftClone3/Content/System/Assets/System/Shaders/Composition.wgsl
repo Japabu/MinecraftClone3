@@ -41,8 +41,10 @@
 //    300      4   uSkyDistance       : f32
 //    304      4   uFogStart          : f32
 //    308      4   uFogEnd            : f32
-//    312      8   _pad0              : vec2<f32>   (round the struct up to a 16-byte multiple: 320)
-//   total size = 320 bytes
+//    312      8   _pad0              : vec2<f32>
+//    320     12   uUnderwaterColor   : vec3<f32>
+//    332      4   uUnderwater        : f32
+//   total size = 336 bytes
 // ---------------------------------------------------------------------------------------------------------
 struct CompositionParams {
     uViewProjectionInv: mat4x4<f32>,
@@ -72,6 +74,8 @@ struct CompositionParams {
     uFogStart: f32,
     uFogEnd: f32,
     _pad0: vec2<f32>,
+    uUnderwaterColor: vec3<f32>,
+    uUnderwater: f32,
 };
 @group(0) @binding(0) var<uniform> params: CompositionParams;
 
@@ -270,6 +274,14 @@ fn ApplyFog(color: vec3<f32>, viewDepth: f32) -> vec3<f32> {
     return mix(color, params.uHorizonColor, fog * fog);
 }
 
+// Underwater murk: when the camera's eye is inside a liquid block (uUnderwater = 1) the whole scene and the sky
+// fog into uUnderwaterColor over a short distance (dense water), keeping a slight permanent tint near the
+// camera. uUnderwaterColor is already dimmed by the daylight on the CPU side. Minecraft's "you're underwater" look.
+fn ApplyUnderwater(color: vec3<f32>, viewDepth: f32) -> vec3<f32> {
+    let fog = max(clamp((viewDepth - 0.5) / (24.0 - 0.5), 0.0, 1.0), 0.12);
+    return mix(color, params.uUnderwaterColor, fog);
+}
+
 struct ColorResult {
     color: vec4<f32>,
     discard_: bool,
@@ -375,7 +387,9 @@ fn fs_main(i: VsOut) -> @location(0) vec4<f32> {
         // ray direction is too, with no dependence on a separately-supplied camera position.
         let nearP = PositionFromDepth(i.uv, 1.0);
         let farP = PositionFromDepth(i.uv, 0.5);
-        return vec4<f32>(SkyColor(normalize(farP - nearP)), 1.0);
+        var sky = SkyColor(normalize(farP - nearP));
+        if (params.uUnderwater > 0.5) { sky = ApplyUnderwater(sky, params.uSkyDistance); }
+        return vec4<f32>(sky, 1.0);
     }
 
     let worldPos = PositionFromDepth(i.uv, depthRaw);
@@ -384,6 +398,9 @@ fn fs_main(i: VsOut) -> @location(0) vec4<f32> {
     let res = GetColor(i.uv, worldPos, viewDepth);
     if (res.discard_) {
         discard;
+    }
+    if (params.uUnderwater > 0.5) {
+        return vec4<f32>(ApplyUnderwater(res.color.rgb, viewDepth), res.color.a);
     }
     return res.color;
 }

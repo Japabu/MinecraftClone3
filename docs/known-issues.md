@@ -19,13 +19,19 @@ relevant permanent doc. Not a changelog.
     `GpuBuffer` upload still run on the main thread; the WebGPU queue is thread-safe, so moving meshing→upload
     onto the mesh pool is the remaining performance level-up. `docs/threading.md` Invariants 1 & 2 still
     describe the main-thread model.
+  - **GPU pass timing + GPU-culled draw counts read 0 (dev tooling, migration level-up M7 deferred).**
+    `GpuTimers` is a no-op, so the F3 `gpu … ms` field and the profiler/benchmark `gpuMs`/`shadowMs`/`geomMs`/
+    `compMs` columns are 0 (needs WebGPU timestamp-query `timestampWrites`, feature-gated). The F3 `chunks drawn`
+    / `lod drawn` numerators are 0 because the GPU cull compute owns the post-cull count with no CPU readback
+    (the CPU visible set is intentionally gone under GPU-driven culling — would need a count buffer map-back).
+    The profiler CSV `gapMs` column is also 0 (the inter-frame gap timer wasn't carried onto the Silk loop).
+    Gameplay/visuals are unaffected; `docs/profiling.md` documents the current 0 state.
+  - **16× anisotropic block-atlas filtering is dropped** — WebGPU forbids combining nearest-magnification (the
+    crisp pixel-art look) with hardware anisotropy, so the block sampler keeps trilinear mips but no aniso;
+    grazing-angle distant terrain is slightly blurrier than the GL build. Intrinsic platform trade-off.
   - **Deliberate, not defects** (don't "fix"): the `Gpu` static facade (global device access, single-threaded
     init) and the split where Core uses literal Silk types while Client/exe keep readability aliases
     (`Vector3`, `Matrix4`, …) — both documented in-code.
-
-- **Entity hurt-flash is not ported to WebGPU.** Master tinted a damaged entity red for its hurt timer via a
-  per-draw `uTint` uniform; the WebGPU `EntityDraw` UBO carries only `{model, light}`, so a hit entity no
-  longer flashes. Add a tint to `EntityDraw` + `EntityGeometry.wgsl` to restore it.
 
 - **Benchmark screenshots omit the HUD.** `Screenshot` reads the HDR scene target, which is captured *before*
   `Renderer.EndFrame` tonemaps it to the surface and flushes the GUI (`GuiBatch`) over it — so the hotbar,

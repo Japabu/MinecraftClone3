@@ -331,6 +331,7 @@ namespace MinecraftClone3API.Graphics
             public Vector3 SunsetColor; public float SkyDistance;
             public float FogStart; public float FogEnd;
             public float Pad0; public float Pad1;
+            public Vector3 UnderwaterColor; public float Underwater;
         }
 
         private static GpuShaderModule _geometryModule;
@@ -901,6 +902,8 @@ namespace MinecraftClone3API.Graphics
                 SkyDistance = horizonDistance + 48f,
                 FogStart = horizonDistance * 0.72f,
                 FogEnd = horizonDistance * 0.97f,
+                Underwater = _underwater ? 1f : 0f,
+                UnderwaterColor = _underwaterColor,
             });
 
             if (_compositionTexBind == null)

@@ -39,6 +39,7 @@ namespace MinecraftClone3API.Graphics
         {
             public Mat4 Model;
             public Vector4 Light;
+            public Vector4 Tint;
         }
 
         // wgpu requires a dynamic-offset UBO's bound slots be aligned to 256 bytes.
@@ -139,10 +140,12 @@ namespace MinecraftClone3API.Graphics
                 _queue.Clear();
             }
 
-            public void Enqueue(PartMesh mesh, Matrix4 model, Vector4 light)
+            public void Enqueue(PartMesh mesh, Matrix4 model, Vector4 light) => Enqueue(mesh, model, light, Vector4.One);
+
+            public void Enqueue(PartMesh mesh, Matrix4 model, Vector4 light, Vector4 tint)
             {
                 _queue.Add((mesh, _draws.Count));
-                _draws.Add(new EntityDraw {Model = MatrixConvert.ToGpu(model), Light = light});
+                _draws.Add(new EntityDraw {Model = MatrixConvert.ToGpu(model), Light = light, Tint = tint});
             }
 
             public void Flush(RenderPass pass)
@@ -368,21 +371,26 @@ namespace MinecraftClone3API.Graphics
             // Whole-model placement: yaw to face the heading, then translate to the entity's feet.
             var root = Matrix4X4.CreateRotationY(entity.Yaw) * Matrix4X4.CreateTranslation(pos);
 
-            QueueParts(model, entity, root, light);
+            // Flash red briefly after taking damage so a hit reads. The held item stays untinted (white).
+            var tint = HurtTint(entity);
+            QueueParts(model, entity, root, light, tint);
             // The wool overlay shares the base part names/pivots, so the same animation matrices apply; the
             // entity's data (e.g. a sheared sheep) can hide it.
             if (model.Overlay != null && (entity.Data?.OverlayVisible ?? true))
-                QueueParts(model.Overlay, entity, root, light);
+                QueueParts(model.Overlay, entity, root, light, tint);
 
             // Players carry the main-hand item off the right arm so it swings with the body and other clients
             // (and the third-person self) see what's held.
             if (model == _playerModel) QueueHeldItem(entity, root, light);
         }
 
-        private static void QueueParts(RenderModel model, Entity entity, Matrix4 root, Vector4 light)
+        private static Vector4 HurtTint(Entity entity)
+            => entity.HurtTime > 0 ? new Vector4(1f, 0.35f, 0.35f, 1f) : Vector4.One;
+
+        private static void QueueParts(RenderModel model, Entity entity, Matrix4 root, Vector4 light, Vector4 tint)
         {
             foreach (var (part, mesh) in model.Parts)
-                _list.Enqueue(mesh, PartMatrix(part, entity, root), light);
+                _list.Enqueue(mesh, PartMatrix(part, entity, root), light, tint);
         }
 
         private static Matrix4 PartMatrix(ModelPart part, Entity entity, Matrix4 root)
@@ -593,8 +601,10 @@ namespace MinecraftClone3API.Graphics
 
             if (name.StartsWith("wing"))
             {
+                // The model loader mirrors geometry through z (z -> -z) to face it +Z, which flips the handedness,
+                // so the wing on the -x side (wing0) must rotate -flap to swing OUT from the body, not into it.
                 var idx = name.Length > 4 ? name[4] - '0' : 0;
-                var sign = idx == 0 ? 1f : -1f;
+                var sign = idx == 0 ? -1f : 1f;
                 var flap = 0.2f + 0.5f * (0.5f + 0.5f * MathF.Sin((float) AnimClock.Elapsed.TotalSeconds * 12f));
                 return new Vector3(0, 0, flap * sign);
             }

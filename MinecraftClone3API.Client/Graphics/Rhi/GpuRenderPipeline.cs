@@ -189,6 +189,14 @@ namespace MinecraftClone3API.Graphics.Rhi
             Color = new BlendComponent { SrcFactor = BlendFactor.SrcAlpha, DstFactor = BlendFactor.OneMinusSrcAlpha, Operation = BlendOperation.Add },
             Alpha = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.OneMinusSrcAlpha, Operation = BlendOperation.Add },
         };
+
+        /// <summary>Minecraft's inverting blend (1-dst, 1-src) so a sprite (the crosshair) stays visible against
+        /// any background by inverting the pixels behind it.</summary>
+        public static BlendState InvertBlend => new BlendState
+        {
+            Color = new BlendComponent { SrcFactor = BlendFactor.OneMinusDst, DstFactor = BlendFactor.OneMinusSrc, Operation = BlendOperation.Add },
+            Alpha = new BlendComponent { SrcFactor = BlendFactor.OneMinusDstAlpha, DstFactor = BlendFactor.OneMinusSrcAlpha, Operation = BlendOperation.Add },
+        };
     }
 
     /// <summary>Tracks native allocations made while marshalling a descriptor, freeing them in one sweep

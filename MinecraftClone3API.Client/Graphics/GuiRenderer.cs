@@ -32,7 +32,8 @@ namespace MinecraftClone3API.Client.Graphics
             DrawTexture(texture, new Rectangle(0, 0, screenX, screenY), src, false);
         }
 
-        public static void DrawTexture(Texture texture, Rectangle rect, Rectangle? uvRect, Vector4 color, bool gui = true)
+        public static void DrawTexture(Texture texture, Rectangle rect, Rectangle? uvRect, Vector4 color,
+            bool gui = true, bool invert = false)
         {
             var r = new Vector4(rect.MinX, rect.MinY, rect.MaxX, rect.MaxY);
 
@@ -47,20 +48,20 @@ namespace MinecraftClone3API.Client.Graphics
             if (gui)
                 DrawTexture(texture, (ScaledResolution.GuiScale * r + new Vector4(ScaledResolution.GuiOffset.X,
                                           ScaledResolution.GuiOffset.Y, ScaledResolution.GuiOffset.X,
-                                          ScaledResolution.GuiOffset.Y)) * pixelSize, uvrect, color);
+                                          ScaledResolution.GuiOffset.Y)) * pixelSize, uvrect, color, invert);
             else
-                DrawTexture(texture, r * pixelSize, uvrect, color);
+                DrawTexture(texture, r * pixelSize, uvrect, color, invert);
         }
 
         public static void DrawTexture(Texture texture, Vector4 rect, Vector4 uvRect)
             => DrawTexture(texture, rect, uvRect, new Vector4(1f, 1f, 1f, 1f));
 
-        public static void DrawTexture(Texture texture, Vector4 rect, Vector4 uvRect, Vector4 color)
+        public static void DrawTexture(Texture texture, Vector4 rect, Vector4 uvRect, Vector4 color, bool invert = false)
         {
             // Convert the normalized 0..1 rect to clip space (-1..+1); the sprite shader flips Y for the
             // GUI's top-left origin.
             var clip = rect * 2f + new Vector4(-1f, -1f, -1f, -1f);
-            GuiBatch.Add(texture, clip, uvRect, color);
+            GuiBatch.Add(texture, clip, uvRect, color, invert);
         }
     }
 }

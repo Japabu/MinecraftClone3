@@ -24,7 +24,8 @@ namespace MinecraftClone3API.Client.GUI
             var crosshair = GuiAssets.Get(GuiAssets.Crosshair);
             if (crosshair != null)
             {
-                GuiRenderer.DrawTexture(crosshair, Rectangle.FromSize(x, y, s, s), null);
+                GuiRenderer.DrawTexture(crosshair, Rectangle.FromSize(x, y, s, s), null,
+                    new Vector4D<float>(1f, 1f, 1f, 1f), true, invert: true);
                 return;
             }
 
@@ -36,10 +37,11 @@ namespace MinecraftClone3API.Client.GUI
             var thickness = Scale;
             var cx = x + (s - thickness) / 2;
             var cy = y + (s - thickness) / 2;
+            var white = new Vector4D<float>(1f, 1f, 1f, 1f);
             GuiRenderer.DrawTexture(ClientResources.WhitePixel,
-                Rectangle.FromSize(cx, y, thickness, s), null, new Vector4D<float>(1f,1f,1f,1f));
+                Rectangle.FromSize(cx, y, thickness, s), null, white, true, invert: true);
             GuiRenderer.DrawTexture(ClientResources.WhitePixel,
-                Rectangle.FromSize(x, cy, s, thickness), null, new Vector4D<float>(1f,1f,1f,1f));
+                Rectangle.FromSize(x, cy, s, thickness), null, white, true, invert: true);
         }
     }
 }
