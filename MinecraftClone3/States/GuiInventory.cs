@@ -1,8 +1,10 @@
+using System;
 using System.Collections.Generic;
 using MinecraftClone3API.Client;
 using MinecraftClone3API.Client.Blocks;
 using MinecraftClone3API.Client.GUI;
 using MinecraftClone3API.Client.Graphics;
+using MinecraftClone3API.Graphics;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using Silk.NET.Maths;
@@ -14,7 +16,8 @@ namespace MinecraftClone3.States
     /// the 3×9 main inventory, the hotbar, and the four armor slots, over the official
     /// <c>container/inventory.png</c>. The 2×2 grid is scratch (returns to the inventory on close). Full vanilla
     /// slot interaction (pick/place/split/drag, shift-click quick-move) comes from <see cref="ContainerScreen"/>.
-    /// The offhand slot and the 3D player preview are not modelled, so those regions of the background are inert.
+    /// The preview box shows the player paperdoll (wearing its armor, looking toward the cursor); the offhand slot
+    /// is not modelled, so that region of the background is inert.
     /// </summary>
     internal class GuiInventory : ContainerScreen
     {
@@ -33,6 +36,13 @@ namespace MinecraftClone3.States
         private const int SlotStride = 18;
         private const int SlotSize = 16;
         private const int Scale = 2;
+
+        // The player-preview box baked into inventory.png (right of the armor column), per vanilla
+        // InventoryScreen's (26,8)-(75,78) entity render rect.
+        private const int PlayerX = 26;
+        private const int PlayerY = 8;
+        private const int PlayerW = 49;
+        private const int PlayerH = 70;
 
         private const int GridGroup = 1;
         private const int MainGroup = 2;
@@ -140,16 +150,35 @@ namespace MinecraftClone3.States
         {
             var bg = GuiAssets.Get(GuiAssets.Inventory);
             if (bg != null)
-            {
                 GuiRenderer.DrawTexture(bg, Rectangle.FromSize(_bgX, _bgY, GuiW * Scale, GuiH * Scale),
                     new Rectangle(0, 0, GuiW, GuiH));
-                return;
+            else
+            {
+                GuiRenderer.DrawTexture(ClientResources.WhitePixel, Rectangle.FromSize(_bgX, _bgY, GuiW * Scale, GuiH * Scale),
+                    null, new Vector4D<float>(0.16f, 0.16f, 0.16f, 0.96f));
+                foreach (var slot in _slots)
+                    GuiRenderer.DrawTexture(ClientResources.WhitePixel, slot.Bounds, null, new Vector4D<float>(0.36f, 0.36f, 0.36f, 1f));
             }
 
-            GuiRenderer.DrawTexture(ClientResources.WhitePixel, Rectangle.FromSize(_bgX, _bgY, GuiW * Scale, GuiH * Scale),
-                null, new Vector4D<float>(0.16f, 0.16f, 0.16f, 0.96f));
-            foreach (var slot in _slots)
-                GuiRenderer.DrawTexture(ClientResources.WhitePixel, slot.Bounds, null, new Vector4D<float>(0.36f, 0.36f, 0.36f, 1f));
+            DrawPlayerModel();
+        }
+
+        // The player paperdoll in the preview box: looking toward the cursor (body yaw + head yaw/pitch from the
+        // mouse offset, like vanilla) and wearing its armor.
+        private void DrawPlayerModel()
+        {
+            var rect = Rectangle.FromSize(_bgX + PlayerX * Scale, _bgY + PlayerY * Scale,
+                PlayerW * Scale, PlayerH * Scale);
+
+            var mouse = ScaledResolution.ToGuiCoords(ClientResources.Input.MousePosition);
+            var f = MathF.Atan((mouse.X - (rect.MinX + rect.MaxX) / 2f) / 80f);
+            var g = MathF.Atan((mouse.Y - (rect.MinY + rect.MaxY) / 2f) / 80f);
+
+            var armor = new ushort[Inventory.ArmorSize];
+            for (var i = 0; i < armor.Length; i++) armor[i] = _world.Inventory.Armor[i].ItemId;
+
+            var icon = ItemIconRenderer.RenderPlayer(Matrix4X4.CreateRotationY(f * 0.45f), f * 0.45f, g * 0.5f, armor);
+            GuiRenderer.DrawTexture(icon, rect, null);
         }
 
         protected override void OnClosed()

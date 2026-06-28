@@ -33,6 +33,43 @@ namespace MinecraftClone3API.Graphics
         private const string PlayerSkinPathLegacy = "minecraft:entity/steve";
         private const string PlayerModelPath = "System/Models/Entity/player.geo.json";
 
+        // The worn-armor layers: an outer biped (helmet/chestplate/boots, inflate 1px) textured from
+        // entity/equipment/humanoid/<material>, and an inner biped (leggings, inflate 0.5px so it tucks under
+        // the chestplate) from entity/equipment/humanoid_leggings/<material>. Both are 64x32 sheets.
+        private const string ArmorOuterModelPath = "System/Models/Entity/armor_outer.geo.json";
+        private const string ArmorInnerModelPath = "System/Models/Entity/armor_inner.geo.json";
+        private const string ArmorOuterTexture = "minecraft:entity/equipment/humanoid/";
+        private const string ArmorInnerTexture = "minecraft:entity/equipment/humanoid_leggings/";
+        private const string LeatherOverlay = "leather_overlay";
+
+        // Un-dyed leather armour's default tint (Minecraft 0xA06540); leather sheets ship desaturated.
+        private static readonly (int R, int G, int B) LeatherColor = (160, 101, 64);
+
+        // Which model layer + body parts each armor slot (helmet/chest/legs/boots) covers, mirroring vanilla's
+        // HumanoidArmorLayer part visibility. The chestplate and leggings both plate the body box (the leggings
+        // under the chestplate); boots and leggings both plate the legs.
+        private static readonly (bool Inner, string[] Parts)[] ArmorParts =
+        {
+            (false, new[] {"head"}),
+            (false, new[] {"body", "arm0", "arm1"}),
+            (true, new[] {"body", "leg0", "leg1"}),
+            (false, new[] {"leg0", "leg1"}),
+        };
+
+        // A material's two worn layers: the animated world models (parts looked up by name) plus the registered
+        // textures the inventory icon bakes against directly.
+        private sealed class ArmorSet
+        {
+            public RenderModel Outer;
+            public RenderModel Inner;
+            public BlockTexture OuterTex;
+            public BlockTexture InnerTex;
+        }
+
+        private static readonly Dictionary<string, ArmorSet> ArmorSets = new Dictionary<string, ArmorSet>();
+        private static EntityModel _armorOuterModel;
+        private static EntityModel _armorInnerModel;
+
         /// <summary>Per-draw uniform matching the WGSL <c>EntityDraw</c> in EntityGeometry.wgsl (group 1).</summary>
         [StructLayout(LayoutKind.Sequential)]
         private struct EntityDraw
@@ -239,6 +276,90 @@ namespace MinecraftClone3API.Graphics
                         ReadData(ResolvePath(type.OverlayTexturePath)));
                 CreatureModels[type.Id] = model;
             }
+
+            LoadArmor();
+        }
+
+        // Builds the two worn-armor layer models for every registered armor material, registering their
+        // (square-padded) equipment textures into the atlas. Runs inside LoadModels, before the texture upload.
+        private static void LoadArmor()
+        {
+            _armorOuterModel = LoadModel(ArmorOuterModelPath);
+            _armorInnerModel = LoadModel(ArmorInnerModelPath);
+
+            var materials = new HashSet<string>();
+            foreach (var item in GameRegistry.Items)
+                if (item.ArmorMaterial != null) materials.Add(item.ArmorMaterial);
+
+            foreach (var material in materials)
+            {
+                if (!TryLoadArmorTexture(ArmorOuterTexture + material, material, out var outerTex) ||
+                    !TryLoadArmorTexture(ArmorInnerTexture + material, material, out var innerTex))
+                    continue;
+
+                ArmorSets[material] = new ArmorSet
+                {
+                    OuterTex = outerTex,
+                    InnerTex = innerTex,
+                    Outer = BuildModel(_armorOuterModel, outerTex, null),
+                    Inner = BuildModel(_armorInnerModel, innerTex, null),
+                };
+            }
+        }
+
+        // Loads one armor-layer sheet: read the 64x32 equipment texture (compositing the leather tint + strap
+        // overlay for leather), pad it to a square atlas layer, and register it. False if the pack lacks it.
+        private static bool TryLoadArmorTexture(string path, string material, out BlockTexture texture)
+        {
+            texture = default;
+            var resolved = ResolvePath(path);
+            if (resolved == null) return false;
+
+            var data = ResourceReader.ReadTextureData(resolved);
+            if (material == "leather") TintLeather(data, path);
+            texture = BlockTextureManager.LoadTexture(PadToSquare(data));
+            return true;
+        }
+
+        // Multiplies the desaturated leather sheet by the default leather colour, then alpha-composites the
+        // (un-tinted) strap overlay from the same directory over it, baking one ready-to-sample texture.
+        private static void TintLeather(TextureData data, string path)
+        {
+            var px = data.Pixels;
+            for (var i = 0; i < px.Length; i += 4)
+            {
+                px[i + 0] = (byte) (px[i + 0] * LeatherColor.R / 255);
+                px[i + 1] = (byte) (px[i + 1] * LeatherColor.G / 255);
+                px[i + 2] = (byte) (px[i + 2] * LeatherColor.B / 255);
+            }
+
+            var overlayResolved = ResolvePath(path.Substring(0, path.LastIndexOf('/') + 1) + LeatherOverlay);
+            if (overlayResolved == null) return;
+            var overlay = ResourceReader.ReadTextureData(overlayResolved);
+            if (overlay.Width != data.Width || overlay.Height != data.Height) return;
+
+            var ov = overlay.Pixels;
+            for (var i = 0; i < px.Length; i += 4)
+            {
+                int a = ov[i + 3];
+                if (a == 0) continue;
+                px[i + 0] = (byte) ((ov[i + 0] * a + px[i + 0] * (255 - a)) / 255);
+                px[i + 1] = (byte) ((ov[i + 1] * a + px[i + 1] * (255 - a)) / 255);
+                px[i + 2] = (byte) ((ov[i + 2] * a + px[i + 2] * (255 - a)) / 255);
+                px[i + 3] = (byte) Math.Max(px[i + 3], a);
+            }
+        }
+
+        // Copies a non-square sheet into the top-left of a transparent square (max side) layer so it uploads into
+        // the square atlas array cleanly; the armor UVs only ever sample the original (top) region.
+        private static TextureData PadToSquare(TextureData data)
+        {
+            if (data.Width == data.Height) return data;
+            var side = Math.Max(data.Width, data.Height);
+            var px = new byte[side * side * 4];
+            for (var y = 0; y < data.Height; y++)
+                Array.Copy(data.Pixels, y * data.Width * 4, px, y * side * 4, data.Width * 4);
+            return new TextureData(px, side, side);
         }
 
         private static BlockTexture LoadPlayerSkin()
@@ -353,10 +474,13 @@ namespace MinecraftClone3API.Graphics
 
             if (drawSelf)
             {
-                // The local player isn't network-synced to itself, so fill its held item from the live inventory
-                // so the third-person view shows what's selected.
-                PlayerController.PlayerEntity.HeldItemId = (ushort) world.Inventory.SelectedItem.ItemId;
-                QueueModel(_playerModel, PlayerController.PlayerEntity, world);
+                // The local player isn't network-synced to itself, so fill its held item + worn armor from the
+                // live inventory so the third-person view shows what's selected/worn.
+                var self = PlayerController.PlayerEntity;
+                self.HeldItemId = (ushort) world.Inventory.SelectedItem.ItemId;
+                for (var i = 0; i < self.Armor.Length; i++)
+                    self.Armor[i] = (ushort) world.Inventory.Armor[i].ItemId;
+                QueueModel(_playerModel, self, world);
             }
 
             _list.Flush(pass);
@@ -382,8 +506,32 @@ namespace MinecraftClone3API.Graphics
                 QueueParts(model.Overlay, entity, root, light, tint);
 
             // Players carry the main-hand item off the right arm so it swings with the body and other clients
-            // (and the third-person self) see what's held.
-            if (model == _playerModel) QueueHeldItem(entity, root, light);
+            // (and the third-person self) see what's held, and wear their armor over the body.
+            if (model == _playerModel)
+            {
+                QueueArmor(entity, root, light, tint);
+                QueueHeldItem(entity, root, light);
+            }
+        }
+
+        // Plates the player's worn armor over the body: each non-empty slot enqueues its layer's covered parts
+        // with the same animation matrix as the matching body part, so the armor swings/turns with the body.
+        private static void QueueArmor(Entity entity, Matrix4 root, Vector4 light, Vector4 tint)
+        {
+            for (var slot = 0; slot < entity.Armor.Length; slot++)
+            {
+                var id = entity.Armor[slot];
+                if (id == 0) continue;
+                var material = GameRegistry.GetItem(id)?.ArmorMaterial;
+                if (material == null || !ArmorSets.TryGetValue(material, out var set)) continue;
+
+                var (inner, names) = ArmorParts[slot];
+                var model = inner ? set.Inner : set.Outer;
+                foreach (var name in names)
+                    foreach (var (part, mesh) in model.Parts)
+                        if (part.Name == name)
+                            _list.Enqueue(mesh, PartMatrix(part, entity, root), light, tint);
+            }
         }
 
         private static Vector4 HurtTint(Entity entity)
@@ -560,7 +708,7 @@ namespace MinecraftClone3API.Graphics
                 GpuBindGroup.Texture(1, _atlasArrays[1].View),
                 GpuBindGroup.Texture(2, _atlasArrays[2].View),
                 GpuBindGroup.Texture(3, _atlasArrays[3].View),
-                GpuBindGroup.Sampler(4, GpuSamplers.Block),
+                GpuBindGroup.Sampler(4, GpuSamplers.Entity),
             }, "entityAtlas");
         }
 
@@ -631,7 +779,7 @@ namespace MinecraftClone3API.Graphics
         // Builds the six textured quads of one box into the mesh. Box coords are in blocks (relative to the part
         // pivot); UVs come from the classic Minecraft box-unwrap, normalized by the texture array's layer size.
         private static void AddBox(MeshBuffer mesh, ModelBox box, BlockTexture tex, int layerSize, bool flipUv,
-            Matrix4? transform = null)
+            Matrix4? transform = null, bool transformNormal = true)
         {
             // Box pixel dimensions (1 block = 16 texels) drive the unwrap rectangle widths — from the base
             // (un-inflated) size so an overlay box still maps its base texture region.
@@ -648,20 +796,20 @@ namespace MinecraftClone3API.Graphics
             Quad(mesh, tex, layerSize, new Vector3(-1, 0, 0),
                 new Vector3(f.X, t.Y, t.Z), new Vector3(f.X, t.Y, f.Z),
                 new Vector3(f.X, f.Y, t.Z), new Vector3(f.X, f.Y, f.Z),
-                u, v + sz, u + sz, v + sz + sy, transform);
+                u, v + sz, u + sz, v + sz + sy, transform, transformNormal);
             Quad(mesh, tex, layerSize, new Vector3(1, 0, 0),
                 new Vector3(t.X, t.Y, f.Z), new Vector3(t.X, t.Y, t.Z),
                 new Vector3(t.X, f.Y, f.Z), new Vector3(t.X, f.Y, t.Z),
-                u + sz + sx, v + sz, u + 2 * sz + sx, v + sz + sy, transform);
+                u + sz + sx, v + sz, u + 2 * sz + sx, v + sz + sy, transform, transformNormal);
             // Front (+Z) and Back (-Z)
             Quad(mesh, tex, layerSize, new Vector3(0, 0, 1),
                 new Vector3(t.X, t.Y, t.Z), new Vector3(f.X, t.Y, t.Z),
                 new Vector3(t.X, f.Y, t.Z), new Vector3(f.X, f.Y, t.Z),
-                u + sz, v + sz, u + sz + sx, v + sz + sy, transform);
+                u + sz, v + sz, u + sz + sx, v + sz + sy, transform, transformNormal);
             Quad(mesh, tex, layerSize, new Vector3(0, 0, -1),
                 new Vector3(f.X, t.Y, f.Z), new Vector3(t.X, t.Y, f.Z),
                 new Vector3(f.X, f.Y, f.Z), new Vector3(t.X, f.Y, f.Z),
-                u + 2 * sz + sx, v + sz, u + 2 * sz + 2 * sx, v + sz + sy, transform);
+                u + 2 * sz + sx, v + sz, u + 2 * sz + 2 * sx, v + sz + sy, transform, transformNormal);
             // Top (+Y) and Bottom (-Y). Minecraft's box-unwrap mirrors the down face vertically relative to the
             // up face. The living-entity sheets (flipUv) expect the up/down V swapped so a body laid horizontal by
             // a baked pitch shows its underside the right way up; block-entity sheets (chests) author the opposite
@@ -673,16 +821,16 @@ namespace MinecraftClone3API.Graphics
             Quad(mesh, tex, layerSize, new Vector3(0, 1, 0),
                 new Vector3(t.X, t.Y, f.Z), new Vector3(f.X, t.Y, f.Z),
                 new Vector3(t.X, t.Y, t.Z), new Vector3(f.X, t.Y, t.Z),
-                tU0, tV0, tU1, tV1, transform);
+                tU0, tV0, tU1, tV1, transform, transformNormal);
             Quad(mesh, tex, layerSize, new Vector3(0, -1, 0),
                 new Vector3(t.X, f.Y, t.Z), new Vector3(f.X, f.Y, t.Z),
                 new Vector3(t.X, f.Y, f.Z), new Vector3(f.X, f.Y, f.Z),
-                bU0, bV0, bU1, bV1, transform);
+                bU0, bV0, bU1, bV1, transform, transformNormal);
         }
 
         internal static void Quad(MeshBuffer mesh, BlockTexture tex, int layerSize, Vector3 normal,
             Vector3 tl, Vector3 tr, Vector3 bl, Vector3 br, int u0, int v0, int u1, int v1,
-            Matrix4? transform = null)
+            Matrix4? transform = null, bool transformNormal = true)
         {
             if (transform.HasValue)
             {
@@ -691,7 +839,10 @@ namespace MinecraftClone3API.Graphics
                 tr = Vector3D.Transform(tr, m);
                 bl = Vector3D.Transform(bl, m);
                 br = Vector3D.Transform(br, m);
-                normal = Vector3D.Normalize(Vector3D.TransformNormal(normal, m));
+                // The icon shader picks a fixed brightness from the normal's quantized axis; baking a rotation into
+                // the normal would re-quantize it mid-turn and make the per-face shade jump. Callers posing a model
+                // for the inventory icon keep the local (model-space) normal so the shade stays stable as it turns.
+                if (transformNormal) normal = Vector3D.Normalize(Vector3D.TransformNormal(normal, m));
             }
 
             var baseVertex = mesh.VertexCount;
@@ -714,14 +865,65 @@ namespace MinecraftClone3API.Graphics
             return mesh;
         }
 
-        /// <summary>Builds a single mesh of the player model posed at rest (base skin + the modern overlay layer
-        /// baked into <c>player.geo.json</c>), for the creative inventory paperdoll. Feet sit at y=0, centred on
-        /// x/z and facing +Z; the caller's camera frames it. Armour is not drawn.</summary>
-        public static MeshBuffer BuildPlayerIconMesh(Matrix4 centre)
+        /// <summary>Builds the player model for the creative inventory paperdoll (base skin + the modern overlay
+        /// layer baked into <c>player.geo.json</c>, plus any worn <paramref name="armor"/>). <paramref name="centre"/>
+        /// orients the whole body (a yaw toward the cursor); the head bones additionally yaw/pitch about the neck so
+        /// the model looks at the cursor, as in vanilla. Feet sit at y=0, centred on x/z and facing +Z.</summary>
+        public static MeshBuffer BuildPlayerIconMesh(Matrix4 centre, float headYaw, float headPitch, ushort[] armor)
         {
+            var model = LoadModel(PlayerModelPath);
+            var texture = LoadPlayerSkin();
+            var layerSize = BlockTextureManager.Sizes[texture.ArrayId];
+            var headLook = new Vector3(headPitch, headYaw, 0f);
+
             var mesh = new MeshBuffer();
-            BakeIconParts(mesh, LoadModel(PlayerModelPath), LoadPlayerSkin(), centre);
+            foreach (var part in model.Parts)
+            {
+                // The head bone and the hat overlay share the name "head", so both follow the look direction.
+                var rot = part.Name == "head" ? part.Rotation + headLook : part.Rotation;
+                var m = Matrix4X4.CreateRotationX(rot.X) * Matrix4X4.CreateRotationY(rot.Y) *
+                        Matrix4X4.CreateRotationZ(rot.Z) * Matrix4X4.CreateTranslation(part.Pivot) * centre;
+                // transformNormal: false — keep the model-space normal so the fixed per-face shade doesn't jump
+                // (re-quantize) as the paperdoll yaws toward the cursor.
+                foreach (var box in part.Boxes)
+                    AddBox(mesh, box, texture, layerSize, false, m, transformNormal: false);
+            }
+
+            if (armor != null) BakeArmorParts(mesh, armor, centre, headLook);
             return mesh;
+        }
+
+        // Bakes the worn-armor layers into the paperdoll mesh (one mesh, multi-texture: each vertex carries its
+        // own atlas layer). Same per-slot layer/part selection as the animated world path; the helmet follows the
+        // head look so it tracks the cursor with the head.
+        private static void BakeArmorParts(MeshBuffer mesh, ushort[] armor, Matrix4 centre, Vector3 headLook)
+        {
+            for (var slot = 0; slot < armor.Length; slot++)
+            {
+                var id = armor[slot];
+                if (id == 0) continue;
+                var material = GameRegistry.GetItem(id)?.ArmorMaterial;
+                if (material == null || !ArmorSets.TryGetValue(material, out var set)) continue;
+
+                var (inner, names) = ArmorParts[slot];
+                var model = inner ? _armorInnerModel : _armorOuterModel;
+                var texture = inner ? set.InnerTex : set.OuterTex;
+                var layerSize = BlockTextureManager.Sizes[texture.ArrayId];
+
+                foreach (var name in names)
+                {
+                    var part = model.Parts.Find(p => p.Name == name);
+                    if (part == null) continue;
+                    var rot = name == "head" ? part.Rotation + headLook : part.Rotation;
+                    var m = Matrix4X4.CreateRotationX(rot.X) * Matrix4X4.CreateRotationY(rot.Y) *
+                            Matrix4X4.CreateRotationZ(rot.Z) * Matrix4X4.CreateTranslation(part.Pivot) * centre;
+                    // flipUv: true — the worn-armor sheets use the living-entity up/down unwrap (as in the world
+                    // model), so the helmet crown samples the painted head-top region, not the transparent underside.
+                    // transformNormal: false — stable per-face shade as the paperdoll turns (see BuildPlayerIconMesh).
+                    foreach (var box in part.Boxes)
+                        AddBox(mesh, box, texture, layerSize, true, m, transformNormal: false);
+                }
+            }
         }
 
         /// <summary>Bakes every part of a box model at rest (pivot + baked rotation, no animation) into one mesh

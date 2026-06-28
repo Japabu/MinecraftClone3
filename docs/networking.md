@@ -34,7 +34,7 @@ in deterministic plugin order, so client and server agree within a session.
   C→S  ChunkRelease          client dropped a chunk from its cache; clears its SentChunks entry
   C→S  PlaceBlockRequest     pos + block id (id 0 = break) + placement metadata (computed client-side)
   C→S  AttackEntityRequest   entity id; left-clicked a creature to melee it (server applies held weapon damage)
-  C→S/S→C  EntityMove         own player up; relayed to others down
+  C→S/S→C  EntityMove         own player up; relayed down with held item + 4 worn-armor ids (server-filled)
   S→C  EntitySpawn/EntityDespawn   remote players appearing/leaving
   S→C  WorldTime             world clock in seconds (TickCount·SecondsPerTick); on join + ~1/s, drives day/night
   S→C  LodColumnData         Phase-2 distant horizon: one region of surface-only LOD columns (loopback: by ref;
