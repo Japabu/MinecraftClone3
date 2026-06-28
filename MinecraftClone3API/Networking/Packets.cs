@@ -295,6 +295,11 @@ namespace MinecraftClone3API.Networking
         /// plugin load), as with <see cref="BlockChangesPacket"/>. Streamed each tick with the position.</summary>
         public ushort HeldItemId;
 
+        /// <summary>The session-local ids of the entity's four worn armor pieces (helmet/chest/legs/boots; 0 =
+        /// empty), so other clients can draw armor on the body. Filled by the server from its authoritative
+        /// inventory when relaying a player move; zero for non-player entities. Streamed each tick.</summary>
+        public ushort[] Armor = new ushort[Inventory.ArmorSize];
+
         public override PacketId Id => PacketId.EntityMove;
 
         public override void Write(BinaryWriter writer)
@@ -305,6 +310,8 @@ namespace MinecraftClone3API.Networking
             writer.Write(Yaw);
             writer.Write(HurtTime);
             writer.Write(HeldItemId);
+            for (var i = 0; i < Inventory.ArmorSize; i++)
+                writer.Write(Armor[i]);
         }
 
         public override void Read(BinaryReader reader)
@@ -315,6 +322,8 @@ namespace MinecraftClone3API.Networking
             Yaw = reader.ReadSingle();
             HurtTime = reader.ReadByte();
             HeldItemId = reader.ReadUInt16();
+            for (var i = 0; i < Inventory.ArmorSize; i++)
+                Armor[i] = reader.ReadUInt16();
         }
     }
 

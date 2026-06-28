@@ -671,6 +671,7 @@ namespace MinecraftClone3API.Client.Blocks
                         entity.SetInterpTarget(move.Position, move.Pitch, move.Yaw);
                         entity.HurtTime = move.HurtTime;
                         entity.HeldItemId = move.HeldItemId;
+                        for (var i = 0; i < entity.Armor.Length; i++) entity.Armor[i] = move.Armor[i];
                     }
                     break;
                 case EntityDespawnPacket despawn:
