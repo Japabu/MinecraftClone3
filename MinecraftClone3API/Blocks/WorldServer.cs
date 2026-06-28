@@ -260,6 +260,14 @@ namespace MinecraftClone3API.Blocks
         /// portal transfer to know the destination column is ready before building into it.</summary>
         public bool IsChunkGenerated(Vector3D<int> chunkPos) => _populatedChunks.ContainsKey(chunkPos);
 
+        /// <summary>True if <paramref name="chunkPos"/> sits below the generator's floor or above its ceiling, so the
+        /// load thread never even attempts it and it can never appear in <see cref="_populatedChunks"/> or
+        /// <see cref="WorldBase.LoadedChunks"/>. The streaming ready-gate uses this so it stops waiting on a
+        /// neighbour chunk that will never arrive (e.g. the chunk under a player standing on the Nether's bedrock
+        /// floor, whose feet chunk is the bottom generated layer).</summary>
+        public bool IsChunkOutsideGeneratedBand(Vector3D<int> chunkPos) =>
+            chunkPos.Y < _generator.MinChunkY || chunkPos.Y > _generator.MaxChunkY;
+
         /// <summary>True once every chunk within <paramref name="horizontalBlocks"/> / <paramref name="verticalBlocks"/>
         /// of <paramref name="center"/> (clamped to the generator's vertical band) has generated, so a scan over that
         /// box reads real blocks instead of air-for-unloaded (a portal search before its area is resident builds a
