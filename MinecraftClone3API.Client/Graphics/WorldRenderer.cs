@@ -311,7 +311,7 @@ namespace MinecraftClone3API.Graphics
             public float Pad1;
         }
 
-        /// <summary>CompositionParams UBO (320 B) — byte layout mirrors Composition.wgsl's header exactly. Each
+        /// <summary>CompositionParams UBO (336 B) — byte layout mirrors Composition.wgsl's header exactly. Each
         /// vec3 field is immediately followed by the scalar that fills its 16-byte tail padding.</summary>
         [StructLayout(LayoutKind.Sequential)]
         private struct CompositionParams
@@ -856,7 +856,7 @@ namespace MinecraftClone3API.Graphics
 
         /// <summary>Composes the G-buffer + baked light + resolved sun shadow into the HDR scene, draws the
         /// procedural sky for background pixels, shades water, and fogs into the horizon. All the day/night
-        /// colours + matrices + sky/fog/water uniforms go into the 320-byte CompositionParams UBO.</summary>
+        /// colours + matrices + sky/fog/water uniforms go into the 336-byte CompositionParams UBO.</summary>
         private static unsafe void DrawComposition(Camera camera, Matrix4 viewProjectionInv, float sunFade,
             bool shadowPass, bool lodActive)
         {

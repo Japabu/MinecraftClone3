@@ -42,6 +42,7 @@ namespace MinecraftClone3API.Graphics.Rhi
 
             var views = new System.Collections.Generic.List<IntPtr>();
             var groups = new System.Collections.Generic.List<GpuBindGroup>();
+            Span<BindGroupEntry> entries = stackalloc BindGroupEntry[2];
             // Each level reads the one above, so every transition is its own compute pass: WebGPU only makes a
             // storage-texture write visible to a later read across a pass boundary, never between two dispatches
             // in the same pass. One shared pass would let mip N+1 read mip N before it was written (garbage mips).
@@ -52,11 +53,9 @@ namespace MinecraftClone3API.Graphics.Rhi
                 views.Add((IntPtr)srcView);
                 views.Add((IntPtr)dstView);
 
-                var group = new GpuBindGroup(_layout, stackalloc BindGroupEntry[]
-                {
-                    GpuBindGroup.Texture(0, srcView),
-                    GpuBindGroup.Texture(1, dstView),
-                }, $"mipgen-{mip}");
+                entries[0] = GpuBindGroup.Texture(0, srcView);
+                entries[1] = GpuBindGroup.Texture(1, dstView);
+                var group = new GpuBindGroup(_layout, entries, $"mipgen-{mip}");
                 groups.Add(group);
 
                 var pass = ComputePass.Begin(encoder, $"mipgen-{mip}");

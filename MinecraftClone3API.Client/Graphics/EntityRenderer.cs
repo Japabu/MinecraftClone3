@@ -159,9 +159,11 @@ namespace MinecraftClone3API.Graphics
                 pass.SetBindGroup(0, Renderer.FrameBindGroup);
                 pass.SetBindGroup(2, _atlasBind);
 
+                Span<uint> dynOffset = stackalloc uint[1];
                 foreach (var (mesh, slot) in _queue)
                 {
-                    pass.SetBindGroup(1, _drawBind, stackalloc uint[] {(uint) (slot * SlotAlign)});
+                    dynOffset[0] = (uint) (slot * SlotAlign);
+                    pass.SetBindGroup(1, _drawBind, dynOffset);
                     mesh.Draw(pass);
                 }
             }

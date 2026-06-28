@@ -117,9 +117,9 @@ namespace MinecraftClone3API.Util
             store.TryGetRegion(regionKey + new Vector3D<int>(0, 0, 1), out var rPosZ);
             store.TryGetRegion(regionKey + new Vector3D<int>(0, 0, -1), out var rNegZ);
 
-            // Downsample the stride-4 store to the super-grid by MAX surface (keeps trees/peaks from sinking when
+            // Downsample the stride-2 store to the super-grid by MAX surface (keeps trees/peaks from sinking when
             // coarsening — a super-cell shows its tallest member, so forests stay as canopy plateaus). meshStep 1
-            // is the identity (super-grid == store), used in the near horizon ring; 2/4 are the stride-8/16 rings.
+            // is the identity (super-grid == store, the near horizon ring's stride-2); 2/4/8 are the stride-4/8/16 rings.
             Span<long> grid = stackalloc long[superN * superN];
             for (var scx = 0; scx < superN; scx++)
             for (var scz = 0; scz < superN; scz++)
@@ -199,7 +199,7 @@ namespace MinecraftClone3API.Util
             }
         }
 
-        /// <summary>Max-surface packed column over a meshStep×meshStep block of stride-4 store cells (the
+        /// <summary>Max-surface packed column over a meshStep×meshStep block of stride-2 store cells (the
         /// super-cell downsample), or 0 (empty) if all empty.</summary>
         private static long MaxSurfaceCell(long[] cols, int scx, int scz, int meshStep)
         {

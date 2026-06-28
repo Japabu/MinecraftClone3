@@ -46,7 +46,8 @@ namespace MinecraftClone3API.Graphics.Rhi
             Api = WebGPU.GetApi();
             Native = new Wgpu(Api.Context);
 
-            Instance = Api.CreateInstance(new InstanceDescriptor());
+            var instanceDesc = new InstanceDescriptor();
+            Instance = Api.CreateInstance(in instanceDesc);
             if (Instance == null)
                 throw new InvalidOperationException("wgpu: failed to create instance");
 

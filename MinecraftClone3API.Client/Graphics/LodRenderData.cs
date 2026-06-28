@@ -24,8 +24,8 @@ namespace MinecraftClone3API.Graphics
         public bool Updated;
         public bool Uploaded;
 
-        /// <summary>Mesh stride the main thread wants this region meshed at (1 = stride-4 store res near the
-        /// horizon edge, 2 = stride-8, 4 = stride-16 farther — the DH power-of-two detail rings). Set by the
+        /// <summary>Mesh stride the main thread wants this region meshed at (1 = stride-2 store res near the
+        /// horizon edge, 2 = stride-4, 4 = stride-8, 8 = stride-16 farther — the DH power-of-two detail rings). Set by the
         /// distance scan; the mesh thread reads it in <see cref="Update"/> and records what it meshed in
         /// <see cref="MeshStep"/>.</summary>
         public volatile int DesiredMeshStep = 1;
