@@ -475,7 +475,10 @@ namespace MinecraftClone3.States
             var f = MathF.Atan((mouse.X - (rect.MinX + rect.MaxX) / 2f) / 80f);
             var g = MathF.Atan((mouse.Y - (rect.MinY + rect.MaxY) / 2f) / 80f);
 
-            var icon = ItemIconRenderer.RenderPlayer(Matrix4X4.CreateRotationY(f * 0.45f), f * 0.45f, g * 0.5f);
+            var armor = new ushort[Inventory.ArmorSize];
+            for (var i = 0; i < armor.Length; i++) armor[i] = _world.Inventory.Armor[i].ItemId;
+
+            var icon = ItemIconRenderer.RenderPlayer(Matrix4X4.CreateRotationY(f * 0.45f), f * 0.45f, g * 0.5f, armor);
             GuiRenderer.DrawTexture(icon, rect, null);
         }
 

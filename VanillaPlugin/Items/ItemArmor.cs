@@ -15,13 +15,15 @@ namespace VanillaPlugin.Items
         private readonly string _minecraftId;
         private readonly ArmorSlot _slot;
         private readonly int _defense;
+        private readonly string _material;
 
-        public ItemArmor(string name, string texturePath, ArmorSlot slot, int defense) : base(name)
+        public ItemArmor(string name, string texturePath, ArmorSlot slot, int defense, string material) : base(name)
         {
             _texturePath = texturePath;
             _minecraftId = Identifier.FromResourcePath(texturePath);
             _slot = slot;
             _defense = defense;
+            _material = material;
         }
 
         protected override CreativeTab DefaultCreativeTab => CreativeTab.Combat;
@@ -31,6 +33,7 @@ namespace VanillaPlugin.Items
         public override int MaxStackSize => 1;
         public override ArmorSlot? ArmorSlot => _slot;
         public override int ArmorDefense => _defense;
+        public override string ArmorMaterial => _material;
 
         public override bool IsUsable => true;
         public override bool RefreshInventoryAfterUse => true;

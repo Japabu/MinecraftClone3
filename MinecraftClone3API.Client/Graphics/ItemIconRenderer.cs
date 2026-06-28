@@ -136,12 +136,13 @@ namespace MinecraftClone3API.Graphics
         /// <summary>Renders the full-body player paperdoll for the creative inventory's Survival-Inventory tab and
         /// returns its texture. <paramref name="bodyTransform"/> orients the whole model (body yaw) and
         /// <paramref name="headYaw"/>/<paramref name="headPitch"/> turn the head — so the model looks toward the
-        /// cursor. Re-renders into one persistent target each call; main-thread only.</summary>
-        public static Texture RenderPlayer(Matrix4 bodyTransform, float headYaw, float headPitch)
+        /// cursor; <paramref name="armor"/> are the four worn pieces drawn over the body. Re-renders into one
+        /// persistent target each call; main-thread only.</summary>
+        public static Texture RenderPlayer(Matrix4 bodyTransform, float headYaw, float headPitch, ushort[] armor)
         {
             EnsureLoaded();
             EnsurePlayerTarget();
-            var mesh = EntityRenderer.BuildPlayerIconMesh(bodyTransform, headYaw, headPitch);
+            var mesh = EntityRenderer.BuildPlayerIconMesh(bodyTransform, headYaw, headPitch, armor);
             RenderPlayerMesh(mesh);
             return _playerIcon;
         }

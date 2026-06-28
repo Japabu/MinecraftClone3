@@ -43,6 +43,12 @@ namespace MinecraftClone3API.Entities
         /// player fills its own from the inventory at draw time. Only the player model renders a held item.</summary>
         public ushort HeldItemId;
 
+        /// <summary>The session-local ids of the four worn armor pieces, indexed by
+        /// <see cref="MinecraftClone3API.Items.ArmorSlot"/> (helmet/chest/legs/boots; 0 = empty), so the client
+        /// can draw armor on the body. For remote players the server streams them in the move snapshot; the local
+        /// player fills its own from the inventory at draw time. Only the player model renders armor.</summary>
+        public readonly ushort[] Armor = new ushort[Items.Inventory.ArmorSize];
+
         // Client walk-cycle animation. LimbSwing is the phase accumulator (advanced by horizontal speed) and
         // LimbSwingAmount is how strongly the limbs swing (0 standing .. ~1 walking), both driven purely from
         // the interpolated motion of incoming position updates so no extra network data is needed.
