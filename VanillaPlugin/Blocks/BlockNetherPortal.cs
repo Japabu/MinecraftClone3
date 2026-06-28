@@ -12,8 +12,8 @@ namespace VanillaPlugin.Blocks
     /// picks <c>nether_portal_ns</c>/<c>_ew</c> from the block's stored axis (0 = X / 1 = Z, in a
     /// <see cref="BlockDataMetadata"/>). Placed by the engine when a frame is lit with flint &amp; steel
     /// (<see cref="VanillaPlugin.Items.ItemFlintAndSteel"/>); standing in it triggers a dimension transfer
-    /// (server-side). It ticks each server tick and pops once its obsidian frame is broken, cascading to the
-    /// connected portal blocks. Registry key <c>Vanilla:NetherPortal</c>.
+    /// (server-side). It pops once its obsidian frame is broken — validity is checked only when a neighbour
+    /// changes (never polled), cascading to the connected portal blocks. Registry key <c>Vanilla:NetherPortal</c>.
     /// </summary>
     internal class BlockNetherPortal : Block
     {
@@ -49,14 +49,14 @@ namespace VanillaPlugin.Blocks
             return new Dictionary<string, string> { { "axis", axis == AxisZ ? "z" : "x" } };
         }
 
-        public override bool NeedsServerTick => true;
-
-        /// <summary>Pops when the frame around it is gone: clearing this block notifies its neighbours, so a
-        /// connected portal collapses ring-by-ring over the following ticks (matching the falling-block cascade).</summary>
-        public override void OnServerTick(WorldServer world, Vector3D<int> blockPos)
+        /// <summary>Re-validates only when a neighbour actually changes — no per-tick polling. A neighbour that
+        /// became part of the frame is ignored (so lighting the portal cell-by-cell doesn't read a half-built
+        /// frame as broken); a neighbour that stopped being frame triggers the check, and clearing this block
+        /// cascades it to the rest of the portal, so breaking one frame block collapses the whole sheet at once.</summary>
+        public override void OnNeighborChanged(WorldServer world, Vector3D<int> blockPos, Vector3D<int> changedPos)
         {
-            if (FrameIntact(world, blockPos)) return;
-            world.SetBlock(blockPos, BlockRegistry.BlockAir);
+            if (Supported(world, changedPos)) return;
+            if (!FrameIntact(world, blockPos)) world.SetBlock(blockPos, BlockRegistry.BlockAir);
         }
 
         /// <summary>True while each of the four in-plane neighbours (the two along the portal axis, plus up/down)
