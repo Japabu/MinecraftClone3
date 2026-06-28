@@ -563,6 +563,9 @@ namespace MinecraftClone3API.Networking
                 session.Connection.Send(new InventoryStatePacket {Inventory = session.Inventory});
                 var toWorld = GetOrCreateWorld(savedDimensionKey);
                 MoveToDimension(session, toWorld, session.Player.Position.ToVector3i(), buildPortal: false);
+                // The saved coords may be inside the portal they left through; stay portal-immune until they step
+                // out so the arrival doesn't immediately soak into a transfer back.
+                session.PortalImmune = true;
                 Logger.Info($"Player {session.EntityId} logged in, restoring to \"{savedDimensionKey}\"");
                 return;
             }
