@@ -190,7 +190,9 @@ optimistically, and sends `InventoryAction` / `HeldSlot` on changes. Inputs are 
 - **3D isometric block icons** (`Client/Graphics/ItemIconRenderer.cs`) — each block is meshed once into the
   void `IconWorld` and drawn with the `ItemIcon` shader into a per-block `TextureFramebuffer`, cached by block
   id. Main-thread only (every step is a GL call). The framebuffer is GL bottom-left origin, so
-  `ItemStackRenderer` flips V when blitting.
+  `ItemStackRenderer` flips V when blitting. The same forward path also renders the creative inventory's
+  **player paperdoll** (`GetPlayerIcon` — the player box model baked at rest via
+  `EntityRenderer.BuildPlayerIconMesh`, drawn through a taller full-body camera, cached once).
 - **`ItemStackRenderer`** draws an `ItemStack` in a slot: a block item's 3D icon, or a standalone item's lazily
   loaded 2D sprite (`TexturePath`, cached, placeholder box when absent), plus a count label when above one. It
   re-asserts alpha blending before blitting because `GetIcon` may have just rendered (depth on, blend off).
@@ -207,7 +209,8 @@ optimistically, and sends `InventoryAction` / `HeldSlot` on changes. Inputs are 
     always closes.
   - **Survival Inventory** (bottom-right, chest) over `tab_inventory.png`: the four armor slots (gated by piece),
     the 3×9 main inventory + hotbar, and the **destroy** slot (a source that trashes what's dropped on it). No
-    crafting grid (vanilla hides it here); the 3D player model isn't drawn (the baked black panel stands in).
+    crafting grid (vanilla hides it here). The player **paperdoll** (the model posed at rest, front view) is
+    rendered into the panel's box by `ItemIconRenderer.GetPlayerIcon`; worn armor isn't drawn on it yet.
 
   A category tab shows its bucket in the scrollable 9×5 grid over `tab_items.png` with the tab title drawn at
   (8,6); category/search grid cells are infinite **source** slots, the bottom hotbar row is always the player's.

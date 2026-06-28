@@ -4,6 +4,7 @@ using MinecraftClone3API.Client;
 using MinecraftClone3API.Client.Blocks;
 using MinecraftClone3API.Client.GUI;
 using MinecraftClone3API.Client.Graphics;
+using MinecraftClone3API.Graphics;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using Silk.NET.Input;
@@ -73,6 +74,10 @@ namespace MinecraftClone3.States
         private const int InvMainY = 54;
         private const int InvDestroyX = 173;
         private const int InvDestroyY = 112;
+        private const int InvPlayerX = 73;
+        private const int InvPlayerY = 6;
+        private const int InvPlayerW = 32;
+        private const int InvPlayerH = 43;
 
         private const int Scale = 2;
 
@@ -453,9 +458,19 @@ namespace MinecraftClone3.States
             DrawPanel();
             DrawTab(Current, true);
 
+            if (IsInventory) DrawPlayerModel();
             if (!IsInventory) DrawTitle();
             if (IsSearch) DrawSearchText();
             if (ShowsGrid) DrawScroller();
+        }
+
+        private void DrawPlayerModel()
+        {
+            var icon = ItemIconRenderer.GetPlayerIcon();
+            if (icon == null) return;
+            GuiRenderer.DrawTexture(icon,
+                Rectangle.FromSize(_bgX + InvPlayerX * Scale, _bgY + InvPlayerY * Scale, InvPlayerW * Scale, InvPlayerH * Scale),
+                null);
         }
 
         public override void Render()
