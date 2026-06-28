@@ -278,6 +278,18 @@ namespace MinecraftClone3API.Networking
         public override void Read(BinaryReader reader) => All = reader.ReadBoolean();
     }
 
+    /// <summary>Drops an arbitrary client-side stack (crafting-grid / cursor leftovers that don't fit on close)
+    /// into the world. Unlike <see cref="DropItemRequestPacket"/> this carries the stack itself and the server
+    /// spawns it without touching the authoritative inventory (the stack never lived there).</summary>
+    public class DropStackRequestPacket : Packet
+    {
+        public ItemStack Stack = ItemStack.Empty;
+
+        public override PacketId Id => PacketId.DropStackRequest;
+        public override void Write(BinaryWriter writer) => Stack.Write(writer);
+        public override void Read(BinaryReader reader) => Stack = ItemStack.Read(reader);
+    }
+
     /// <summary>Entity position/orientation update (client→server for the local player, relayed to others).</summary>
     public class EntityMovePacket : Packet
     {

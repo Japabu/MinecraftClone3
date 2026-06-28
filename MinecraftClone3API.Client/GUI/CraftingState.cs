@@ -41,19 +41,23 @@ namespace MinecraftClone3API.Client.GUI
         }
 
         /// <summary>Return any items left in the grid to the player inventory — call when the screen closes so
-        /// nothing is lost. Items that don't fit are dropped (lost).</summary>
+        /// nothing is lost. Items that don't fit are dropped into the world as item entities.</summary>
         public void ReturnGridToInventory()
         {
             for (var i = 0; i < Grid.Length; i++)
             {
-                if (!Grid[i].IsEmpty) AddToInventory(Grid[i]);
+                if (!Grid[i].IsEmpty)
+                {
+                    var leftover = AddToInventory(Grid[i]);
+                    if (!leftover.IsEmpty) _world.SendDropStack(leftover);
+                }
                 Grid[i] = ItemStack.Empty;
             }
         }
 
         /// <summary>Merge a stack into the player inventory (filling partial stacks first, then empty slots),
-        /// mirroring each touched slot to the server.</summary>
-        public void AddToInventory(ItemStack stack)
+        /// mirroring each touched slot to the server. Returns whatever didn't fit (empty if it all fit).</summary>
+        public ItemStack AddToInventory(ItemStack stack)
         {
             var slots = _world.Inventory.Slots;
             var max = stack.Item?.MaxStackSize ?? ItemStack.MaxStackSize;
@@ -75,6 +79,8 @@ namespace MinecraftClone3API.Client.GUI
                 stack.Count = 0;
                 _world.SendInventoryAction(i, slots[i]);
             }
+
+            return stack;
         }
     }
 }

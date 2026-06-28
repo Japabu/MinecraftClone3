@@ -254,10 +254,6 @@ relevant permanent doc. Not a changelog.
   `blockstates/<name>.json` variants (model + x/y rotation; weighted lists take the first). The `multipart`
   form (fences, redstone, walls) resolves to null → the block falls back to its single `Block.Model`. Add
   multipart support before relying on connected/multipart blocks.
-- **Crafting-grid leftovers are discarded on close.** If the inventory is full when a crafting screen closes,
-  items still in the grid/cursor that don't fit are silently lost. World item entities now exist
-  (`EntityItem`/`DropItemRequest`), so the fix is to route the overflow into a world drop instead of discarding
-  it; until then it's accepted for the creative sandbox.
 - **Entity models load from Bedrock geometry data, but the loader is a useful subset.** `BedrockModelLoader`
   reads the built-in mobs from `*.geo.json` (see [entities.md](entities.md)) and honors per-cube
   `uv`/`inflate` and X-axis bone rotation. **Not** interpreted (so an arbitrary Blockbench/community export may

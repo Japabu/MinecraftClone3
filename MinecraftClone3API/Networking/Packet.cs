@@ -36,7 +36,8 @@ namespace MinecraftClone3API.Networking
         SetGameModeRequest,
         RespawnRequest,
         PlayerTeleport,
-        DimensionChange
+        DimensionChange,
+        DropStackRequest
     }
 
     /// <summary>
@@ -77,7 +78,8 @@ namespace MinecraftClone3API.Networking
             {PacketId.SetGameModeRequest, () => new SetGameModeRequestPacket()},
             {PacketId.RespawnRequest, () => new RespawnRequestPacket()},
             {PacketId.PlayerTeleport, () => new PlayerTeleportPacket()},
-            {PacketId.DimensionChange, () => new DimensionChangePacket()}
+            {PacketId.DimensionChange, () => new DimensionChangePacket()},
+            {PacketId.DropStackRequest, () => new DropStackRequestPacket()}
         };
 
         public abstract PacketId Id { get; }

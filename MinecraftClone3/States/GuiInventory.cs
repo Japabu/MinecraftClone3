@@ -157,7 +157,8 @@ namespace MinecraftClone3.States
             _crafting.ReturnGridToInventory();
             if (!Cursor.IsEmpty)
             {
-                _crafting.AddToInventory(Cursor);
+                var leftover = _crafting.AddToInventory(Cursor);
+                if (!leftover.IsEmpty) _world.SendDropStack(leftover);
                 Cursor = ItemStack.Empty;
             }
         }

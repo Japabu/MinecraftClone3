@@ -427,6 +427,9 @@ namespace MinecraftClone3API.Networking
                 case DropItemRequestPacket drop when session.LoggedIn:
                     ApplyDropRequest(session, drop);
                     break;
+                case DropStackRequestPacket dropStack when session.LoggedIn:
+                    ApplyDropStackRequest(session, dropStack);
+                    break;
                 case ChunkReleasePacket release when session.LoggedIn:
                     session.SentChunks.Remove(release.Position);
                     break;
@@ -720,6 +723,29 @@ namespace MinecraftClone3API.Networking
             }
 
             session.Connection.Send(new InventoryStatePacket {Inventory = session.Inventory});
+        }
+
+        /// <summary>Spawns an arbitrary client-supplied stack (crafting-grid/cursor leftovers) in front of the
+        /// player. Unlike <see cref="ApplyDropRequest"/> it neither decrements nor echoes the inventory — the
+        /// stack is client crafting scratch that never lived in the authoritative inventory.</summary>
+        private void ApplyDropStackRequest(ClientSession session, DropStackRequestPacket drop)
+        {
+            if (drop.Stack.IsEmpty) return;
+
+            var yaw = session.Player.Yaw;
+            var pitch = session.Player.Pitch;
+            var forward = new Vector3D<float>(
+                (float) (Math.Sin(yaw) * Math.Cos(pitch)),
+                (float) Math.Sin(pitch),
+                (float) (Math.Cos(yaw) * Math.Cos(pitch)));
+
+            var entity = session.World.DropItem(drop.Stack,
+                session.Player.Position + new Vector3D<float>(0f, 1.4f, 0f) + forward * 0.3f);
+            if (entity != null)
+            {
+                entity.Velocity = forward * 0.3f + new Vector3D<float>(0f, 0.1f, 0f);
+                entity.PickupDelay = 40;
+            }
         }
 
         private void RemoveDisconnected()

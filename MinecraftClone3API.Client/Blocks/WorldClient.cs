@@ -617,6 +617,11 @@ namespace MinecraftClone3API.Client.Blocks
         public void SendDropItem(bool all)
             => _connection.Send(new DropItemRequestPacket {All = all});
 
+        /// <summary>Drops an arbitrary stack (crafting-grid / cursor leftovers that didn't fit on close) into the
+        /// world. The server spawns it without touching the authoritative inventory.</summary>
+        public void SendDropStack(ItemStack stack)
+            => _connection.Send(new DropStackRequestPacket {Stack = stack});
+
         public void Disconnect()
         {
             _stopped = true;
