@@ -71,8 +71,12 @@ files under `Vanilla/Models/Entity/` (mob geometry is compiled Java in the jar, 
 [entities.md](entities.md)). It references blocks by **explicit Minecraft resource locations** (`minecraft:block/stone`,
 `minecraft:block/grass_block`, …) and the engine loads the real Minecraft model JSON + PNGs from a
 user-provided pack. The vanilla model format **is** the engine's format (`parent`/`textures`
-`#vars`/`elements`/`faces`); extra fields (`shade`, `gui_light`, element `rotation`) are silently dropped by
-`JsonConvert.PopulateObject`. The only gap is **reference syntax**: Minecraft uses namespaced resource
+`#vars`/`elements`/`faces`, incl. element `rotation` — `origin`/`axis`/`angle`/`rescale`, baked by the mesher,
+which is what gives `cross` models their X silhouette). A face that **omits `uv`** gets it **auto-generated from
+the element's `from`/`to`** (`BlockModel.AutoUv`, Minecraft's default-UV rule) — without this the full texture
+stretches across a partial face (a wall arm, a fence side); a NaN-X sentinel on `FaceData.UV` marks the omission,
+since the `CustomJsonConverter` reads `uv` as a non-nullable `Vector4D`. Other extra fields (`shade`, `gui_light`)
+are silently dropped by `JsonConvert.PopulateObject`. The only gap is **reference syntax**: Minecraft uses namespaced resource
 locations `[namespace:]path` (default `minecraft:`; category implied by context).
 `BlockModel.GetRelativePaths` resolves these by **appending** a candidate `{ns}/{category}/{loc}{extension}`
 (`.json`→`models`, `.png`→`textures`) to its relative candidates, run by both `ReadBlockModel` and

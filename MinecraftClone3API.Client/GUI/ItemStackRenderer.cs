@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using MinecraftClone3API.Client.Graphics;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
@@ -22,17 +23,15 @@ namespace MinecraftClone3API.Client.GUI
             var item = stack.Item;
             if (item == null) return;
 
-            if (item is ItemBlock blockItem)
-            {
-                var icon = ItemIconRenderer.GetIcon(blockItem.Block.Id);
-                GuiRenderer.DrawTexture(icon, rect, null);
-            }
+            // A flat sprite wins when one is available — a standalone item's TexturePath, or a block that opts
+            // into a flat icon (torch/ladder/flowers via ItemSpriteTexture). A plain block falls to its 3D icon.
+            var sprite = Sprite(item);
+            if (sprite != null)
+                GuiRenderer.DrawTexture(sprite, rect, null);
+            else if (item is ItemBlock blockItem)
+                GuiRenderer.DrawTexture(ItemIconRenderer.GetIcon(blockItem.Block.Id), rect, null);
             else
-            {
-                var sprite = Sprite(item);
-                if (sprite != null) GuiRenderer.DrawTexture(sprite, rect, null);
-                else GuiRenderer.DrawTexture(ClientResources.WhitePixel, rect, null, new Vector4D<float>(0.7f, 0.7f, 0.7f, 1f));
-            }
+                GuiRenderer.DrawTexture(ClientResources.WhitePixel, rect, null, new Vector4D<float>(0.7f, 0.7f, 0.7f, 1f));
 
             if (stack.Count > 1)
             {
@@ -47,11 +46,20 @@ namespace MinecraftClone3API.Client.GUI
         private static Texture Sprite(Item item)
         {
             if (Sprites.TryGetValue(item.Id, out var tex)) return tex;
-            tex = item.TexturePath != null && ResourceReader.Exists(item.TexturePath)
-                ? GlResources.ReadTexture(item.TexturePath)
-                : null;
+            var path = SpritePath(item);
+            tex = path != null ? GlResources.ReadTexture(path) : null;
             Sprites[item.Id] = tex;
             return tex;
+        }
+
+        // The PNG to blit for a flat icon: a standalone item carries a full PNG path; a block opting into a flat
+        // icon carries a texture LOCATION (minecraft:block/torch), resolved the same way block textures are.
+        private static string SpritePath(Item item)
+        {
+            if (item.TexturePath != null)
+                return ResourceReader.Exists(item.TexturePath) ? item.TexturePath : null;
+            var loc = (item as ItemBlock)?.Block.ItemSpriteTexture;
+            return loc == null ? null : BlockModel.GetRelativePaths(loc, loc, ".png").FirstOrDefault(ResourceReader.Exists);
         }
     }
 }

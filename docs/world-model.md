@@ -35,13 +35,18 @@ loop, and break `IsEmpty`).
 
 `ChunkMesher.AddBlockToVao(WorldBase, ...)` reads neighbour blocks through `WorldBase`, so it works for any
 world. It asks each block for its render model + orientation via `Block.GetRenderModel(world, pos)` and meshes
-that model's `Elements` (Minecraft `from`/`to` boxes with per-face `uv`/texture/`cullface`), so partial-cube
-models (stairs) render as-is. **Two ways a block varies its appearance** by state: a parsed
+that model's `Elements` (Minecraft `from`/`to` boxes with per-face `uv`/texture/`cullface`, plus optional
+element `rotation` — a flat box spun 45° about its origin is how `cross` models, flowers/grass, get their X),
+so partial-cube models (stairs, slabs) render as-is. **Two ways a block varies its appearance** by state: a parsed
 **`BlockStateDefinition`** (the pack's `blockstates/<name>.json`, loaded by `ResourceReader.ReadBlockState`) —
 the block reports its current property values via `GetBlockState` (e.g. `facing=east, lit=true`) and the
 matching variant supplies model + rotation, so a furnace's facing/lit appearance is driven straight from the
 jar; or, for blocks with no blockstate file, the single `Block.Model` plus `Block.GetModelTransform` (default
-identity) driven by stored metadata (a stair's facing). Coordinates are **corner-origin like Minecraft**:
+identity) driven by stored metadata (a stair's facing). A **multipart** blockstate (fences, walls) is the
+exception that emits *several* models at one cell — `BlockStateDefinition.IsMultipart` → the mesher walks
+`ResolveAll(GetBlockState)` and emits a post plus an arm model per matching `when` (the connection set the
+block computes from its neighbours); the inventory icon/viewmodel passes `inventory: true` to fall back to the
+single `Block.Model`. Coordinates are **corner-origin like Minecraft**:
 block `P` fills the AABB `[P, P+1]` and world→block is `floor(v)` (not the old centre-origin `floor(v+0.5)`).
 The mesher emits this by shifting each element `-0.5 → orient → +0.5`, so the orientation still rotates the
 centred element about the block centre, then the whole element lands in the `[0, 1]` cell. (Face normals +

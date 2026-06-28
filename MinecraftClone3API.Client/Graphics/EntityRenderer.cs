@@ -628,7 +628,8 @@ namespace MinecraftClone3API.Graphics
 
             PartMesh mesh;
             float scale;
-            if (block != null) { mesh = GetItemMesh(block.Id); scale = 0.4f; }
+            if (block != null && block.ItemSpriteTexture != null) { mesh = HeldItemMeshes.GetByTexture(block.ItemSpriteTexture); scale = 0.5f; }
+            else if (block != null) { mesh = GetItemMesh(block.Id); scale = 0.4f; }
             else { mesh = HeldItemMeshes.Get(stackItem); scale = 0.5f; }
             if (mesh == null) return;
             _list.Enqueue(mesh, Matrix4X4.CreateScale(scale) * spin, light);
@@ -724,7 +725,7 @@ namespace MinecraftClone3API.Graphics
             // The -0.5 origin offset re-centres the corner-origin [0,1] cell mesh so the dropped/icon pose spins
             // about its middle.
             var buffer = new MeshBuffer();
-            ChunkMesher.AddBlockToVao(IconWorld.Instance, Vector3i.Zero, 0, 0, 0, block, buffer, buffer, new Vector3(-0.5f));
+            ChunkMesher.AddBlockToVao(IconWorld.Instance, Vector3i.Zero, 0, 0, 0, block, buffer, buffer, new Vector3(-0.5f), inventory: true);
             mesh = buffer.IndicesCount > 0 ? new PartMesh(buffer) : null;
             buffer.Clear();
             ItemMeshes[blockId] = mesh;

@@ -457,6 +457,7 @@ namespace MinecraftClone3API.Blocks
 
         public override void PlaceBlock(EntityPlayer player, Vector3D<int> blockPos, Block block, int metadata)
         {
+            if (!block.CanPlaceAt(this, blockPos, metadata)) return;
             SetBlock(blockPos, block);
             block.OnPlaced(this, blockPos, player, metadata);
         }

@@ -11,6 +11,7 @@ namespace VanillaPlugin.Blocks
         {
             MinecraftId = "minecraft:torch";
             ModelPath = "minecraft:block/torch";
+            ItemSpriteTexture = "minecraft:block/torch";
         }
 
         protected override CreativeTab DefaultCreativeTab => CreativeTab.FunctionalBlocks;

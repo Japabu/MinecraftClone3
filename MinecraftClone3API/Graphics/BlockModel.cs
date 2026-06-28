@@ -83,11 +83,46 @@ namespace MinecraftClone3API.Graphics
                 throw;
             }
 
+            FillMissingUvs(model);
+
             //Dont load textures if there arent any
             if(model.Textures == null) Logger.Error($"\"{path}\" does not contain any texture definitions!");
             else LoadModelTextures(model, path);
 
             return model;
+        }
+
+        // Minecraft auto-generates a face's UV from the element's from/to when the model omits "uv"; without this
+        // the engine's full-texture default stretches the texture across any partial face (a wall arm, a fence
+        // side). Full-cube faces reduce to [0,0,16,16] (unchanged), and faces with an explicit uv keep it.
+        private static void FillMissingUvs(BlockModel model)
+        {
+            if (model.Elements == null) return;
+            foreach (var element in model.Elements)
+            {
+                if (element.Faces == null) continue;
+                foreach (var entry in element.Faces)
+                    if (!entry.Value.HasExplicitUv)
+                        entry.Value.UV = AutoUv(entry.Key, element.From, element.To);
+            }
+        }
+
+        // The default face UV (0..16 texture space) Minecraft derives from the element's from/to: each face takes
+        // the two perpendicular axes of its extent, with the V-axis (and the back/east faces' U) flipped to match
+        // the texture orientation. Verified to reproduce vanilla's explicit wall/fence UVs and to give
+        // [0,0,16,16] for a full cube. Engine axes: North=-Z(Back), South=+Z(Front), East=+X(Right), West=-X(Left).
+        private static Vector4D<float> AutoUv(BlockFace face, Vector3D<float> from, Vector3D<float> to)
+        {
+            switch (face)
+            {
+                case BlockFace.Top:    return new Vector4D<float>(from.X, from.Z, to.X, to.Z);
+                case BlockFace.Bottom: return new Vector4D<float>(from.X, 16 - to.Z, to.X, 16 - from.Z);
+                case BlockFace.Back:   return new Vector4D<float>(16 - to.X, 16 - to.Y, 16 - from.X, 16 - from.Y);
+                case BlockFace.Front:  return new Vector4D<float>(from.X, 16 - to.Y, to.X, 16 - from.Y);
+                case BlockFace.Left:   return new Vector4D<float>(from.Z, 16 - to.Y, to.Z, 16 - from.Y);
+                case BlockFace.Right:  return new Vector4D<float>(16 - to.Z, 16 - to.Y, 16 - from.Z, 16 - from.Y);
+                default:               return new Vector4D<float>(0, 0, 16, 16);
+            }
         }
 
         private static void LoadModelTextures(BlockModel model, string path)
@@ -201,15 +236,34 @@ namespace MinecraftClone3API.Graphics
         {
             public Vector3D<float> From;
             public Vector3D<float> To;
+            public ElementRotation Rotation;
             public Dictionary<BlockFace, FaceData> Faces;
+        }
+
+        /// <summary>A model element's optional rotation about an <see cref="Origin"/> (Minecraft 0..16 model
+        /// space) by <see cref="Angle"/> degrees around one <see cref="Axis"/>. <see cref="Rescale"/> scales the
+        /// two perpendicular axes by 1/cos(angle) so a 45° plane spans the full block — this is what gives the
+        /// <c>cross</c> models (flowers, grass, saplings) their X silhouette. Applied by the mesher at the
+        /// element's placement, before the block-state orientation.</summary>
+        public class ElementRotation
+        {
+            public Vector3D<float> Origin;
+            public string Axis;
+            public float Angle;
+            public bool Rescale;
         }
 
         public class FaceData
         {
-            public Vector4D<float> UV = new Vector4D<float>(0, 0, 16, 16);
+            // NaN in X marks "uv omitted in the model" (real uvs are 0..16, so NaN can't collide). The parser
+            // then fills it from the element's from/to — Minecraft's auto-UV — instead of stretching the full
+            // texture across a partial face. See BlockModel.FillMissingUvs.
+            public Vector4D<float> UV = new Vector4D<float>(float.NaN, 0, 0, 0);
             public string Texture;
             public BlockFace Cullface;
             public int TintIndex = -1;
+
+            public bool HasExplicitUv => !float.IsNaN(UV.X);
 
             [JsonIgnore]
             public BlockTexture LoadedTexture = CommonResources.MissingTexture;

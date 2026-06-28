@@ -198,7 +198,7 @@ namespace MinecraftClone3API.Graphics
                 mesh = new MeshBuffer();
                 // The -0.5 origin offset re-centres the corner-origin [0,1] cell mesh on the origin (where the iso
                 // camera looks).
-                ChunkMesher.AddBlockToVao(IconWorld.Instance, Vector3i.Zero, 0, 0, 0, block, mesh, mesh, new Vector3(-0.5f));
+                ChunkMesher.AddBlockToVao(IconWorld.Instance, Vector3i.Zero, 0, 0, 0, block, mesh, mesh, new Vector3(-0.5f), inventory: true);
             }
 
             return RenderMeshToTexture(mesh, _frameBind, Size, Size);

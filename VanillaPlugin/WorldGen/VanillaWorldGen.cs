@@ -37,6 +37,20 @@ namespace VanillaPlugin.WorldGen
             context.Register(oakSparse);
             context.Register(oakDense);
 
+            // Ground cover: grass tufts (dense), ferns, and a few flower species, scattered on grass surfaces.
+            var shortGrass = GameRegistry.GetBlock("Vanilla:ShortGrass");
+            var fern = GameRegistry.GetBlock("Vanilla:Fern");
+            var grassPatch = new PatchFeature("GrassPatch", shortGrass, grass, 10, 5, 14);
+            var fernPatch = new PatchFeature("FernPatch", fern, grass, 4, 4, 8);
+            var dandelionPatch = new PatchFeature("DandelionPatch", GameRegistry.GetBlock("Vanilla:Dandelion"), grass, 2, 3, 4);
+            var poppyPatch = new PatchFeature("PoppyPatch", GameRegistry.GetBlock("Vanilla:Poppy"), grass, 2, 3, 4);
+            var cornflowerPatch = new PatchFeature("CornflowerPatch", GameRegistry.GetBlock("Vanilla:Cornflower"), grass, 1, 3, 4);
+            context.Register(grassPatch);
+            context.Register(fernPatch);
+            context.Register(dandelionPatch);
+            context.Register(poppyPatch);
+            context.Register(cornflowerPatch);
+
             _coal = new OreFeature("CoalVein", coalOre, stone, 12, 18, 0, 70);
             _iron = new OreFeature("IronVein", ironOre, stone, 8, 12, -16, 50);
             _gold = new OreFeature("GoldVein", goldOre, stone, 6, 4, -28, 28);
@@ -51,14 +65,23 @@ namespace VanillaPlugin.WorldGen
                 Temperature = 0.55f, Humidity = 0.45f,
                 TopBlock = grass, FillerBlock = dirt, UnderwaterBlock = sand,
                 HeightBias = 2, HeightVariation = 4
-            }.InDimension(OverworldDimension.Key).AddFeature(DecorationStep.Vegetation, oakSparse));
+            }.InDimension(OverworldDimension.Key)
+                .AddFeature(DecorationStep.Vegetation, oakSparse)
+                .AddFeature(DecorationStep.Vegetation, grassPatch)
+                .AddFeature(DecorationStep.Vegetation, dandelionPatch)
+                .AddFeature(DecorationStep.Vegetation, poppyPatch)
+                .AddFeature(DecorationStep.Vegetation, cornflowerPatch));
 
             context.Register(new Biome("Forest")
             {
                 Temperature = 0.5f, Humidity = 0.8f,
                 TopBlock = grass, FillerBlock = dirt, UnderwaterBlock = sand,
                 HeightBias = 3, HeightVariation = 5
-            }.InDimension(OverworldDimension.Key).AddFeature(DecorationStep.Vegetation, oakDense));
+            }.InDimension(OverworldDimension.Key)
+                .AddFeature(DecorationStep.Vegetation, oakDense)
+                .AddFeature(DecorationStep.Vegetation, grassPatch)
+                .AddFeature(DecorationStep.Vegetation, fernPatch)
+                .AddFeature(DecorationStep.Vegetation, poppyPatch));
 
             context.Register(new Biome("Desert")
             {
@@ -72,7 +95,9 @@ namespace VanillaPlugin.WorldGen
                 Temperature = 0.22f, Humidity = 0.28f,
                 TopBlock = grass, FillerBlock = dirt, UnderwaterBlock = gravel,
                 HeightBias = 24, HeightVariation = 14
-            }.InDimension(OverworldDimension.Key).AddFeature(DecorationStep.Vegetation, oakSparse));
+            }.InDimension(OverworldDimension.Key)
+                .AddFeature(DecorationStep.Vegetation, oakSparse)
+                .AddFeature(DecorationStep.Vegetation, grassPatch));
 
             context.Register(new Biome("Snowy")
             {

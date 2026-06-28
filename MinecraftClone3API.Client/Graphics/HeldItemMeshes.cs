@@ -34,6 +34,12 @@ namespace MinecraftClone3API.Graphics
                 ResourceReader.ReadBlockTexture(item.TexturePath);
             }
 
+            // Blocks that render their item form as a flat sprite (torch/ladder/flowers, ItemSpriteTexture) need
+            // that sprite in the arrays too — it's a location ReadBlockTexture resolves (Exists may not see it).
+            foreach (var block in GameRegistry.Blocks)
+                if (block.ItemSpriteTexture != null)
+                    ResourceReader.ReadBlockTexture(block.ItemSpriteTexture);
+
             // Projectile sprites are "minecraft:item/…" locations that ReadBlockTexture resolves (Exists does
             // not), so register them directly into the arrays — same as the entity sheets.
             foreach (var type in GameRegistry.EntityTypes)

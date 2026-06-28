@@ -126,6 +126,9 @@ modes, toggled by **double-tapping Space**:
   sprint-swimming), all velocity damped by `WaterDrag`, **Space buoys up** (`SwimImpulse`), otherwise a slow
   sink (`WaterGravity` ≪ land gravity). Liquid is pass-through, so swept collision + the ground probe still
   run; you don't fall through.
+- **Climb (on a ladder):** when the body overlaps a `Block.IsClimbable` block (`PlayerPhysics.IsOnLadder`), the
+  walk tick clamps horizontal speed so you cling and overrides the vertical motion just before the move — a
+  movement key or jump climbs up (`LadderClimbSpeed`), otherwise you slide down slowly (`LadderDescendSpeed`).
 - **Fly (creative):** the same fixed-step `Entity.Move` — Space/Shift up/down, Ctrl fast, **no
   gravity/collision** (noclip). Also runs in the 20 tps tick and is render-interpolated like walking.
 

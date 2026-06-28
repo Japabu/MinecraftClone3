@@ -32,6 +32,32 @@ namespace VanillaPlugin
         // Wood types beyond oak (which is registered explicitly). Each gets a log, planks, and leaves set.
         private static readonly string[] WoodTypes = { "spruce", "birch", "jungle", "acacia", "dark_oak" };
 
+        // The classic overworld small flowers (each a single-block cross model). Registered as BlockPlant.
+        private static readonly string[] Flowers =
+        {
+            "dandelion", "poppy", "blue_orchid", "allium", "azure_bluet", "red_tulip", "orange_tulip",
+            "white_tulip", "pink_tulip", "oxeye_daisy", "cornflower", "lily_of_the_valley"
+        };
+
+        // Wood types that get a fence (oak included). Drives the multipart fence registration.
+        private static readonly string[] FenceWoods = { "oak", "spruce", "birch", "jungle", "acacia", "dark_oak" };
+
+        // Stone-family blocks that get a wall (registry name, model id stem).
+        private static readonly (string Name, string Id)[] WallTypes =
+        {
+            ("Cobblestone", "cobblestone"), ("MossyCobblestone", "mossy_cobblestone"), ("StoneBrick", "stone_brick"),
+            ("Sandstone", "sandstone"), ("Brick", "brick"), ("Granite", "granite"), ("Diorite", "diorite"),
+            ("Andesite", "andesite"), ("NetherBrick", "nether_brick")
+        };
+
+        // Stone-family blocks that get a slab (registry name, model id stem). Wood slabs are added per WoodType.
+        private static readonly (string Name, string Id)[] StoneSlabs =
+        {
+            ("Stone", "stone"), ("Cobblestone", "cobblestone"), ("StoneBrick", "stone_brick"),
+            ("Sandstone", "sandstone"), ("Brick", "brick"), ("Quartz", "quartz"),
+            ("SmoothStone", "smooth_stone"), ("Andesite", "andesite"), ("Granite", "granite"), ("Diorite", "diorite")
+        };
+
         public void Load(PluginContext context)
         {
             // Hardness, preferred tool, and harvest tier match Minecraft (drive survival mining time); bedrock
@@ -54,7 +80,8 @@ namespace VanillaPlugin
             context.Register(new BlockBasic("OakPlanks", "minecraft:block/oak_planks", true, 2.0f, ToolType.Axe));
             context.Register(new BlockLeaves("Leaves", "minecraft:block/oak_leaves"));
             context.Register(new BlockWater());
-            context.Register(new BlockBasic("BrewingStand", "minecraft:block/brewing_stand", false) { CreativeTab = CreativeTab.FunctionalBlocks });
+            context.Register(new BlockBasic("BrewingStand", "minecraft:block/brewing_stand", false)
+                { CreativeTab = CreativeTab.FunctionalBlocks, ItemSpriteTexture = "minecraft:item/brewing_stand" });
 
             // Wood sets for the other tree species (log/planks/leaves), so forests and crafting have variety.
             foreach (var wood in WoodTypes)
@@ -112,6 +139,29 @@ namespace VanillaPlugin
                 if (color != "white")
                     context.Register(new BlockBasic(ToPascal(color) + "Wool", "minecraft:block/" + color + "_wool", true, 0.8f) { CreativeTab = CreativeTab.ColoredBlocks });
             }
+
+            // Decorative plants — single-block cross models (flowers, fern, grass tuft). Cutout, pass-through,
+            // instantly breakable, placeable only on grass/dirt; each auto-gets a NaturalBlocks creative item.
+            foreach (var flower in Flowers)
+                context.Register(new BlockPlant(ToPascal(flower), "minecraft:" + flower));
+            context.Register(new BlockTintedPlant("Fern", "minecraft:fern"));
+            context.Register(new BlockTintedPlant("ShortGrass", "minecraft:short_grass"));
+
+            // Slabs — half-height blocks driven by the pack's slab blockstates (bottom/top/double). Wood slabs
+            // mine with an axe; stone-family slabs need the correct pickaxe tier like their full block.
+            context.Register(new BlockSlab("OakSlab", "oak", 2.0f, ToolType.Axe));
+            foreach (var wood in WoodTypes)
+                context.Register(new BlockSlab(ToPascal(wood) + "Slab", wood, 2.0f, ToolType.Axe));
+            foreach (var (name, id) in StoneSlabs)
+                context.Register(new BlockSlab(name + "Slab", id, 2.0f, ToolType.Pickaxe, 0, true));
+
+            context.Register(new BlockLadder());
+
+            // Fences and walls — multipart blockstates: a post plus an arm per connected neighbour, 1.5 tall.
+            foreach (var wood in FenceWoods)
+                context.Register(new BlockFence(ToPascal(wood) + "Fence", wood));
+            foreach (var (name, id) in WallTypes)
+                context.Register(new BlockWall(name + "Wall", id));
 
             // Nether content.
             context.Register(new BlockBasic("Netherrack", "minecraft:block/netherrack", true) { CreativeTab = CreativeTab.NaturalBlocks });

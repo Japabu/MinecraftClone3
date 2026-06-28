@@ -57,6 +57,13 @@ namespace MinecraftClone3API.Blocks
         /// it explicitly. Null for blocks with no Minecraft equivalent.</summary>
         public string MinecraftId;
 
+        /// <summary>When non-null, this block's item form (inventory icon, first-person viewmodel, dropped entity)
+        /// renders as a FLAT 2D sprite — a texture location like <c>"minecraft:block/torch"</c> or
+        /// <c>"minecraft:item/brewing_stand"</c> — exactly like Minecraft's <c>item/generated</c> models, instead
+        /// of a 3D render of the block model. Used for thin/cross blocks (torch, ladder, flowers) whose 3D
+        /// isometric icon reads poorly. Client-only; the in-world chunk mesh is unaffected.</summary>
+        public string ItemSpriteTexture;
+
         /// <summary>The creative-menu tab this block (and its auto-generated <see cref="ItemBlock"/>) appears
         /// under. Defaults to <see cref="DefaultCreativeTab"/>; set explicitly at registration to override a
         /// single inline block.</summary>
@@ -80,6 +87,10 @@ namespace MinecraftClone3API.Blocks
         public virtual bool CanPassThrough(WorldBase world, Vector3D<int> blockPos) => false;
         public virtual bool CanTarget(WorldBase world, Vector3D<int> vector3I) => true;
         public virtual bool IsLiquid => false;
+
+        /// <summary>Whether a player whose body overlaps this block may climb it (ladders/vines): the walk
+        /// physics clamps the fall and lets the player ascend. Default false.</summary>
+        public virtual bool IsClimbable(WorldBase world, Vector3D<int> blockPos) => false;
 
         /// <summary>Damage applied to a player whose body overlaps this block, per environmental-damage tick
         /// (0 = harmless).</summary>
@@ -199,6 +210,13 @@ namespace MinecraftClone3API.Blocks
 
         public virtual Vector4D<float> GetTintColor(WorldBase world, Vector3D<int> blockPos, int tintId) => new Vector4D<float>(1f, 1f, 1f, 1f);
         public virtual LightLevel GetLightLevel(WorldBase world, Vector3D<int> blockPos) => LightLevel.Zero;
+
+        /// <summary>Server-side: whether this block may occupy <paramref name="blockPos"/> given its surroundings
+        /// and the placement <paramref name="metadata"/> (the same value passed to <see cref="OnPlaced"/>, e.g. a
+        /// ladder's facing — needed here because the block data isn't written yet when this runs). Checked by
+        /// <c>WorldServer.PlaceBlock</c> before the block is set; returning false silently rejects the placement.
+        /// Default: always placeable.</summary>
+        public virtual bool CanPlaceAt(WorldBase world, Vector3D<int> blockPos, int metadata) => true;
 
         public virtual void OnPlaced(WorldBase world, Vector3D<int> blockPos, EntityPlayer player, int metadata)
         {

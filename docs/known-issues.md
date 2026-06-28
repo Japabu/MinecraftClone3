@@ -253,10 +253,37 @@ relevant permanent doc. Not a changelog.
   ignored and those blocks aren't registered. No experience is granted on collecting output (the engine has no
   XP system). Container slot edits are client-trusted like inventory edits. If a furnace is broken while its
   screen is open the screen shows stale state until closed (its block data is gone server-side).
-- **The blockstate parser only handles the `variants` form.** `BlockStateDefinition` reads
-  `blockstates/<name>.json` variants (model + x/y rotation; weighted lists take the first). The `multipart`
-  form (fences, redstone, walls) resolves to null → the block falls back to its single `Block.Model`. Add
-  multipart support before relying on connected/multipart blocks.
+- **Decoration blocks — accepted simplifications.** Plants (flowers/fern/grass tuft), slabs, ladders, fences,
+  and walls are in (`VanillaPlugin/Blocks/Block{Plant,TintedPlant,Slab,Ladder,Fence,Wall,Connecting}.cs`),
+  built on element-rotation cross models, the `variants`/`multipart` blockstate parser, a `Block.CanPlaceAt(world,
+  pos, metadata)` placement gate (it receives the placement metadata because the block data isn't written until
+  `OnPlaced`), `Block.ItemSpriteTexture` flat item icons, and `Block.IsClimbable` ladder physics in
+  `PlayerPhysics`. Deferred/accepted edges:
+  - **Plants don't pop off when their support is removed** — they float. `CanPlaceAt` blocks *placing* one off
+    grass/dirt, but there's no neighbour-driven break (a one-shot scheduled tick would need the tick system to
+    fire `OnServerTick` for non-`NeedsServerTick` blocks; making every plant tick every tick like a falling
+    block was rejected as too costly for potentially world-carpeting grass).
+  - **Grass/fern flat item icons are untinted** — `ItemSpriteTexture` blits the raw greyscale `short_grass`/`fern`
+    sprite (the GUI/extrude path applies no biome tint), so their icon reads pale grey while the in-world block is
+    green. Flowers/torch/ladder are full-colour and correct. Tinting the flat sprite is a deferred polish.
+  - **Slabs don't merge into a double slab** — placing a slab against the matching opposite half makes a second
+    separate slab, not a `type=double` (the place flow always targets the adjacent cell; merge needs a
+    client-side placement-targeting special case). The `double` state renders/collides correctly but is
+    currently only reachable via the blockstate, so it's dormant.
+  - **Walls always show the centre post and only emit `low` side connections** — the vanilla post-cull (hide the
+    post on a straight 2-connection run) and the `tall` height-under-overhang variant are simplified away;
+    cosmetic only.
+  - **No fence gates** (fences connect to fences + solid faces only), and the raytrace/outline for slabs,
+    ladders, fences, and walls is the full cube (same accepted limitation as stairs).
+  - **Multipart blockstates are supported** (`when`/`apply`, incl. `OR` and `low|tall` value lists; `AND` is
+    ignored). The mesher emits every matching `apply` model; the inventory icon/viewmodel falls back to the
+    block's single `Model` (the `*_inventory` model) since the icon world has no neighbours.
+  - **`uvlock` is implemented for the y-rotation top/bottom case** (fence/wall side arms): the mesher rotates the
+    UV *rectangle* of the up/down faces about its centre (`ChunkMesher.RotateUv`, direction from the
+    `CreateRotationY(-y)` convention) so a rotated arm's top texture stays world-aligned. Rotating the rect (not
+    just permuting the four corner UVs) is what keeps a non-square region (a 6×8 wall-arm top) from *stretching*
+    when a 90/270° turn swaps the footprint to 8×6. **Not** done: uvlock on the four vertical side faces (invisible
+    on the thin arms) and any x-rotation uvlock; those keep the model UVs.
 - **Entity models load from Bedrock geometry data, but the loader is a useful subset.** `BedrockModelLoader`
   reads the built-in mobs from `*.geo.json` (see [entities.md](entities.md)) and honors per-cube
   `uv`/`inflate` and X-axis bone rotation. **Not** interpreted (so an arbitrary Blockbench/community export may

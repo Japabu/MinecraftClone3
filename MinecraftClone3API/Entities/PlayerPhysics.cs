@@ -25,6 +25,12 @@ namespace MinecraftClone3API.Entities
         private const float WaterGravity = 0.02f;
         private const float SwimImpulse = 0.04f;
 
+        // On a ladder: horizontal motion is clamped so the player clings, the fall is slowed, and pressing a
+        // movement key (or jump) climbs up — Minecraft's gentle ladder feel.
+        private const float LadderClingSpeed = 0.15f;
+        private const float LadderClimbSpeed = 0.12f;
+        private const float LadderDescendSpeed = 0.15f;
+
         private const float HalfWidth = EntityPlayer.Width / 2;
         private const float Height = EntityPlayer.Height;
         private const float Epsilon = 1e-4f;
@@ -45,6 +51,11 @@ namespace MinecraftClone3API.Entities
             p.Velocity.Z += wishDir.Y * accel;
 
             if (jump && p.OnGround) p.Velocity.Y = JumpVelocity;
+
+            // On a ladder, override the vertical motion (and rein in the horizontal) just before the move, so the
+            // player clings and climbs instead of falling. Gravity still applies after the move and is re-clamped
+            // here next tick.
+            if (IsOnLadder(world, p)) ApplyLadder(p, wishDir, jump);
 
             // Minecraft order: move with the current velocity (so a jump's first tick rises the full
             // 0.42), THEN apply gravity + friction for the next tick. Applying gravity before the move
@@ -87,6 +98,33 @@ namespace MinecraftClone3API.Entities
             => world.GetBlock(BlockCoord(x), BlockCoord(y), BlockCoord(z)).IsLiquid;
 
         private static int BlockCoord(float v) => (int) Math.Floor(v);
+
+        // True if any cell the player's AABB overlaps is a climbable block (a ladder). Cheap: a handful of cells.
+        private static bool IsOnLadder(WorldBase world, EntityPlayer p)
+        {
+            var pos = p.Position;
+            var x0 = Floor(pos.X - HalfWidth); var x1 = Floor(pos.X + HalfWidth);
+            var z0 = Floor(pos.Z - HalfWidth); var z1 = Floor(pos.Z + HalfWidth);
+            var y0 = Floor(pos.Y); var y1 = Floor(pos.Y + Height);
+            for (var x = x0; x <= x1; x++)
+            for (var y = y0; y <= y1; y++)
+            for (var z = z0; z <= z1; z++)
+            {
+                var cell = new Vector3D<int>(x, y, z);
+                if (world.GetBlock(x, y, z).IsClimbable(world, cell)) return true;
+            }
+            return false;
+        }
+
+        private static void ApplyLadder(EntityPlayer p, Vector2D<float> wishDir, bool jump)
+        {
+            p.Velocity.X = Math.Clamp(p.Velocity.X, -LadderClingSpeed, LadderClingSpeed);
+            p.Velocity.Z = Math.Clamp(p.Velocity.Z, -LadderClingSpeed, LadderClingSpeed);
+
+            // Pressing a movement key (into the ladder) or jump climbs; otherwise slide down slowly.
+            var climbing = jump || wishDir.X != 0f || wishDir.Y != 0f;
+            p.Velocity.Y = climbing ? LadderClimbSpeed : Math.Max(p.Velocity.Y, -LadderDescendSpeed);
+        }
 
         private static bool MoveWithCollision(WorldBase world, EntityPlayer p)
         {

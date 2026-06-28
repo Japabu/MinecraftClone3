@@ -47,7 +47,9 @@ every biome tagged `Vanilla:Overworld`, so a plugin biome auto-participates.
    stay unstreamed).
 7. **Decoration** — for the chunk and each origin in a **±1-chunk XZ margin**, seed a `WorldGenRandom` from
    `(seed, originChunk, feature.Salt)` and run the dimension's shared features (ores) then the origin's
-   centre-biome features (trees) for each `DecorationStep` (Ores, Vegetation). Features emit in **absolute
+   centre-biome features (trees + ground cover) for each `DecorationStep` (Ores, Vegetation). Ground cover is
+   `PatchFeature` — scatters a single-block plant (grass tuft/fern/flower) in small clusters on exposed grass
+   columns above sea level; reach is bounded by the patch radius so it stays inside the margin. Features emit in **absolute
    coordinates through `IChunkGenRegion`, which clips writes to the chunk being generated** — so a tree or
    vein straddling a border is computed identically by both chunks (Minecraft's population-seed model) with
    **no neighbour writes**. Recomputed per vertical chunk too (the RNG is Y-independent), so a feature

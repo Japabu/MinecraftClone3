@@ -46,6 +46,13 @@ namespace MinecraftClone3API.Graphics
                            ItemDisplay.FirstPersonPose(item, block, swing) * inverseView;
                 EntityRenderer.EnqueueStaticParts(_list, beModel, pose, light);
             }
+            else if (block != null && block.ItemSpriteTexture != null &&
+                     HeldItemMeshes.GetByTexture(block.ItemSpriteTexture) is EntityRenderer.PartMesh spriteMesh)
+            {
+                // A flat-icon block (torch/ladder/flower) is held as its extruded sprite with the flat item pose.
+                var pose = ItemDisplay.FirstPersonPose(item, null, swing) * inverseView;
+                _list.Enqueue(spriteMesh, pose, light);
+            }
             else if (block != null && EntityRenderer.GetItemMesh(block.Id) is EntityRenderer.PartMesh blockMesh)
             {
                 var pose = ItemDisplay.FirstPersonPose(item, block, swing) * inverseView;

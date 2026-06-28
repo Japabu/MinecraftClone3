@@ -233,13 +233,55 @@ namespace MinecraftClone3API.Util
             return LodColumn.IsEmpty(packed) ? int.MinValue : LodColumn.SurfaceY(packed);
         }
 
-        public static void AddBlockToVao(WorldBase world, Vector3D<int> blockPos, int x, int y, int z, Block block,
-            MeshBuffer vao, MeshBuffer transparentVao, Vector3D<float> originOffset = default)
+        // Bake a model element's `rotation` (origin in 0..16 model space, axis, angle, optional rescale) into a
+        // block-space matrix: translate the origin to the cell centre of rotation, rotate (angle negated to match
+        // the engine's +X-east/+Z-south axes, like BlockStateDefinition.RotationFor), and — when rescale is set —
+        // widen the two perpendicular axes by 1/cos(angle) so a 45° plane reaches the block edges (cross models).
+        private static Matrix4X4<float> ElementRotation(BlockModel.ElementRotation r)
         {
-            //If block is invisible or does not have a model for some reason ignore it
-            var (model, orient) = block.GetRenderModel(world, blockPos);
-            if (!block.IsVisible(world, blockPos) || model == null) return;
+            var origin = r.Origin / 16f;
+            var angle = r.Angle * (MathF.PI / 180f);
+            var s = r.Rescale ? 1f / MathF.Cos(angle) : 1f;
+            Matrix4X4<float> m;
+            switch (r.Axis)
+            {
+                case "x": m = Matrix4X4.CreateScale(new Vector3D<float>(1f, s, s)) * Matrix4X4.CreateRotationX(-angle); break;
+                case "z": m = Matrix4X4.CreateScale(new Vector3D<float>(s, s, 1f)) * Matrix4X4.CreateRotationZ(-angle); break;
+                default:  m = Matrix4X4.CreateScale(new Vector3D<float>(s, 1f, s)) * Matrix4X4.CreateRotationY(-angle); break;
+            }
+            return Matrix4X4.CreateTranslation(-origin) * m * Matrix4X4.CreateTranslation(origin);
+        }
 
+        public static void AddBlockToVao(WorldBase world, Vector3D<int> blockPos, int x, int y, int z, Block block,
+            MeshBuffer vao, MeshBuffer transparentVao, Vector3D<float> originOffset = default, bool inventory = false)
+        {
+            if (!block.IsVisible(world, blockPos)) return;
+
+            // Multipart blocks (fences, walls) compose several models — a post plus one arm per connected
+            // neighbour — so emit every matching case. The inventory icon/viewmodel has no neighbours, so it
+            // falls back to the block's single inventory model instead of a lone post.
+            var sd = block.StateDefinition;
+            if (sd != null && sd.IsMultipart && !inventory)
+            {
+                foreach (var variant in sd.ResolveAll(block.GetBlockState(world, blockPos)))
+                    if (variant.Model != null)
+                        EmitModel(world, blockPos, x, y, z, block, variant.Model, variant.Rotation, vao, transparentVao,
+                            originOffset, variant.UvLock, variant.YRot);
+                return;
+            }
+
+            //If block does not have a model for some reason ignore it
+            var (model, orient) = block.GetRenderModel(world, blockPos);
+            if (model != null)
+                EmitModel(world, blockPos, x, y, z, block, model, orient, vao, transparentVao, originOffset);
+        }
+
+        // Emits one model's geometry at a block, applying its orientation and per-element rotation and the usual
+        // neighbour face-culling. Called once for a normal block, once per matching case for a multipart block.
+        private static void EmitModel(WorldBase world, Vector3D<int> blockPos, int x, int y, int z, Block block,
+            BlockModel model, Matrix4X4<float> orient, MeshBuffer vao, MeshBuffer transparentVao, Vector3D<float> originOffset,
+            bool uvLock = false, int yRot = 0)
+        {
             // Block-state orientation (a stair's facing, a furnace's blockstate variant rotation) applied after
             // the element transform: the -0.5 shift centres the element on the block origin so `orient` rotates
             // about the block centre, then the +0.5 shift moves it into the [0,1] cell so block P fills
@@ -247,11 +289,15 @@ namespace MinecraftClone3API.Util
 
             foreach (var element in model.Elements)
             {
+                // Place the element into [from/16, to/16] block space, then (if present) rotate it about its
+                // own origin — a cross model's two planes are flat boxes rotated 45° about Y to form the X.
                 var transform = Matrix4X4.CreateScale((element.To - element.From) / 16) *
-                                Matrix4X4.CreateTranslation((element.To - element.From) / 32 + element.From / 16) *
-                                Matrix4X4.CreateTranslation(new Vector3D<float>(-0.5f)) *
-                                orient *
-                                Matrix4X4.CreateTranslation(new Vector3D<float>(0.5f));
+                                Matrix4X4.CreateTranslation((element.To - element.From) / 32 + element.From / 16);
+                if (element.Rotation != null)
+                    transform *= ElementRotation(element.Rotation);
+                transform *= Matrix4X4.CreateTranslation(new Vector3D<float>(-0.5f)) *
+                             orient *
+                             Matrix4X4.CreateTranslation(new Vector3D<float>(0.5f));
 
                 foreach (var entry in element.Faces)
                 {
@@ -276,18 +322,44 @@ namespace MinecraftClone3API.Util
                         otherTransparency == TransparencyType.None && fullBlock && otherFullBlock) continue;
 
                     AddFaceToVao(world, blockPos, x, y, z, block, face, entry.Value,
-                        transparency == TransparencyType.Transparent ? transparentVao : vao, transform, originOffset);
+                        transparency == TransparencyType.Transparent ? transparentVao : vao, transform, originOffset,
+                        uvLock: uvLock, yRot: yRot);
                 }
             }
         }
 
-        public static void AddFaceToVao(WorldBase world, Vector3D<int> blockPos, int x, int y, int z, Block block, BlockFace face, BlockModel.FaceData data, MeshBuffer vao, Matrix4X4<float> transform, Vector3D<float> originOffset = default, Vector4D<float>? lodLight = null)
+        // uvlock for a blockstate y-rotation: rotate a top/bottom face's UV RECTANGLE about its own centre by the
+        // rotation angle so the texture stays world-aligned instead of spinning with the arm. Rotating the rect
+        // (not just permuting the 4 corner UVs) is what keeps a non-square region (e.g. a 6×8 wall-arm top) from
+        // STRETCHING when a 90/270° turn swaps the face's footprint to 8×6 — the rect swaps with it. Direction is
+        // derived from the engine's CreateRotationY(-y) convention (and reduces to the corner permutation for a
+        // square rect, which was verified correct). Bottom is the mirror (its tangent basis is flipped), so it
+        // rotates by the opposite angle.
+        private static Vector2D<float> RotateUv(Vector2D<float> uv, Vector2D<float> centre, int angle)
+        {
+            var d = uv - centre;
+            switch (angle)
+            {
+                case 90: return new Vector2D<float>(centre.X - d.Y, centre.Y + d.X);
+                case 180: return new Vector2D<float>(centre.X - d.X, centre.Y - d.Y);
+                case 270: return new Vector2D<float>(centre.X + d.Y, centre.Y - d.X);
+                default: return uv;
+            }
+        }
+
+        public static void AddFaceToVao(WorldBase world, Vector3D<int> blockPos, int x, int y, int z, Block block, BlockFace face, BlockModel.FaceData data, MeshBuffer vao, Matrix4X4<float> transform, Vector3D<float> originOffset = default, Vector4D<float>? lodLight = null, bool uvLock = false, int yRot = 0)
         {
             var faceId = (int) face - 1;
             var baseVertex = vao.VertexCount;
 
             var texture = data.LoadedTexture;
             var texCoords = data.GetTexCoords();
+            // uvlock: when the blockstate y-rotates a model (a fence/wall side arm), counter-rotate the UV rect of
+            // the faces whose normal is along the Y axis (top/bottom) so their texture stays world-aligned instead
+            // of spinning (or stretching) with the arm. The rect rotates about its own centre; bottom mirrors top.
+            var uvLockFace = uvLock && yRot != 0 && (face == BlockFace.Top || face == BlockFace.Bottom);
+            var uvCentre = uvLockFace ? (texCoords[0] + texCoords[3]) * 0.5f : default;
+            var uvAngle = !uvLockFace ? 0 : face == BlockFace.Top ? yRot : (360 - yRot) % 360;
             var color = data.TintIndex == -1 ? new Vector4D<float>(1) : block.GetTintColor(world, blockPos, data.TintIndex);
             var fn = face.GetNormal(); var normal = new Vector4D<float>(fn.X, fn.Y, fn.Z, 0f);
             if (block.GetRenderMaterial(world, blockPos) == RenderMaterial.Water) normal.W = WaterNormalW;
@@ -312,7 +384,8 @@ namespace MinecraftClone3API.Util
                 var position = new Vector3D<float>(transformed.X, transformed.Y, transformed.Z) + blockPos.ToVector3() + originOffset;
 
                 //tex coords are -1 if texture is null; texCoord z = texId, w = textureArrayId
-                var texCoord = texture == null ? new Vector4D<float>(-1) : new Vector4D<float>(texCoords[j].X, texCoords[j].Y, 0f, 0f) {Z = texture.TextureId, W = texture.ArrayId};
+                var uv = uvLockFace ? RotateUv(texCoords[j], uvCentre, uvAngle) : texCoords[j];
+                var texCoord = texture == null ? new Vector4D<float>(-1) : new Vector4D<float>(uv.X, uv.Y, 0f, 0f) {Z = texture.TextureId, W = texture.ArrayId};
 
                 // LOD faces light flat from the exposed air super-block (per-vertex AO sampling would read the
                 // immediate neighbour, which is inside the solid super-block region → black faces).
