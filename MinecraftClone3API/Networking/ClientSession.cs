@@ -28,13 +28,15 @@ namespace MinecraftClone3API.Networking
 
         /// <summary>Portal transfer state. <see cref="PortalTimer"/> counts ticks the player has stood in a
         /// portal block; <see cref="PortalImmune"/> is set right after a transfer and cleared once the player
-        /// steps off a portal, so arriving inside one doesn't bounce straight back. A non-null
-        /// <see cref="PendingPortalWorld"/> means a transfer is mid-flight: once
+        /// steps off a portal, so arriving inside one doesn't bounce straight back; <see cref="PortalCooldown"/>
+        /// is then armed for a few ticks so stepping straight back in can't instantly re-trigger (a ping-pong).
+        /// A non-null <see cref="PendingPortalWorld"/> means a transfer is mid-flight: once
         /// <see cref="PendingPortalApprox"/>'s column has streamed into that world the destination is finalized —
         /// building/linking a portal when <see cref="PendingBuildPortal"/> (a portal transfer) or just dropping
         /// the player there when not (a respawn back to the Overworld spawn).</summary>
         public int PortalTimer;
         public bool PortalImmune;
+        public int PortalCooldown;
         public WorldServer PendingPortalWorld;
         public Vector3D<int> PendingPortalApprox;
         public bool PendingBuildPortal;

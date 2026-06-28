@@ -270,6 +270,7 @@ namespace MinecraftClone3.States
                 _loading = true;
                 _spawnApplied = false;
                 _loadProgress = 0f;
+                _timeInPortal = 0f;
                 _loadingTimer.Restart();
             }
         }

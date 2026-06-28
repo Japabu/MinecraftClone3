@@ -77,6 +77,10 @@ namespace MinecraftClone3API.Networking
         private const int SurvivalPortalSoakTicks = 80;
         private const int CreativePortalSoakTicks = 1;
 
+        // After arriving and stepping off the destination portal, ignore portals for this long so stepping
+        // straight back in can't instantly re-trigger and ping-pong the player between the linked portals.
+        private const int PortalReentryCooldownTicks = 40;
+
         private TcpListener _listener;
         private Thread _acceptThread;
         private volatile bool _running = true;
@@ -995,14 +999,23 @@ namespace MinecraftClone3API.Networking
             {
                 if (!session.LoggedIn || session.PendingPortalWorld != null) continue;
 
+                // The re-entry grace runs down every tick once armed (on stepping off the arrival portal, below).
+                if (session.PortalCooldown > 0) session.PortalCooldown--;
+
                 if (!TryFindPortalCell(portals, session, out var cell))
                 {
+                    // Clear of any portal: drop the post-arrival immunity and arm the re-entry grace, so stepping
+                    // straight back in can't instantly re-trigger (which let a creative player ping-pong through).
+                    if (session.PortalImmune)
+                    {
+                        session.PortalImmune = false;
+                        session.PortalCooldown = PortalReentryCooldownTicks;
+                    }
                     session.PortalTimer = 0;
-                    session.PortalImmune = false;
                     continue;
                 }
 
-                if (session.PortalImmune) continue;
+                if (session.PortalImmune || session.PortalCooldown > 0) continue;
                 var soak = session.Player.GameMode == GameMode.Creative
                     ? CreativePortalSoakTicks : SurvivalPortalSoakTicks;
                 if (++session.PortalTimer < soak) continue;
