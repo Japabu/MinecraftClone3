@@ -997,6 +997,11 @@ namespace MinecraftClone3API.Networking
             {
                 if (!session.LoggedIn || session.PendingPortalWorld != null) continue;
 
+                // Not yet back in control after a transfer: the client is still draining stale position updates
+                // from the dimension it just left, which floor to coords that aren't a portal in the new world —
+                // reading them here would wrongly clear PortalImmune and bounce the arrival straight back.
+                if (!session.ReadySent) continue;
+
                 if (!TryFindPortalCell(portals, session, out var cell))
                 {
                     // Clear of every portal: drop the post-arrival immunity and reset the soak. An arrival starts
@@ -1048,6 +1053,9 @@ namespace MinecraftClone3API.Networking
 
             var toWorld = GetOrCreateWorld(toKey);
             var approx = portals.ScaleToTarget(fromKey, toKey, feet);
+
+            // TEMP portal diagnostic — remove before merge.
+            Logger.Info($"[portal] BeginTransfer {fromKey} -> {toKey}  feet={feet}  approx={approx}  playerPos={session.Player.Position}");
 
             session.World.RemovePlayer(session.Player);
             BroadcastTo(session.World, new EntityDespawnPacket {EntityId = session.EntityId}, session);
@@ -1133,6 +1141,10 @@ namespace MinecraftClone3API.Networking
                 var stand = buildPortal
                     ? portals.EnsureDestinationPortal(world, session.PendingPortalApprox)
                     : session.PendingPortalApprox.ToVector3() + new Vector3D<float>(0.5f, 0f, 0.5f);
+
+                // TEMP portal diagnostic — remove before merge.
+                Logger.Info($"[portal] arrive in {world.DimensionKey} at {stand}  buildPortal={buildPortal}  approx={session.PendingPortalApprox}");
+
                 session.Player.Position = stand;
                 session.Player.Velocity = Vector3D<float>.Zero;
                 session.PendingPortalWorld = null;
