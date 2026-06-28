@@ -218,10 +218,12 @@ namespace VanillaPlugin
         private static void RegisterArmorSet(PluginContext context, string prefix, string material,
             int helmet, int chestplate, int leggings, int boots)
         {
-            context.Register(new ItemArmor(prefix + "Helmet", $"minecraft/textures/item/{material}_helmet.png", ArmorSlot.Helmet, helmet));
-            context.Register(new ItemArmor(prefix + "Chestplate", $"minecraft/textures/item/{material}_chestplate.png", ArmorSlot.Chestplate, chestplate));
-            context.Register(new ItemArmor(prefix + "Leggings", $"minecraft/textures/item/{material}_leggings.png", ArmorSlot.Leggings, leggings));
-            context.Register(new ItemArmor(prefix + "Boots", $"minecraft/textures/item/{material}_boots.png", ArmorSlot.Boots, boots));
+            // The worn-armor equipment textures use the bare metal name ("gold", not the item prefix "golden").
+            var worn = material == "golden" ? "gold" : material;
+            context.Register(new ItemArmor(prefix + "Helmet", $"minecraft/textures/item/{material}_helmet.png", ArmorSlot.Helmet, helmet, worn));
+            context.Register(new ItemArmor(prefix + "Chestplate", $"minecraft/textures/item/{material}_chestplate.png", ArmorSlot.Chestplate, chestplate, worn));
+            context.Register(new ItemArmor(prefix + "Leggings", $"minecraft/textures/item/{material}_leggings.png", ArmorSlot.Leggings, leggings, worn));
+            context.Register(new ItemArmor(prefix + "Boots", $"minecraft/textures/item/{material}_boots.png", ArmorSlot.Boots, boots, worn));
         }
 
         // A wood species' log/planks/leaves. `id` is the Minecraft resource prefix (e.g. "dark_oak"); `Name`

@@ -132,7 +132,10 @@ convention to compose with the camera math; the WGSL read flips it back.)
 The atlas is **four size-bucketed `texture_2d_array`** (16/64/256/1024 px), bound together (`EnsureAtlasBind`);
 the shader selects by the per-vertex `arrayId`. The block sampler is **nearest magnification** (crisp pixel-art)
 + **trilinear minification**; hardware anisotropy is dropped (WebGPU forbids nearest-mag + anisotropy together),
-with the mip chain + the foliage anti-aliased alpha test carrying minification quality. Mips are built by a
+with the mip chain + the foliage anti-aliased alpha test carrying minification quality. Blocks use **Repeat**
+wrap (faces tile); **entities/worn armor** sample the same arrays through a parallel **clamp** sampler
+(`GpuSamplers.Entity`) since their unwraps don't tile and armor sheets are transparent-padded — clamp stops the
+opposite edge bleeding in at distance. Mips are built by a
 compute shader (`Mipgen.compute.wgsl`, 2×2 box downsample); mipped atlas textures are created with
 `StorageBinding` so the compute pass can write them.
 

@@ -202,6 +202,16 @@ instead: the held stack posed in view space from the resource pack's `display.fi
 (`ItemDisplay`, the vanilla `ItemInHandRenderer` math) plus a swing arc driven by `PlayerController.SwingPhase`,
 compressed into the front reverse-Z depth band (`SetViewport` min/max depth) so the world never clips it.
 
+**Worn armor.** A player's four worn pieces (`Entity.Armor[4]`, indexed by `ArmorSlot`) plate the body via
+`EntityRenderer.QueueArmor`: two biped layers (`armor_outer.geo.json` inflate 1px for helmet/chestplate/boots,
+`armor_inner.geo.json` inflate 0.5px for leggings so it tucks under the chestplate), textured from the resource
+pack's `entity/equipment/humanoid/<material>` + `humanoid_leggings/<material>` sheets (64×32, square-padded into
+the atlas; leather is tinted by its default colour + strap overlay at load). Each slot plates only the parts
+vanilla shows (helmet→head, chestplate→body+arms, leggings→body+legs, boots→legs), reusing the body's per-part
+animation matrix so the plates swing/turn with the limbs. Materials are loaded per registered `Item.ArmorMaterial`.
+The same layers bake into the creative paperdoll (`BuildPlayerIconMesh`). The local player fills its own `Armor`
+from the live inventory at draw time; remote players get it streamed in the move snapshot (see Networking).
+
 **Models are data, not code.** Each type's geometry is a **Bedrock-edition geometry JSON** file (the
 Blockbench-native mob format — bones with `pivot`/`rotation`, cubes with absolute `origin`/`size`/`uv`), loaded
 by `BedrockModelLoader` ([Client/Graphics/BedrockModelLoader.cs](../MinecraftClone3API/Client/Graphics/BedrockModelLoader.cs)).

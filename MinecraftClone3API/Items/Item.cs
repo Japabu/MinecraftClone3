@@ -76,6 +76,12 @@ namespace MinecraftClone3API.Items
         /// <summary>Armor defense points (half-armor-icons) this piece grants while worn; 0 for non-armor.</summary>
         public virtual int ArmorDefense => 0;
 
+        /// <summary>The armor material that names this piece's worn equipment textures
+        /// (<c>entity/equipment/humanoid/&lt;material&gt;</c> for the helmet/chestplate/boots layer and
+        /// <c>entity/equipment/humanoid_leggings/&lt;material&gt;</c> for the leggings layer), e.g.
+        /// <c>"iron"</c>/<c>"diamond"</c>/<c>"leather"</c>. Null for non-armor; only the player model draws it.</summary>
+        public virtual string ArmorMaterial => null;
+
         /// <summary>Server-side gate deciding whether <see cref="OnUseServer"/> may run for this player right now
         /// (e.g. food only when in survival with hunger to refill). True by default.</summary>
         public virtual bool CanUseServer(EntityPlayer player) => true;

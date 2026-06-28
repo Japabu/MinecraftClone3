@@ -424,7 +424,8 @@ namespace MinecraftClone3API.Networking
                         Position = move.Position,
                         Pitch = move.Pitch,
                         Yaw = move.Yaw,
-                        HeldItemId = (ushort) session.Inventory.SelectedItem.ItemId
+                        HeldItemId = (ushort) session.Inventory.SelectedItem.ItemId,
+                        Armor = ArmorIds(session.Inventory)
                     }, session);
                     break;
                 case PlaceBlockRequestPacket place when session.LoggedIn:
@@ -472,6 +473,15 @@ namespace MinecraftClone3API.Networking
                     }
                     break;
             }
+        }
+
+        // Snapshots a player's worn-armor item ids for the move relay so remote clients can draw it.
+        private static ushort[] ArmorIds(Inventory inventory)
+        {
+            var ids = new ushort[Inventory.ArmorSize];
+            for (var i = 0; i < ids.Length; i++)
+                ids[i] = (ushort) inventory.Armor[i].ItemId;
+            return ids;
         }
 
         // Streams the live state of every open container block to the clients viewing it (called each Pump),

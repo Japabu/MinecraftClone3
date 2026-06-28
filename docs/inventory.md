@@ -189,10 +189,10 @@ optimistically, and sends `InventoryAction` / `HeldSlot` on changes. Inputs are 
 
 - **3D isometric block icons** (`Client/Graphics/ItemIconRenderer.cs`) — each block is meshed once into the
   void `IconWorld` and drawn with the `ItemIcon` shader into a per-block `TextureFramebuffer`, cached by block
-  id. Main-thread only (every step is a GL call). The framebuffer is GL bottom-left origin, so
-  `ItemStackRenderer` flips V when blitting. The same forward path also renders the creative inventory's
-  **player paperdoll** (`GetPlayerIcon` — the player box model baked at rest via
-  `EntityRenderer.BuildPlayerIconMesh`, drawn through a taller full-body camera, cached once).
+  id. Main-thread only. The same forward path also renders the creative inventory's **player paperdoll**
+  (`ItemIconRenderer.RenderPlayer` → `EntityRenderer.BuildPlayerIconMesh` — the player box model + worn armor,
+  drawn through a taller full-body camera). The paperdoll re-renders every frame into one persistent target so
+  it can **follow the cursor** (body yaw + head yaw/pitch from the mouse offset, like vanilla).
 - **`ItemStackRenderer`** draws an `ItemStack` in a slot: a block item's 3D icon, or a standalone item's lazily
   loaded 2D sprite (`TexturePath`, cached, placeholder box when absent), plus a count label when above one. It
   re-asserts alpha blending before blitting because `GetIcon` may have just rendered (depth on, blend off).
@@ -209,8 +209,8 @@ optimistically, and sends `InventoryAction` / `HeldSlot` on changes. Inputs are 
     always closes.
   - **Survival Inventory** (bottom-right, chest) over `tab_inventory.png`: the four armor slots (gated by piece),
     the 3×9 main inventory + hotbar, and the **destroy** slot (a source that trashes what's dropped on it). No
-    crafting grid (vanilla hides it here). The player **paperdoll** (the model posed at rest, front view) is
-    rendered into the panel's box by `ItemIconRenderer.GetPlayerIcon`; worn armor isn't drawn on it yet.
+    crafting grid (vanilla hides it here). The player **paperdoll** (looking toward the cursor, wearing its
+    `Inventory.Armor` pieces) is rendered into the panel's box by `ItemIconRenderer.RenderPlayer`.
 
   A category tab shows its bucket in the scrollable 9×5 grid over `tab_items.png` with the tab title drawn at
   (8,6); category/search grid cells are infinite **source** slots, the bottom hotbar row is always the player's.
@@ -222,7 +222,8 @@ optimistically, and sends `InventoryAction` / `HeldSlot` on changes. Inputs are 
   `container/inventory.png`: a 2×2 crafting grid + result (scratch, returns to the inventory on close), the 3×9
   main inventory, the hotbar, and the four **armor slots** (each gated to its piece type via `Slot.CanAccept`,
   written through the `ArmorActionBase` wire convention; shift-click moves a worn piece back to the inventory).
-  Same `ContainerScreen` interaction as the crafting table; the offhand slot / 3D player preview are not modelled.
+  Same `ContainerScreen` interaction as the crafting table. The preview box shows the same cursor-following,
+  armor-wearing paperdoll as the creative tab (`ItemIconRenderer.RenderPlayer`); the offhand slot isn't modelled.
 - **`GuiTooltip`** (`Client/GUI/GuiTooltip.cs`) — the item-name tooltip drawn next to the cursor when hovering
   a non-empty slot; used by both container screens.
 

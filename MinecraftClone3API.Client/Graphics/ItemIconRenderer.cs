@@ -31,15 +31,17 @@ namespace MinecraftClone3API.Graphics
         private static readonly Matrix4 Projection =
             Matrix4X4.CreateOrthographicOffCenter(-0.9f, 0.9f, -0.9f, 0.9f, 10f, -10f);
 
-        // The creative inventory paperdoll: a full-body front view from slightly above, framed feet-to-head.
-        // The target is taller than wide to match the player's silhouette; the ortho box keeps the same aspect
-        // so the model isn't stretched.
-        public const int PlayerWidth = 80;
-        public const int PlayerHeight = 112;
+        // The creative inventory paperdoll: a full-body front view from slightly above, framed feet-to-head with
+        // headroom above the crown so a worn helmet (the body model's outermost layer, inflated ~1px past the
+        // head) isn't clipped by the frustum top. The target is taller than wide to match the player's silhouette;
+        // the ortho box keeps the same aspect so the model isn't stretched. Rendered at ~2.5× the on-screen box so
+        // the nearest-sampled GUI blit stays crisp instead of upscaling a small target into blocky pixels.
+        public const int PlayerWidth = 200;
+        public const int PlayerHeight = 280;
         private static readonly Matrix4 PlayerView =
-            Matrix4X4.CreateLookAt(new Vector3(0f, 1.15f, 3.0f), new Vector3(0f, 0.95f, 0f), Vector3.UnitY);
+            Matrix4X4.CreateLookAt(new Vector3(0f, 1.2f, 3.0f), new Vector3(0f, 1.0f, 0f), Vector3.UnitY);
         private static readonly Matrix4 PlayerProjection =
-            Matrix4X4.CreateOrthographicOffCenter(-0.75f, 0.75f, -1.05f, 1.05f, 10f, -10f);
+            Matrix4X4.CreateOrthographicOffCenter(-0.82f, 0.82f, -1.15f, 1.15f, 10f, -10f);
 
         [StructLayout(LayoutKind.Sequential)]
         private struct IconFrame
@@ -61,6 +63,10 @@ namespace MinecraftClone3API.Graphics
         private static GpuBindGroup _playerFrameBind;
         private static GpuBindGroup _atlasBind;
 
+        // The paperdoll re-renders every frame (it follows the cursor), so it reuses one persistent colour+depth
+        // target rather than allocating per frame.
+        private static GpuTexture _playerColorTex;
+        private static GpuTexture _playerDepthTex;
         private static Texture _playerIcon;
 
         /// <summary>The icon texture for a block id (rendered and cached on first request).</summary>
@@ -129,15 +135,52 @@ namespace MinecraftClone3API.Graphics
             }, "itemIcon.atlas");
         }
 
-        /// <summary>The full-body player paperdoll texture for the creative inventory's Survival-Inventory tab
-        /// (the model posed at rest, front view), rendered and cached on first request. Main-thread only.</summary>
-        public static Texture GetPlayerIcon()
+        /// <summary>Renders the full-body player paperdoll for the creative inventory's Survival-Inventory tab and
+        /// returns its texture. <paramref name="bodyTransform"/> orients the whole model (body yaw) and
+        /// <paramref name="headYaw"/>/<paramref name="headPitch"/> turn the head — so the model looks toward the
+        /// cursor; <paramref name="armor"/> are the four worn pieces drawn over the body. Re-renders into one
+        /// persistent target each call; main-thread only.</summary>
+        public static Texture RenderPlayer(Matrix4 bodyTransform, float headYaw, float headPitch, ushort[] armor)
         {
-            if (_playerIcon != null) return _playerIcon;
             EnsureLoaded();
-            var mesh = EntityRenderer.BuildPlayerIconMesh(Matrix4.Identity);
-            _playerIcon = RenderMeshToTexture(mesh, _playerFrameBind, PlayerWidth, PlayerHeight);
+            EnsurePlayerTarget();
+            var mesh = EntityRenderer.BuildPlayerIconMesh(bodyTransform, headYaw, headPitch, armor);
+            RenderPlayerMesh(mesh);
             return _playerIcon;
+        }
+
+        private static void EnsurePlayerTarget()
+        {
+            if (_playerColorTex != null) return;
+            _playerColorTex = new GpuTexture(PlayerWidth, PlayerHeight, ColorFormat,
+                TextureUsage.RenderAttachment | TextureUsage.TextureBinding, label: "playerIcon.color");
+            _playerDepthTex = new GpuTexture(PlayerWidth, PlayerHeight, DepthFormat,
+                TextureUsage.RenderAttachment, label: "playerIcon.depth");
+            _playerIcon = Texture.FromGpu(_playerColorTex);
+        }
+
+        private static void RenderPlayerMesh(MeshBuffer mesh)
+        {
+            var streams = UploadMesh(mesh);
+            var encoder = GpuCommandEncoder.Create("playerIcon");
+            var pass = RenderPassBuilder.Begin(encoder,
+                stackalloc[] { ColorAttachment.ClearTo(_playerColorTex.View, 0, 0, 0, 0) },
+                new DepthAttachment(_playerDepthTex.View, LoadOp.Clear, 0f));
+
+            pass.SetPipeline(_pipeline);
+            pass.SetBindGroup(0, _playerFrameBind);
+            pass.SetBindGroup(1, _atlasBind);
+            for (uint i = 0; i < 5; i++) pass.SetVertexBuffer(i, streams.Vbo[i]);
+            pass.SetIndexBuffer(streams.Ibo, IndexFormat.Uint32);
+            pass.DrawIndexed((uint)mesh.IndicesCount);
+
+            pass.End();
+            pass.Release();
+            encoder.SubmitImmediate("playerIcon");
+
+            for (var i = 0; i < 5; i++) streams.Vbo[i].Dispose();
+            streams.Ibo.Dispose();
+            mesh.Clear();
         }
 
         private static Texture Render(Block block)

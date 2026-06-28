@@ -15,6 +15,11 @@ namespace MinecraftClone3API.Graphics.Rhi
         /// <summary>Trilinear-min / nearest-mag, repeat — the block atlas arrays.</summary>
         public static GpuSampler Block { get; private set; }
 
+        /// <summary>Trilinear-min / nearest-mag, <b>clamp</b> — entity &amp; worn-armor sheets sampled from the same
+        /// arrays. Their unwraps don't tile (and armor sheets are square-padded with transparent space), so clamp
+        /// stops the wrap from bleeding the opposite edge in at minification.</summary>
+        public static GpuSampler Entity { get; private set; }
+
         /// <summary>Nearest, no mips, clamp — sampling the G-buffer / HDR offscreen attachments.</summary>
         public static GpuSampler Framebuffer { get; private set; }
 
@@ -31,6 +36,8 @@ namespace MinecraftClone3API.Graphics.Rhi
         {
             Block = new GpuSampler(FilterMode.Linear, FilterMode.Nearest, MipmapFilterMode.Linear,
                 AddressMode.Repeat, label: "block");
+            Entity = new GpuSampler(FilterMode.Linear, FilterMode.Nearest, MipmapFilterMode.Linear,
+                AddressMode.ClampToEdge, label: "entity");
             Framebuffer = new GpuSampler(FilterMode.Nearest, FilterMode.Nearest, MipmapFilterMode.Nearest,
                 AddressMode.ClampToEdge, label: "framebuffer");
             Gui = new GpuSampler(FilterMode.Nearest, FilterMode.Nearest, MipmapFilterMode.Nearest,
