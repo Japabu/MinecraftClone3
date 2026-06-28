@@ -67,7 +67,7 @@ relevant permanent doc. Not a changelog.
   and no nether-specific mobs — ambient spawning is dimension-gated, so the Nether simply has no ambient spawns
   until nether mobs exist); the portal renders the pack's real axis-oriented thin pane and animates (via the
   shared block-texture animator), and travel charges up over ~4 s in survival (near-instant in creative) with a
-  thickening on-screen portal tint; lava now deals contact damage but is still a **pass-through fluid** (no flow,
+  thickening on-screen portal tint plus a nausea screen-warp; lava now deals contact damage but is still a **pass-through fluid** (no flow,
   no fire aftereffect). A round trip reconnects to the original portal when one exists within the search box
   (`SearchExtent`, 16 horizontal × 48 vertical) — the transfer now waits for that whole region to generate before
   searching, so it no longer builds a duplicate against not-yet-loaded chunks; beyond the search box (a far first

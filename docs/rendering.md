@@ -76,6 +76,9 @@ The composition pass writes into an offscreen **`Renderer.HdrScene`** (rgba16flo
 screenshot path can read it back). `EndFrame` then runs `Tonemap.wgsl` over a vertex-less fullscreen triangle
 into the surface. Lighting is composited **directly in display (gamma) space**, so tonemap is just a
 `clamp([0,1])` — no curve, no gamma re-encode — and the GUI sprite batch flushes over the top before present.
+The present pass also carries the **nether-portal screen warp**: a `Renderer.PortalWarp` (0..1) push constant
+displaces the sample uv with crossed sine waves (Minecraft's nausea wobble) while a player soaks in a portal;
+0 leaves the pass byte-identical, so it only ever touches the frame when you're mid-transfer.
 
 ## GPU-driven chunk culling
 

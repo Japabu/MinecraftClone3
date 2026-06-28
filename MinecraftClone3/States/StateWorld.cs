@@ -482,6 +482,10 @@ namespace MinecraftClone3.States
                 (fov * (MathF.PI / 180f)), aspect, 0.1f);
             WorldRenderer.RenderWorld(_world, projection);
 
+            // Feed the portal soak to the present pass so the world wobbles (vanilla's nausea warp) while the
+            // tint fills. Set every frame so it returns to 0 the moment the player leaves the portal.
+            Renderer.PortalWarp = _timeInPortal;
+
             // Nether-portal screen tint, drawn over the world but under the HUD. Eased so it stays faint as the
             // soak begins and floods the screen as it completes (vanilla's t^4 boost shaped for a flat fill).
             if (_timeInPortal > 0f)

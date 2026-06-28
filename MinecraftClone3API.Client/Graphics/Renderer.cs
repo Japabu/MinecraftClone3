@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using MinecraftClone3API.Client;
 using MinecraftClone3API.Graphics.Rhi;
 using Silk.NET.WebGPU;
@@ -43,6 +44,17 @@ namespace MinecraftClone3API.Graphics
         private static GpuRenderPipeline _tonemapPipeline;
         private static GpuBindGroup _tonemapBind;
 
+        /// <summary>Nether-portal screen-warp intensity (0..1), set by the world state each frame from the local
+        /// player's portal soak. 0 leaves the present pass byte-identical to no warp.</summary>
+        public static float PortalWarp;
+        private static readonly Stopwatch _warpClock = Stopwatch.StartNew();
+
+        private struct TonemapWarp
+        {
+            public float Intensity;
+            public float Time;
+        }
+
         private static bool _sceneRendered;
 
         public static int Width { get; private set; }
@@ -69,7 +81,8 @@ namespace MinecraftClone3API.Graphics
             _frameBind = new GpuBindGroup(GpuLayouts.Frame, new[] { GpuBindGroup.Buffer(0, _frameUbo) }, "frame");
 
             _tonemapModule = new GpuShaderModule(readShader(ShaderDir + "Tonemap.wgsl"), "tonemap");
-            _tonemapLayout = new GpuPipelineLayout(new[] { GpuPipelineLayout.Ptr(GpuLayouts.ScreenTexture) }, label: "tonemap");
+            _tonemapLayout = new GpuPipelineLayout(new[] { GpuPipelineLayout.Ptr(GpuLayouts.ScreenTexture) },
+                ShaderStage.Fragment, (uint)sizeof(TonemapWarp), "tonemap");
             _tonemapPipeline = new GpuRenderPipeline(_tonemapLayout, _tonemapModule, "vs_main", "fs_main",
                 ReadOnlySpan<VertexBufferDesc>.Empty,
                 stackalloc[] { new ColorTargetDesc(Gpu.SurfaceFormat) }, depth: null, label: "tonemap");
@@ -142,6 +155,8 @@ namespace MinecraftClone3API.Graphics
             {
                 pass.SetPipeline(_tonemapPipeline);
                 pass.SetBindGroup(0, _tonemapBind);
+                var warp = new TonemapWarp { Intensity = PortalWarp, Time = (float)_warpClock.Elapsed.TotalSeconds };
+                pass.SetPushConstants(ShaderStage.Fragment, 0, in warp);
                 pass.Draw(3);
             }
             GuiBatch.Flush(pass);
