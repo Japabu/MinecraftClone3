@@ -709,11 +709,26 @@ namespace MinecraftClone3API.Graphics
         /// lowers the box so it sits centred in the icon frame.</summary>
         internal static MeshBuffer BuildBlockEntityIconMesh(string modelPath, string texturePath, Matrix4 centre)
         {
-            var texture = ResourceReader.ReadBlockTexture(texturePath);
-            var model = LoadModel(modelPath);
-            var layerSize = BlockTextureManager.Sizes[texture.ArrayId];
-
             var mesh = new MeshBuffer();
+            BakeIconParts(mesh, LoadModel(modelPath), ResourceReader.ReadBlockTexture(texturePath), centre);
+            return mesh;
+        }
+
+        /// <summary>Builds a single mesh of the player model posed at rest (base skin + the modern overlay layer
+        /// baked into <c>player.geo.json</c>), for the creative inventory paperdoll. Feet sit at y=0, centred on
+        /// x/z and facing +Z; the caller's camera frames it. Armour is not drawn.</summary>
+        public static MeshBuffer BuildPlayerIconMesh(Matrix4 centre)
+        {
+            var mesh = new MeshBuffer();
+            BakeIconParts(mesh, LoadModel(PlayerModelPath), LoadPlayerSkin(), centre);
+            return mesh;
+        }
+
+        /// <summary>Bakes every part of a box model at rest (pivot + baked rotation, no animation) into one mesh
+        /// under <paramref name="centre"/> — the shared body of the block-entity and player inventory icons.</summary>
+        private static void BakeIconParts(MeshBuffer mesh, EntityModel model, BlockTexture texture, Matrix4 centre)
+        {
+            var layerSize = BlockTextureManager.Sizes[texture.ArrayId];
             foreach (var part in model.Parts)
             {
                 var m = Matrix4X4.CreateRotationX(part.Rotation.X) * Matrix4X4.CreateRotationY(part.Rotation.Y) *
@@ -722,7 +737,6 @@ namespace MinecraftClone3API.Graphics
                 foreach (var box in part.Boxes)
                     AddBox(mesh, box, texture, layerSize, false, m);
             }
-            return mesh;
         }
 
         private static Vector4 TexCoord(BlockTexture tex, int layerSize, int u, int v)

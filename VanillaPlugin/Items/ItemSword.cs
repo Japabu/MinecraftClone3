@@ -21,6 +21,8 @@ namespace VanillaPlugin.Items
             _tier = tier;
         }
 
+        protected override CreativeTab DefaultCreativeTab => CreativeTab.Combat;
+
         public override string TexturePath => _texturePath;
         public override string MinecraftId => _minecraftId;
         public override int MaxStackSize => 1;

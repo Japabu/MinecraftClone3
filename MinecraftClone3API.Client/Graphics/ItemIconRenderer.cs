@@ -31,6 +31,16 @@ namespace MinecraftClone3API.Graphics
         private static readonly Matrix4 Projection =
             Matrix4X4.CreateOrthographicOffCenter(-0.9f, 0.9f, -0.9f, 0.9f, 10f, -10f);
 
+        // The creative inventory paperdoll: a full-body front view from slightly above, framed feet-to-head.
+        // The target is taller than wide to match the player's silhouette; the ortho box keeps the same aspect
+        // so the model isn't stretched.
+        public const int PlayerWidth = 80;
+        public const int PlayerHeight = 112;
+        private static readonly Matrix4 PlayerView =
+            Matrix4X4.CreateLookAt(new Vector3(0f, 1.15f, 3.0f), new Vector3(0f, 0.95f, 0f), Vector3.UnitY);
+        private static readonly Matrix4 PlayerProjection =
+            Matrix4X4.CreateOrthographicOffCenter(-0.75f, 0.75f, -1.05f, 1.05f, 10f, -10f);
+
         [StructLayout(LayoutKind.Sequential)]
         private struct IconFrame
         {
@@ -47,7 +57,11 @@ namespace MinecraftClone3API.Graphics
         private static GpuRenderPipeline _pipeline;
         private static GpuBuffer _frameUbo;
         private static GpuBindGroup _frameBind;
+        private static GpuBuffer _playerFrameUbo;
+        private static GpuBindGroup _playerFrameBind;
         private static GpuBindGroup _atlasBind;
+
+        private static Texture _playerIcon;
 
         /// <summary>The icon texture for a block id (rendered and cached on first request).</summary>
         public static Texture GetIcon(ushort blockId)
@@ -95,6 +109,16 @@ namespace MinecraftClone3API.Graphics
             });
             _frameBind = new GpuBindGroup(_frameLayout, new[] { GpuBindGroup.Buffer(0, _frameUbo) }, "itemIcon.frame");
 
+            _playerFrameUbo = new GpuBuffer((ulong)sizeof(IconFrame),
+                BufferUsage.Uniform | BufferUsage.CopyDst, "itemIcon.playerFrame");
+            _playerFrameUbo.QueueWriteStruct(new IconFrame
+            {
+                View = MatrixConvert.ToGpu(PlayerView),
+                Proj = MatrixConvert.ToGpu(PlayerProjection),
+            });
+            _playerFrameBind = new GpuBindGroup(_frameLayout,
+                new[] { GpuBindGroup.Buffer(0, _playerFrameUbo) }, "itemIcon.playerFrame");
+
             _atlasBind = new GpuBindGroup(GpuLayouts.BlockAtlas, new[]
             {
                 GpuBindGroup.Texture(0, BlockTextureUploader.ArrayAt(0).View),
@@ -103,6 +127,17 @@ namespace MinecraftClone3API.Graphics
                 GpuBindGroup.Texture(3, BlockTextureUploader.ArrayAt(3).View),
                 GpuBindGroup.Sampler(4, GpuSamplers.Block),
             }, "itemIcon.atlas");
+        }
+
+        /// <summary>The full-body player paperdoll texture for the creative inventory's Survival-Inventory tab
+        /// (the model posed at rest, front view), rendered and cached on first request. Main-thread only.</summary>
+        public static Texture GetPlayerIcon()
+        {
+            if (_playerIcon != null) return _playerIcon;
+            EnsureLoaded();
+            var mesh = EntityRenderer.BuildPlayerIconMesh(Matrix4.Identity);
+            _playerIcon = RenderMeshToTexture(mesh, _playerFrameBind, PlayerWidth, PlayerHeight);
+            return _playerIcon;
         }
 
         private static Texture Render(Block block)
@@ -123,14 +158,22 @@ namespace MinecraftClone3API.Graphics
                 ChunkMesher.AddBlockToVao(IconWorld.Instance, Vector3i.Zero, 0, 0, 0, block, mesh, mesh, new Vector3(-0.5f));
             }
 
-            var colorTex = new GpuTexture(Size, Size, ColorFormat,
+            return RenderMeshToTexture(mesh, _frameBind, Size, Size);
+        }
+
+        /// <summary>Forward-renders a baked mesh into a fresh <paramref name="width"/>×<paramref name="height"/>
+        /// rgba8 colour target (its own reverse-Z depth) under the given frame camera, and returns it as a
+        /// GUI-samplable texture. Transient buffers are submitted immediately and released.</summary>
+        private static Texture RenderMeshToTexture(MeshBuffer mesh, GpuBindGroup frameBind, int width, int height)
+        {
+            var colorTex = new GpuTexture((uint) width, (uint) height, ColorFormat,
                 TextureUsage.RenderAttachment | TextureUsage.TextureBinding, label: "itemIcon.color");
             var icon = Texture.FromGpu(colorTex);
 
             if (mesh.IndicesCount == 0) return icon;
 
             var streams = UploadMesh(mesh);
-            var depthTex = new GpuTexture(Size, Size, DepthFormat, TextureUsage.RenderAttachment, label: "itemIcon.depth");
+            var depthTex = new GpuTexture((uint) width, (uint) height, DepthFormat, TextureUsage.RenderAttachment, label: "itemIcon.depth");
 
             var encoder = GpuCommandEncoder.Create("itemIcon");
             var pass = RenderPassBuilder.Begin(encoder,
@@ -138,7 +181,7 @@ namespace MinecraftClone3API.Graphics
                 new DepthAttachment(depthTex.View, LoadOp.Clear, 0f));
 
             pass.SetPipeline(_pipeline);
-            pass.SetBindGroup(0, _frameBind);
+            pass.SetBindGroup(0, frameBind);
             pass.SetBindGroup(1, _atlasBind);
             for (uint i = 0; i < 5; i++) pass.SetVertexBuffer(i, streams.Vbo[i]);
             pass.SetIndexBuffer(streams.Ibo, IndexFormat.Uint32);

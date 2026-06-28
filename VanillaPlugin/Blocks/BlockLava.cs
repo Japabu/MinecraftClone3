@@ -1,4 +1,5 @@
 using MinecraftClone3API.Blocks;
+using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using Silk.NET.Maths;
 
@@ -16,6 +17,8 @@ namespace VanillaPlugin.Blocks
             MinecraftId = "minecraft:lava";
             ModelPath = "Vanilla/Models/Lava.json";
         }
+
+        protected override CreativeTab DefaultCreativeTab => CreativeTab.NaturalBlocks;
 
         public override bool IsFullBlock(WorldBase world, Vector3D<int> blockPos) => false;
         public override bool CanPassThrough(WorldBase world, Vector3D<int> blockPos) => true;

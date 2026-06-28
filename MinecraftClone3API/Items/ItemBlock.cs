@@ -18,6 +18,8 @@ namespace MinecraftClone3API.Items
 
         public override Block GetBlock() => Block;
 
+        protected override CreativeTab DefaultCreativeTab => Block.CreativeTab;
+
         public override string GetUnlocalizedName() =>
             Block.MinecraftId != null
                 ? Identifier.TranslationKey("block", Block.MinecraftId)

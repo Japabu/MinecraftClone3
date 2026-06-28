@@ -1,4 +1,5 @@
 using MinecraftClone3API.Blocks;
+using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using Silk.NET.Maths;
 
@@ -21,6 +22,8 @@ namespace VanillaPlugin.Blocks
             MinecraftId = "minecraft:water";
             ModelPath = "Vanilla/Models/Water.json";
         }
+
+        protected override CreativeTab DefaultCreativeTab => CreativeTab.NaturalBlocks;
 
         public override Vector4D<float> GetTintColor(WorldBase world, Vector3D<int> blockPos, int tintId)
             => tintId == 0 ? WaterBlue : new Vector4D<float>(1f,1f,1f,1f);

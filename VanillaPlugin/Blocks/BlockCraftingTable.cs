@@ -4,6 +4,7 @@ using MinecraftClone3API.Client.Blocks;
 using MinecraftClone3API.Client.GUI;
 using MinecraftClone3API.Client.StateSystem;
 using MinecraftClone3API.Entities;
+using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using Silk.NET.Maths;
 
@@ -16,6 +17,8 @@ namespace VanillaPlugin.Blocks
         public BlockCraftingTable() : base("CraftingTable", "minecraft:block/crafting_table", true)
         {
         }
+
+        protected override CreativeTab DefaultCreativeTab => CreativeTab.FunctionalBlocks;
 
         public override bool OnActivated(WorldBase world, Vector3D<int> blockPos, EntityPlayer player)
         {

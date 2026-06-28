@@ -1,4 +1,5 @@
 using MinecraftClone3API.Blocks;
+using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using Silk.NET.Maths;
 
@@ -11,6 +12,8 @@ namespace VanillaPlugin.Blocks
             MinecraftId = "minecraft:torch";
             ModelPath = "minecraft:block/torch";
         }
+
+        protected override CreativeTab DefaultCreativeTab => CreativeTab.FunctionalBlocks;
 
         public override bool IsFullBlock(WorldBase world, Vector3D<int> blockPos) => false;
         public override bool CanPassThrough(WorldBase world, Vector3D<int> blockPos) => true;

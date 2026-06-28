@@ -1,4 +1,5 @@
 using MinecraftClone3API.Blocks;
+using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using Silk.NET.Maths;
 
@@ -13,6 +14,8 @@ namespace VanillaPlugin.Blocks
         public BlockLeaves(string name, string modelPath) : base(name, modelPath, true, 0.2f)
         {
         }
+
+        protected override CreativeTab DefaultCreativeTab => CreativeTab.NaturalBlocks;
 
         public override TransparencyType IsTransparent(WorldBase world, Vector3D<int> blockPos) => TransparencyType.Cutoff;
 

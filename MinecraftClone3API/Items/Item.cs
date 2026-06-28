@@ -21,6 +21,16 @@ namespace MinecraftClone3API.Items
 
         public virtual int MaxStackSize => 64;
 
+        /// <summary>The creative-menu tab this item appears under. Defaults to <see cref="DefaultCreativeTab"/>;
+        /// set explicitly at registration to override a single item.</summary>
+        public CreativeTab CreativeTab { get => _creativeTab ?? DefaultCreativeTab; set => _creativeTab = value; }
+        private CreativeTab? _creativeTab;
+
+        /// <summary>The tab an item falls in when none is set; subclasses override to categorise a whole family
+        /// (food → Food &amp; Drink, tools → Tools, weapons/armor → Combat, spawn eggs → Spawn Eggs). Plain
+        /// materials keep the default of Ingredients.</summary>
+        protected virtual CreativeTab DefaultCreativeTab => CreativeTab.Ingredients;
+
         /// <summary>The item's Minecraft content id (e.g. <c>"minecraft:stick"</c>), used to resolve its name
         /// from the resource pack's translations and to match the pack's crafting recipes/tags. Null for items
         /// with no Minecraft equivalent.</summary>
