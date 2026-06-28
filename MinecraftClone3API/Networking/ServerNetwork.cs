@@ -72,9 +72,10 @@ namespace MinecraftClone3API.Networking
         private readonly List<ClientSession> _sessions = new List<ClientSession>();
         private readonly ConcurrentQueue<IConnection> _pending = new ConcurrentQueue<IConnection>();
 
-        // Ticks a player must stand in a portal before transferring (matches the brief MC "soak" so brushing a
-        // portal doesn't fling you instantly).
-        private const int PortalSoakTicks = 16;
+        // Ticks a player must stand in a portal before transferring. Survival is the vanilla 4 s charge-up
+        // (the client paints a thickening portal tint over it); creative goes near-instantly, also as in vanilla.
+        private const int SurvivalPortalSoakTicks = 80;
+        private const int CreativePortalSoakTicks = 1;
 
         private TcpListener _listener;
         private Thread _acceptThread;
@@ -1002,7 +1003,9 @@ namespace MinecraftClone3API.Networking
                 }
 
                 if (session.PortalImmune) continue;
-                if (++session.PortalTimer < PortalSoakTicks) continue;
+                var soak = session.Player.GameMode == GameMode.Creative
+                    ? CreativePortalSoakTicks : SurvivalPortalSoakTicks;
+                if (++session.PortalTimer < soak) continue;
 
                 BeginTransfer(session, cell, portals);
             }

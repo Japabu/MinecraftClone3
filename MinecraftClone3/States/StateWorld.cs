@@ -72,6 +72,11 @@ namespace MinecraftClone3.States
         private const double MaxFrameTime = 0.25;
         private const int MaxCatchUpTicks = 5;
 
+        // Nether-portal screen tint, 0..1. Rises 1/80 per tick while the player stands in a portal block (so a
+        // survival player's 4 s soak fills the screen as it counts down), decays 1/20 per tick once they step
+        // off. Client-local and cosmetic — the authoritative transfer stays server-side.
+        private float _timeInPortal;
+
         /// <summary>Singleplayer: runs the given world in an in-process server over a loopback connection.</summary>
         public StateWorld(WorldInfo world) : this(false, world, false) { }
 
@@ -356,6 +361,7 @@ namespace MinecraftClone3.States
         private void Tick(bool stepPlayer)
         {
             PlayerController.Tick(_world, stepPlayer);
+            UpdatePortalTint();
 
             var a = GC.GetAllocatedBytesForCurrentThread();
             _phaseTimer.Restart();
@@ -374,6 +380,31 @@ namespace MinecraftClone3.States
             _world.SendMove(_player);
             Profiler.AddClientTime(_phaseTimer.Elapsed.TotalMilliseconds);
             Profiler.AddClientAlloc(GC.GetAllocatedBytesForCurrentThread() - c);
+        }
+
+        /// <summary>Ramps <see cref="_timeInPortal"/> toward 1 while the player stands in a portal block and back
+        /// to 0 otherwise. Run on the fixed tick so the fill/fade rates are frame-rate-independent and stay in
+        /// step with the server's soak; the client reads its own world replica, so no extra packet is needed.</summary>
+        private void UpdatePortalTint()
+        {
+            var inPortal = PlayerInPortal();
+            _timeInPortal = Math.Clamp(_timeInPortal + (inPortal ? 1f / 80f : -1f / 20f), 0f, 1f);
+        }
+
+        /// <summary>True if a portal block fills the player's column from feet to head — the same probe the
+        /// server uses to trigger the transfer (<c>ServerNetwork.TryFindPortalCell</c>).</summary>
+        private bool PlayerInPortal()
+        {
+            var portals = GameRegistry.Portals;
+            if (portals == null) return false;
+
+            var p = _player.Position;
+            var bx = (int) MathF.Floor(p.X);
+            var bz = (int) MathF.Floor(p.Z);
+            var by = (int) MathF.Floor(p.Y + 0.2f);
+            for (var dy = 0; dy <= 1; dy++)
+                if (portals.IsPortalBlock(_world.GetBlock(bx, by + dy, bz))) return true;
+            return false;
         }
 
         /// <summary>Pumps the world during the join handshake: applies the seed-derived spawn from
@@ -449,6 +480,15 @@ namespace MinecraftClone3.States
             var projection = Projection.ReverseZPerspective(
                 (fov * (MathF.PI / 180f)), aspect, 0.1f);
             WorldRenderer.RenderWorld(_world, projection);
+
+            // Nether-portal screen tint, drawn over the world but under the HUD. Eased so it stays faint as the
+            // soak begins and floods the screen as it completes (vanilla's t^4 boost shaped for a flat fill).
+            if (_timeInPortal > 0f)
+            {
+                var alpha = _timeInPortal * _timeInPortal * 0.8f;
+                GuiRenderer.DrawTexture(ClientResources.WhitePixel, new Vector4D<float>(0f, 0f, 1f, 1f),
+                    new Vector4D<float>(0f, 0f, 1f, 1f), new Vector4D<float>(0.40f, 0.13f, 0.62f, alpha));
+            }
 
             if (ClientResources.Input.CursorMode == CursorMode.Raw && !PlayerController.RenderSelf)
                 CrosshairRenderer.Render();

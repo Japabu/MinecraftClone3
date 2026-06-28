@@ -4,8 +4,8 @@ using System.Collections.Generic;
 namespace MinecraftClone3API.Graphics
 {
     /// <summary>One animated texture: its frames (each a normal <see cref="BlockTexture"/> layer, in
-    /// order) and the tick count each frame is shown for. Block faces currently bake frame 0; this record
-    /// retains every frame + the timing so a future animator can cycle them without re-slicing.</summary>
+    /// order) and the tick count each frame is shown for. Block faces bake frame 0; the client's
+    /// <c>BlockAnimator</c> cycles the strip at run time by rewriting that layer from these frames.</summary>
     public readonly struct AnimatedTexture
     {
         public readonly BlockTexture[] Frames;
@@ -55,8 +55,8 @@ namespace MinecraftClone3API.Graphics
 
         /// <summary>Slices a vertical animation strip (<paramref name="frameCount"/> square frames stacked
         /// top-to-bottom) into individual square frame textures, uploads them all, and returns frame 0.
-        /// Frame 0 is what block faces sample today; every frame plus <paramref name="frameTime"/> is kept
-        /// in <see cref="AnimatedTextures"/> so animation can be added later with no re-slice.</summary>
+        /// Block faces bake frame 0; every frame plus <paramref name="frameTime"/> is kept in
+        /// <see cref="AnimatedTextures"/> so the client's <c>BlockAnimator</c> can cycle them with no re-slice.</summary>
         internal static BlockTexture LoadAnimatedTexture(TextureData strip, int frameCount, int frameTime)
         {
             var frameSize = strip.Width;

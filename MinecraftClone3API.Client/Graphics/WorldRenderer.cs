@@ -586,6 +586,7 @@ namespace MinecraftClone3API.Graphics
             EnsureLoaded();
             EnsureTargets();
             EnsureAtlasBind();
+            BlockAnimator.Update();
 
             var camera = PlayerController.Camera;
 

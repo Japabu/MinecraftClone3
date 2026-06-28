@@ -45,8 +45,8 @@ namespace MinecraftClone3API.IO
 
             var data = ReadTextureData(resolved);
             // A vertical strip whose height is a whole multiple of its width is a Minecraft animation
-            // sheet (water_still, lava, fire, …). Slice it into square frames; only frame 0 is used for
-            // now, but the whole animation is retained (see BlockTextureManager.LoadAnimatedTexture).
+            // sheet (water_still, lava, fire, …). Slice it into square frames; faces bake frame 0 and the
+            // client's BlockAnimator cycles the strip (see BlockTextureManager.LoadAnimatedTexture).
             if (data.Width > 0 && data.Height > data.Width && data.Height % data.Width == 0)
                 tex = BlockTextureManager.LoadAnimatedTexture(data, data.Height / data.Width, ReadFrameTime(resolved));
             else

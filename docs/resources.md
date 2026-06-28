@@ -20,8 +20,9 @@ constructors — is what keeps the headless server render-asset-free.
 animation sheet (e.g. `water_still` = 16×512, 32 frames; also lava/fire). `ResourceReader.ReadBlockTexture`
 detects this, and `BlockTextureManager.LoadAnimatedTexture` slices it into square per-frame layers and
 uploads **all** of them plus the `.mcmeta` `frametime` into `BlockTextureManager.AnimatedTextures`. Block
-faces sample **frame 0** only, but every frame is retained so a future animator can cycle them with no
-re-slice. Without this a strip would land in the square texture array mismapped.
+faces bake **frame 0**'s layer; the client-side `BlockAnimator` cycles the strip at run time by re-uploading
+the current frame's pixels into that layer each tick (see [rendering.md](rendering.md)). Without the slice a
+strip would land in the square texture array mismapped.
 
 **Water.** Vanilla ships no cube model for water (its `model.json` is empty — vanilla uses a bespoke fluid
 renderer), and `water_still.png` is a grey **tint-mask**. So `VanillaPlugin` authors a minimal cube model

@@ -133,6 +133,11 @@ with the mip chain + the foliage anti-aliased alpha test carrying minification q
 compute shader (`Mipgen.compute.wgsl`, 2×2 box downsample); mipped atlas textures are created with
 `StorageBinding` so the compute pass can write them.
 
+**Animated blocks** (water/lava/fire/nether portal) are driven by `BlockAnimator` (`RenderWorld` calls it once
+per frame). Each `.mcmeta` strip was sliced into one layer per frame at load; the animator simply re-uploads the
+current frame's pixels into the layer block faces bake (frame 0's) at the strip's `frametime` cadence — so
+animation costs one small `QueueWriteTexture` per flip with **no shader, mesher, or bind-group change**.
+
 The packed chunk vertex is **32 bytes** in five parallel streams (`MeshBuffer` / `ChunkMeshArena`): pos
 `float3`, uv `float2`, a `packed` u32 (`texId | arrayId<<16 | normalIdx<<18 | material<<21`), tint `unorm8x4`,
 light `unorm8x4`. `WorldGeometry.wgsl`'s vertex shader unpacks it; the fragment shader writes the three MRTs

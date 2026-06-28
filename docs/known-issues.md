@@ -65,9 +65,10 @@ relevant permanent doc. Not a changelog.
   travel with find-or-build destination portals, the multi-dimension server, and the sunless red-fog render
   mode. **Deferred / accepted:** only one biome (no soul-sand valley / crimson-warped forests, no fortresses,
   and no nether-specific mobs — ambient spawning is dimension-gated, so the Nether simply has no ambient spawns
-  until nether mobs exist); the portal renders the pack's real axis-oriented thin pane but is **not animated** (a
-  static texture frame); lava now deals contact damage but is still a **pass-through fluid** (no flow, no fire
-  aftereffect). A round trip reconnects to the original portal when one exists within the search box
+  until nether mobs exist); the portal renders the pack's real axis-oriented thin pane and animates (via the
+  shared block-texture animator), and travel charges up over ~4 s in survival (near-instant in creative) with a
+  thickening on-screen portal tint; lava now deals contact damage but is still a **pass-through fluid** (no flow,
+  no fire aftereffect). A round trip reconnects to the original portal when one exists within the search box
   (`SearchExtent`, 16 horizontal × 48 vertical) — the transfer now waits for that whole region to generate before
   searching, so it no longer builds a duplicate against not-yet-loaded chunks; beyond the search box (a far first
   trip) it builds a fresh portal at the scaled floor, which may be far from where you left.
@@ -124,11 +125,12 @@ relevant permanent doc. Not a changelog.
     K=1 (one surface run), so overhangs/floating islands aren't represented; a 2-section run-list is the
     deferred fix. **No LOD disk persistence** (regenerated on revisit). **No LOD shadows.**
   - **Tall coastline skirts read as bright vertical walls** where water meets a steep drop (harmless, no holes).
-- **Animated textures show frame 0 only.** Strips are sliced and all frames uploaded + retained
-  (`BlockTextureManager.AnimatedTextures` with `frametime`), but nothing cycles them yet. The animator
-  (advance the sampled layer by a remesh-free uniform/layer swap) is the deferred path. The `.mcmeta`
-  `frames`/`width`/`height` reorder fields are ignored (only square top-to-bottom strips at default order are
-  handled — covers water/lava/fire).
+- **Animated textures play, but only the default frame order at one mip.** `BlockAnimator` cycles every strip
+  (water/lava/fire/nether portal) by re-uploading the current frame into frame 0's atlas layer each tick — no
+  shader/mesher change. Two accepted simplifications: only mip 0 is rewritten (lower mips keep frame 0's pixels,
+  invisible because an animation's frame averages are near-identical), and the `.mcmeta` `frames` reorder list +
+  `interpolate` are ignored (frames play top-to-bottom at `frametime`, so e.g. lava loops instead of
+  ping-ponging) — both are pure polish on top of working animation.
 - **Biome height blends; surface *blocks* and climate selection don't.** Terrain height is bilinearly blended
   across borders (`HeightBlendSpacing` lattice). Residual edges: (1) **surface blocks snap** at the border
   (grass↔sand) — intended, matches MC; (2) **thin-biome skipping** — a biome strip narrower than

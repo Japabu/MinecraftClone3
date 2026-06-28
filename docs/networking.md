@@ -62,7 +62,8 @@ dimension specifics: a plugin registers an **`IDimensionPortals`** (`WorldGen/ID
 and how to find-or-build the destination portal. Vanilla's implementation is the obsidian frame lit with flint
 & steel and the 8:1 Overworld↔Nether scale.
 
-Transfer flow (all in `ServerNetwork.Pump`): `UpdatePortals` detects a player soaking in a portal block →
+Transfer flow (all in `ServerNetwork.Pump`): `UpdatePortals` detects a player soaking in a portal block — for
+the vanilla 80-tick (4 s) charge-up in survival, or 1 tick (near-instant) in creative — then
 `BeginTransfer` moves the player entity into the linked `WorldServer` at the scaled coords, clears the
 session's `SentChunks`, and sends `DimensionChange` (the destination `Dimension`'s generic visuals). The client
 parks its apply thread, drops every cached chunk/LOD/entity, switches render mode, and re-enters the loading

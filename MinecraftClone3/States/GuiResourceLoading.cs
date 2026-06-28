@@ -124,6 +124,7 @@ namespace MinecraftClone3.States
             BlockEntityRenderer.LoadModels();
 
             BlockTextureUploader.Upload();
+            BlockAnimator.Init();
 
             // The font comes from the Minecraft resource pack (minecraft/font/default.json), which is only
             // indexed by AddResourcePacks above — so the font must load here, after the pack, not in the
