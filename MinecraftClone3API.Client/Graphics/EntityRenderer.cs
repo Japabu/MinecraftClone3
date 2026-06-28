@@ -708,7 +708,7 @@ namespace MinecraftClone3API.Graphics
                 GpuBindGroup.Texture(1, _atlasArrays[1].View),
                 GpuBindGroup.Texture(2, _atlasArrays[2].View),
                 GpuBindGroup.Texture(3, _atlasArrays[3].View),
-                GpuBindGroup.Sampler(4, GpuSamplers.Block),
+                GpuBindGroup.Sampler(4, GpuSamplers.Entity),
             }, "entityAtlas");
         }
 
@@ -779,7 +779,7 @@ namespace MinecraftClone3API.Graphics
         // Builds the six textured quads of one box into the mesh. Box coords are in blocks (relative to the part
         // pivot); UVs come from the classic Minecraft box-unwrap, normalized by the texture array's layer size.
         private static void AddBox(MeshBuffer mesh, ModelBox box, BlockTexture tex, int layerSize, bool flipUv,
-            Matrix4? transform = null)
+            Matrix4? transform = null, bool transformNormal = true)
         {
             // Box pixel dimensions (1 block = 16 texels) drive the unwrap rectangle widths — from the base
             // (un-inflated) size so an overlay box still maps its base texture region.
@@ -796,20 +796,20 @@ namespace MinecraftClone3API.Graphics
             Quad(mesh, tex, layerSize, new Vector3(-1, 0, 0),
                 new Vector3(f.X, t.Y, t.Z), new Vector3(f.X, t.Y, f.Z),
                 new Vector3(f.X, f.Y, t.Z), new Vector3(f.X, f.Y, f.Z),
-                u, v + sz, u + sz, v + sz + sy, transform);
+                u, v + sz, u + sz, v + sz + sy, transform, transformNormal);
             Quad(mesh, tex, layerSize, new Vector3(1, 0, 0),
                 new Vector3(t.X, t.Y, f.Z), new Vector3(t.X, t.Y, t.Z),
                 new Vector3(t.X, f.Y, f.Z), new Vector3(t.X, f.Y, t.Z),
-                u + sz + sx, v + sz, u + 2 * sz + sx, v + sz + sy, transform);
+                u + sz + sx, v + sz, u + 2 * sz + sx, v + sz + sy, transform, transformNormal);
             // Front (+Z) and Back (-Z)
             Quad(mesh, tex, layerSize, new Vector3(0, 0, 1),
                 new Vector3(t.X, t.Y, t.Z), new Vector3(f.X, t.Y, t.Z),
                 new Vector3(t.X, f.Y, t.Z), new Vector3(f.X, f.Y, t.Z),
-                u + sz, v + sz, u + sz + sx, v + sz + sy, transform);
+                u + sz, v + sz, u + sz + sx, v + sz + sy, transform, transformNormal);
             Quad(mesh, tex, layerSize, new Vector3(0, 0, -1),
                 new Vector3(f.X, t.Y, f.Z), new Vector3(t.X, t.Y, f.Z),
                 new Vector3(f.X, f.Y, f.Z), new Vector3(t.X, f.Y, f.Z),
-                u + 2 * sz + sx, v + sz, u + 2 * sz + 2 * sx, v + sz + sy, transform);
+                u + 2 * sz + sx, v + sz, u + 2 * sz + 2 * sx, v + sz + sy, transform, transformNormal);
             // Top (+Y) and Bottom (-Y). Minecraft's box-unwrap mirrors the down face vertically relative to the
             // up face. The living-entity sheets (flipUv) expect the up/down V swapped so a body laid horizontal by
             // a baked pitch shows its underside the right way up; block-entity sheets (chests) author the opposite
@@ -821,16 +821,16 @@ namespace MinecraftClone3API.Graphics
             Quad(mesh, tex, layerSize, new Vector3(0, 1, 0),
                 new Vector3(t.X, t.Y, f.Z), new Vector3(f.X, t.Y, f.Z),
                 new Vector3(t.X, t.Y, t.Z), new Vector3(f.X, t.Y, t.Z),
-                tU0, tV0, tU1, tV1, transform);
+                tU0, tV0, tU1, tV1, transform, transformNormal);
             Quad(mesh, tex, layerSize, new Vector3(0, -1, 0),
                 new Vector3(t.X, f.Y, t.Z), new Vector3(f.X, f.Y, t.Z),
                 new Vector3(t.X, f.Y, f.Z), new Vector3(f.X, f.Y, f.Z),
-                bU0, bV0, bU1, bV1, transform);
+                bU0, bV0, bU1, bV1, transform, transformNormal);
         }
 
         internal static void Quad(MeshBuffer mesh, BlockTexture tex, int layerSize, Vector3 normal,
             Vector3 tl, Vector3 tr, Vector3 bl, Vector3 br, int u0, int v0, int u1, int v1,
-            Matrix4? transform = null)
+            Matrix4? transform = null, bool transformNormal = true)
         {
             if (transform.HasValue)
             {
@@ -839,7 +839,10 @@ namespace MinecraftClone3API.Graphics
                 tr = Vector3D.Transform(tr, m);
                 bl = Vector3D.Transform(bl, m);
                 br = Vector3D.Transform(br, m);
-                normal = Vector3D.Normalize(Vector3D.TransformNormal(normal, m));
+                // The icon shader picks a fixed brightness from the normal's quantized axis; baking a rotation into
+                // the normal would re-quantize it mid-turn and make the per-face shade jump. Callers posing a model
+                // for the inventory icon keep the local (model-space) normal so the shade stays stable as it turns.
+                if (transformNormal) normal = Vector3D.Normalize(Vector3D.TransformNormal(normal, m));
             }
 
             var baseVertex = mesh.VertexCount;
@@ -880,8 +883,10 @@ namespace MinecraftClone3API.Graphics
                 var rot = part.Name == "head" ? part.Rotation + headLook : part.Rotation;
                 var m = Matrix4X4.CreateRotationX(rot.X) * Matrix4X4.CreateRotationY(rot.Y) *
                         Matrix4X4.CreateRotationZ(rot.Z) * Matrix4X4.CreateTranslation(part.Pivot) * centre;
+                // transformNormal: false — keep the model-space normal so the fixed per-face shade doesn't jump
+                // (re-quantize) as the paperdoll yaws toward the cursor.
                 foreach (var box in part.Boxes)
-                    AddBox(mesh, box, texture, layerSize, false, m);
+                    AddBox(mesh, box, texture, layerSize, false, m, transformNormal: false);
             }
 
             if (armor != null) BakeArmorParts(mesh, armor, centre, headLook);
@@ -914,8 +919,9 @@ namespace MinecraftClone3API.Graphics
                             Matrix4X4.CreateRotationZ(rot.Z) * Matrix4X4.CreateTranslation(part.Pivot) * centre;
                     // flipUv: true — the worn-armor sheets use the living-entity up/down unwrap (as in the world
                     // model), so the helmet crown samples the painted head-top region, not the transparent underside.
+                    // transformNormal: false — stable per-face shade as the paperdoll turns (see BuildPlayerIconMesh).
                     foreach (var box in part.Boxes)
-                        AddBox(mesh, box, texture, layerSize, true, m);
+                        AddBox(mesh, box, texture, layerSize, true, m, transformNormal: false);
                 }
             }
         }
