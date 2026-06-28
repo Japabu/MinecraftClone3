@@ -12,7 +12,7 @@ using MinecraftClone3API.IO;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using MinecraftClone3API.WorldGen;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Networking
 {
@@ -38,10 +38,9 @@ namespace MinecraftClone3API.Networking
         }
 
         /// <summary>Cap on new chunks sent per session per tick, so the initial flood streams in
-        /// smoothly instead of stalling the tick by serializing every loaded chunk at once. Sized for the
-        /// 20 tps tick (the loop used to run at the ~120 Hz display rate); ~6× the old per-frame cap keeps
-        /// the same chunks/second streaming throughput.</summary>
-        // Raised to keep up with the parallel LoadThread gen: streaming only fires on the 20 tps tick, so the
+        /// smoothly instead of stalling the tick by serializing every loaded chunk at once. Sized large for
+        /// the 20 tps tick so the chunks/second streaming throughput stays high.</summary>
+        // Sized to keep up with the parallel LoadThread gen: streaming only fires on the 20 tps tick, so the
         // per-tick batch must be large or it caps throughput (192 → only 3840 chunks/s). Over loopback a chunk
         // is carried by reference (no serialize/GZip) so a big batch is cheap; the client pumps packets every
         // display frame (≫ 20 tps) and decodes off-thread. 512/tick × 20 tps ≈ 10 000 chunks/s.
@@ -57,7 +56,7 @@ namespace MinecraftClone3API.Networking
         private long _lastPlayerSave = long.MinValue;
 
         // Resolved once from the generator (it spirals out for a land column, so cache it).
-        private Vector3 _spawnPoint;
+        private Vector3D<float> _spawnPoint;
         private bool _spawnResolved;
 
         // The primary (Overworld) world plus every sibling dimension spun up on demand (the Nether the first
@@ -83,7 +82,7 @@ namespace MinecraftClone3API.Networking
 
         // Reused across StreamChunks ticks (server tick thread only) so per-player interest scanning
         // allocates nothing steady-state.
-        private readonly List<Vector3i> _newChunksScratch = new List<Vector3i>();
+        private readonly List<Vector3D<int>> _newChunksScratch = new List<Vector3D<int>>();
 
         // Phase-2 LOD streaming scratch (tick thread only). _lodRadiusSq defaults to ViewDistance so the ring
         // is empty (nothing to stream) until StateWorld raises it; the LOD store is also dormant by default.
@@ -94,14 +93,14 @@ namespace MinecraftClone3API.Networking
             set => _lodRadiusSq = value * value;
         }
         private const int MaxLodRegionsPerTick = 8;
-        private readonly List<Vector3i> _lodKeysScratch = new List<Vector3i>();
-        private readonly List<Vector3i> _newLodScratch = new List<Vector3i>();
-        private Vector3 _lodSortOrigin;
+        private readonly List<Vector3D<int>> _lodKeysScratch = new List<Vector3D<int>>();
+        private readonly List<Vector3D<int>> _newLodScratch = new List<Vector3D<int>>();
+        private Vector3D<float> _lodSortOrigin;
 
         // Reused per FlushBlockChanges tick: groups the drained per-block changes by chunk before
         // sending one BlockChanges packet per chunk per interested session.
-        private readonly Dictionary<Vector3i, List<BlockChange>> _changesByChunk =
-            new Dictionary<Vector3i, List<BlockChange>>();
+        private readonly Dictionary<Vector3D<int>, List<BlockChange>> _changesByChunk =
+            new Dictionary<Vector3D<int>, List<BlockChange>>();
 
         // Per-Pump timings + volumes, surfaced to the profiler (singleplayer: Pump runs on the main
         // thread, so a frame spike inside Pump shows up here split into chunk streaming vs delta flushing).
@@ -157,7 +156,7 @@ namespace MinecraftClone3API.Networking
             }
         }
 
-        public Vector3 SpawnPosition
+        public Vector3D<float> SpawnPosition
         {
             get
             {
@@ -363,7 +362,7 @@ namespace MinecraftClone3API.Networking
                 if (!session.LoggedIn || session.ReadySent || !session.ReadyGate.HasValue) continue;
 
                 var spawnChunk = WorldBase.ChunkInWorld(session.ReadyGate.Value.ToVector3i());
-                var belowChunk = spawnChunk - new Vector3i(0, 1, 0);
+                var belowChunk = spawnChunk - new Vector3D<int>(0, 1, 0);
                 if (!session.SentChunks.Contains(spawnChunk) || !session.SentChunks.Contains(belowChunk)) continue;
 
                 session.Connection.Send(new PlayerReadyPacket());
@@ -457,7 +456,7 @@ namespace MinecraftClone3API.Networking
                     SendContainerState(session, session.OpenContainer.Value);
         }
 
-        private void SendContainerState(ClientSession session, Vector3i pos)
+        private void SendContainerState(ClientSession session, Vector3D<int> pos)
         {
             if (session.World.GetBlockData(pos) is ContainerBlockData container)
                 session.Connection.Send(new ContainerStatePacket
@@ -619,7 +618,7 @@ namespace MinecraftClone3API.Networking
                 var broken = world.GetBlock(place.Position);
                 if (broken.Id != 0 && GameRegistry.TryGetItem(broken.RegistryKey, out var dropped))
                     world.DropItem(new ItemStack(dropped.Id, 1),
-                        place.Position.ToVector3() + new Vector3(0.5f, 0.25f, 0.5f));
+                        place.Position.ToVector3() + new Vector3D<float>(0.5f, 0.25f, 0.5f));
                 broken.OnBroken(world, place.Position);
                 world.SetBlock(place.Position, BlockRegistry.BlockAir);
             }
@@ -638,7 +637,7 @@ namespace MinecraftClone3API.Networking
             // Item-specific gate (e.g. food only applies in survival when there is hunger to refill).
             if (!item.CanUseServer(session.Player)) return;
 
-            item.OnUseServer(session.World, session.Player, use.Position.ToVector3() + new Vector3(0.5f, 0f, 0.5f));
+            item.OnUseServer(session.World, session.Player, use.Position.ToVector3() + new Vector3D<float>(0.5f, 0f, 0.5f));
 
             if (item.ConsumesOnUse)
             {
@@ -692,16 +691,16 @@ namespace MinecraftClone3API.Networking
 
             var yaw = session.Player.Yaw;
             var pitch = session.Player.Pitch;
-            var forward = new Vector3(
+            var forward = new Vector3D<float>(
                 (float) (Math.Sin(yaw) * Math.Cos(pitch)),
                 (float) Math.Sin(pitch),
                 (float) (Math.Cos(yaw) * Math.Cos(pitch)));
 
             var entity = session.World.DropItem(held.WithCount(count),
-                session.Player.Position + new Vector3(0f, 1.4f, 0f) + forward * 0.3f);
+                session.Player.Position + new Vector3D<float>(0f, 1.4f, 0f) + forward * 0.3f);
             if (entity != null)
             {
-                entity.Velocity = forward * 0.3f + new Vector3(0f, 0.1f, 0f);
+                entity.Velocity = forward * 0.3f + new Vector3D<float>(0f, 0.1f, 0f);
                 entity.PickupDelay = 40; // ~2 s so a thrown item doesn't fly straight back in
             }
 
@@ -751,7 +750,7 @@ namespace MinecraftClone3API.Networking
                 _newChunksScratch.Clear();
                 foreach (var entry in world.LoadedChunks)
                 {
-                    var center = (entry.Key * Chunk.Size + new Vector3i(Chunk.Size / 2)).ToVector3();
+                    var center = (entry.Key * Chunk.Size + new Vector3D<int>(Chunk.Size / 2)).ToVector3();
                     if ((center - playerPos).LengthSquared > _viewDistanceSq) continue;
                     if (!session.SentChunks.Contains(entry.Key)) _newChunksScratch.Add(entry.Key);
                 }
@@ -840,14 +839,14 @@ namespace MinecraftClone3API.Networking
             }
         }
 
-        private static float LodRegionDistSq(Vector3i key, Vector3 playerPos)
+        private static float LodRegionDistSq(Vector3D<int> key, Vector3D<float> playerPos)
         {
             var dx = (key.X << 7) + LodColumn.RegionBlocks / 2 - playerPos.X;
             var dz = (key.Z << 7) + LodColumn.RegionBlocks / 2 - playerPos.Z;
             return dx * dx + dz * dz;
         }
 
-        private int LodNearestFirst(Vector3i a, Vector3i b)
+        private int LodNearestFirst(Vector3D<int> a, Vector3D<int> b)
             => LodRegionDistSq(a, _lodSortOrigin).CompareTo(LodRegionDistSq(b, _lodSortOrigin));
 
         /// <summary>Drains the server's per-block change buffer and sends one compact BlockChanges
@@ -948,7 +947,7 @@ namespace MinecraftClone3API.Networking
         /// head). Checking the whole body — not just the floored feet block — matters because a player standing
         /// on the obsidian sill settles a hair below the portal's bottom block (feet floor to the sill), which
         /// would otherwise miss the portal every tick. Returns the matched cell (used as the transfer source).</summary>
-        private static bool TryFindPortalCell(IDimensionPortals portals, ClientSession session, out Vector3i cell)
+        private static bool TryFindPortalCell(IDimensionPortals portals, ClientSession session, out Vector3D<int> cell)
         {
             var p = session.Player.Position;
             var bx = (int) MathF.Floor(p.X);
@@ -957,7 +956,7 @@ namespace MinecraftClone3API.Networking
             var by = (int) MathF.Floor(p.Y + 0.2f);
             for (var dy = 0; dy <= 1; dy++)
             {
-                cell = new Vector3i(bx, by + dy, bz);
+                cell = new Vector3D<int>(bx, by + dy, bz);
                 if (portals.IsPortalBlock(session.World.GetBlock(cell.X, cell.Y, cell.Z))) return true;
             }
             cell = default;
@@ -968,7 +967,7 @@ namespace MinecraftClone3API.Networking
         /// its world and switch render mode, and arms the pending-portal build. The destination portal itself is
         /// built (and the join handshake replayed) by <see cref="ProcessPendingTransfers"/> once that column has
         /// streamed in server-side.</summary>
-        private void BeginTransfer(ClientSession session, Vector3i feet, IDimensionPortals portals)
+        private void BeginTransfer(ClientSession session, Vector3D<int> feet, IDimensionPortals portals)
         {
             var fromKey = session.World.DimensionKey;
             var toKey = portals.TargetDimension(fromKey);
@@ -980,7 +979,7 @@ namespace MinecraftClone3API.Networking
             session.World.RemovePlayer(session.Player);
             BroadcastTo(session.World, new EntityDespawnPacket {EntityId = session.EntityId}, session);
 
-            session.Player.Position = approx.ToVector3() + new Vector3(0.5f, 0f, 0.5f);
+            session.Player.Position = approx.ToVector3() + new Vector3D<float>(0.5f, 0f, 0.5f);
             MoveToDimension(session, toWorld, approx, buildPortal: true);
             session.PortalImmune = true;
             session.PortalTimer = 0;
@@ -998,20 +997,20 @@ namespace MinecraftClone3API.Networking
         /// name="toWorld"/> at <paramref name="approx"/>, resets the per-session streaming state, and tells the
         /// client to drop its world + apply the destination's visuals. The arrival (portal build or plain drop)
         /// is finalized by <see cref="ProcessPendingTransfers"/> once the column has streamed in.</summary>
-        private void MoveToDimension(ClientSession session, WorldServer toWorld, Vector3i approx, bool buildPortal)
+        private void MoveToDimension(ClientSession session, WorldServer toWorld, Vector3D<int> approx, bool buildPortal)
         {
             session.World.RemovePlayer(session.Player);
             BroadcastTo(session.World, new EntityDespawnPacket {EntityId = session.EntityId}, session);
 
             session.World = toWorld;
-            session.Player.Velocity = Vector3.Zero;
+            session.Player.Velocity = Vector3D<float>.Zero;
             toWorld.AddPlayer(session.Player);
 
             session.SentChunks.Clear();
             session.SentLodRegions.Clear();
-            session.StreamScanChunk = new Vector3i(int.MinValue);
+            session.StreamScanChunk = new Vector3D<int>(int.MinValue);
             session.StreamScanLoadedCount = -1;
-            session.LodScanChunk = new Vector3i(int.MinValue);
+            session.LodScanChunk = new Vector3D<int>(int.MinValue);
             session.LodScanRegionCount = -1;
             session.ReadyGate = null;
             session.ReadySent = false;
@@ -1052,9 +1051,9 @@ namespace MinecraftClone3API.Networking
                 var portals = GameRegistry.Portals;
                 var stand = session.PendingBuildPortal && portals != null
                     ? portals.EnsureDestinationPortal(world, session.PendingPortalApprox)
-                    : session.PendingPortalApprox.ToVector3() + new Vector3(0.5f, 0f, 0.5f);
+                    : session.PendingPortalApprox.ToVector3() + new Vector3D<float>(0.5f, 0f, 0.5f);
                 session.Player.Position = stand;
-                session.Player.Velocity = Vector3.Zero;
+                session.Player.Velocity = Vector3D<float>.Zero;
                 session.PendingPortalWorld = null;
 
                 session.ReadyGate = stand;

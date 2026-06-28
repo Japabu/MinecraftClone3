@@ -2,7 +2,7 @@ using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace VanillaPlugin.Items
 {
@@ -34,7 +34,7 @@ namespace VanillaPlugin.Items
         public override bool RefreshInventoryAfterUse => true;
 
         /// <summary>Equips the held piece: swap it into its armor slot, putting whatever was worn back in hand.</summary>
-        public override void OnUseServer(WorldServer world, EntityPlayer player, Vector3 position)
+        public override void OnUseServer(WorldServer world, EntityPlayer player, Vector3D<float> position)
         {
             var inv = player.Inventory;
             if (inv == null) return;

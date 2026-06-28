@@ -5,7 +5,7 @@ using MinecraftClone3API.Client.GUI;
 using MinecraftClone3API.Client.StateSystem;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace VanillaPlugin.Blocks
 {
@@ -17,10 +17,10 @@ namespace VanillaPlugin.Blocks
         {
         }
 
-        public override bool OnActivated(WorldBase world, Vector3i blockPos, EntityPlayer player)
+        public override bool OnActivated(WorldBase world, Vector3D<int> blockPos, EntityPlayer player)
         {
             if (!(world is WorldClient client)) return false;
-            StateEngine.AddOverlay(new GuiCraftingTable(ClientResources.Window, client));
+            StateEngine.AddOverlay(new GuiCraftingTable(client));
             return true;
         }
     }

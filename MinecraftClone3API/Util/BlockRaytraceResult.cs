@@ -1,5 +1,5 @@
 ﻿using MinecraftClone3API.Blocks;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Util
 {
@@ -7,12 +7,12 @@ namespace MinecraftClone3API.Util
     {
         public readonly Block Block;
         public readonly BlockFace Face;
-        public readonly Vector3i BlockPos;
+        public readonly Vector3D<int> BlockPos;
         public readonly float Distance;
-        public readonly Vector3 Point;
+        public readonly Vector3D<float> Point;
         public readonly AxisAlignedBoundingBox BoundingBox;
 
-        public BlockRaytraceResult(Block block, BlockFace face, Vector3i blockPos, float distance, Vector3 point, AxisAlignedBoundingBox boundingBox)
+        public BlockRaytraceResult(Block block, BlockFace face, Vector3D<int> blockPos, float distance, Vector3D<float> point, AxisAlignedBoundingBox boundingBox)
         {
             Block = block;
             Face = face;

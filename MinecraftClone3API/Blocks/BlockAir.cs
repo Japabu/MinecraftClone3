@@ -1,4 +1,5 @@
 ﻿using MinecraftClone3API.Util;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Blocks
 {
@@ -8,9 +9,9 @@ namespace MinecraftClone3API.Blocks
         {
         }
 
-        public override bool IsVisible(WorldBase world, Vector3i blockPos) => false;
-        public override bool IsFullBlock(WorldBase world, Vector3i blockPos) => false;
-        public override bool CanPassThrough(WorldBase world, Vector3i blockPos) => true;
-        public override bool CanTarget(WorldBase world, Vector3i blockPos) => false;
+        public override bool IsVisible(WorldBase world, Vector3D<int> blockPos) => false;
+        public override bool IsFullBlock(WorldBase world, Vector3D<int> blockPos) => false;
+        public override bool CanPassThrough(WorldBase world, Vector3D<int> blockPos) => true;
+        public override bool CanTarget(WorldBase world, Vector3D<int> blockPos) => false;
     }
 }

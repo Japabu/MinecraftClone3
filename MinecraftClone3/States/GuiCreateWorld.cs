@@ -7,18 +7,16 @@ using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
 using MinecraftClone3API.WorldGen;
-using OpenTK.Graphics.OpenGL4;
-using OpenTK.Mathematics;
-using OpenTK.Windowing.Common;
-using OpenTK.Windowing.Desktop;
-using OpenTK.Windowing.GraphicsLibraryFramework;
+using Silk.NET.Maths;
+using Silk.NET.Input;
 
 namespace MinecraftClone3.States
 {
     /// <summary>
     /// New-world form: a name and an optional seed. A blank seed is random; a seed that parses as a number
     /// is used directly, otherwise it is hashed to one (stably, so the same text reproduces the same world).
-    /// A state (not an overlay) so its <see cref="Exit"/> reliably detaches the text inputs' TextInput hooks.
+    /// A full-screen state that replaces the world-selection screen; its text fields receive characters as the
+    /// foreground layer (no global subscriptions to tear down).
     /// </summary>
     internal class GuiCreateWorld : GuiBase
     {
@@ -33,7 +31,6 @@ namespace MinecraftClone3.States
 
         private static Texture _background;
 
-        private readonly GameWindow _window;
         private readonly GuiTextInput _nameInput;
         private readonly GuiTextInput _seedInput;
         private readonly GuiButton _create;
@@ -42,10 +39,9 @@ namespace MinecraftClone3.States
         private readonly int _nameLabelY;
         private readonly int _seedLabelY;
 
-        public GuiCreateWorld(GameWindow window)
+        public GuiCreateWorld()
         {
-            _window = window;
-            _window.CursorState = CursorState.Normal;
+            ClientResources.Input.CursorMode = CursorMode.Normal;
 
             if (_background == null)
                 _background = GlResources.ReadTexture("System/Textures/Gui/ResourceLoadingBackground.png");
@@ -72,7 +68,7 @@ namespace MinecraftClone3.States
             Elements.Add(_create);
 
             Elements.Add(new GuiButton(Rectangle.FromSize(x + ButtonWidth + ButtonGap, y, ButtonWidth, ButtonHeight),
-                "Cancel", () => StateEngine.ReplaceState(new GuiWorldSelection(_window))));
+                "Cancel", () => StateEngine.ReplaceState(new GuiWorldSelection())));
         }
 
         private void Create()
@@ -81,7 +77,7 @@ namespace MinecraftClone3.States
             if (name.Length == 0) return;
 
             var info = WorldManager.CreateWorld(name, ResolveSeed(_seedInput.Value.Trim()));
-            StateEngine.ReplaceState(new StateWorld(_window, info));
+            StateEngine.ReplaceState(new StateWorld(info));
         }
 
         private static long ResolveSeed(string text)
@@ -96,36 +92,30 @@ namespace MinecraftClone3.States
             base.Update(focused);
 
             _create.Enabled = _nameInput.Value.Trim().Length > 0;
+        }
 
-            if (focused && _window.KeyboardState.IsKeyPressed(Keys.Escape))
-                StateEngine.ReplaceState(new GuiWorldSelection(_window));
+        public override void OnKeyDown(Key key)
+        {
+            if (key == Key.Escape)
+            {
+                StateEngine.ReplaceState(new GuiWorldSelection());
+                return;
+            }
+            base.OnKeyDown(key);
         }
 
         public override void Render()
         {
-            RenderState.Set(new GlState
-            {
-                Blend = true,
-                BlendFunc = (BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha)
-            });
+            GuiRenderer.DrawCover(_background);
 
             var width = (int) ScaledResolution.GuiResolution.X;
-            var height = (int) ScaledResolution.GuiResolution.Y;
-            GuiRenderer.DrawTexture(_background, new Rectangle(0, 0, width, height), null);
-
             var titleX = (width - Font.MeasureWidth(Title, TitleScale)) / 2;
-            Font.DrawString(Title, titleX, 60, TitleScale, Color4.White);
+            Font.DrawString(Title, titleX, 60, TitleScale, new Vector4D<float>(1f,1f,1f,1f));
 
-            Font.DrawString("Name", _fieldX, _nameLabelY, LabelScale, Color4.White);
-            Font.DrawString("Seed", _fieldX, _seedLabelY, LabelScale, Color4.White);
+            Font.DrawString("Name", _fieldX, _nameLabelY, LabelScale, new Vector4D<float>(1f,1f,1f,1f));
+            Font.DrawString("Seed", _fieldX, _seedLabelY, LabelScale, new Vector4D<float>(1f,1f,1f,1f));
 
             base.Render();
-        }
-
-        public override void Exit()
-        {
-            _nameInput.Detach();
-            _seedInput.Detach();
         }
     }
 }

@@ -4,11 +4,8 @@ using MinecraftClone3API.Client.GUI;
 using MinecraftClone3API.Client.StateSystem;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.Util;
-using OpenTK.Graphics.OpenGL4;
-using OpenTK.Mathematics;
-using OpenTK.Windowing.Common;
-using OpenTK.Windowing.Desktop;
-using OpenTK.Windowing.GraphicsLibraryFramework;
+using Silk.NET.Maths;
+using Silk.NET.Input;
 
 namespace MinecraftClone3.States
 {
@@ -25,48 +22,38 @@ namespace MinecraftClone3.States
         private const int TitleScale = 3;
         private const string Title = "Options";
 
-        private readonly GameWindow _window;
-
-        public GuiOptions(GameWindow window)
+        public GuiOptions()
         {
-            _window = window;
-            _window.CursorState = CursorState.Normal;
+            ClientResources.Input.CursorMode = CursorMode.Normal;
 
             var x = ((int) ScaledResolution.GuiResolution.X - ButtonWidth) / 2;
             var y = (int) ScaledResolution.GuiResolution.Y / 2 - (3 * ButtonHeight + 2 * ButtonGap) / 2;
             var step = ButtonHeight + ButtonGap;
 
             Elements.Add(new GuiButton(Rectangle.FromSize(x, y, ButtonWidth, ButtonHeight), "Graphics...",
-                () => StateEngine.AddOverlay(new GuiGraphicsOptions(_window))));
+                () => StateEngine.AddOverlay(new GuiGraphicsOptions())));
             Elements.Add(new GuiButton(Rectangle.FromSize(x, y + step, ButtonWidth, ButtonHeight), "Controls...",
-                () => StateEngine.AddOverlay(new GuiControls(_window))));
+                () => StateEngine.AddOverlay(new GuiControls())));
             Elements.Add(new GuiButton(Rectangle.FromSize(x, y + 2 * step, ButtonWidth, ButtonHeight), "Done",
                 () => IsDead = true));
         }
 
-        public override void Update(bool focused)
+        public override void OnKeyDown(Key key)
         {
-            base.Update(focused);
-            if (focused && _window.KeyboardState.IsKeyPressed(Keys.Escape))
+            if (key == Key.Escape)
                 IsDead = true;
         }
 
         public override void Render()
         {
-            RenderState.Set(new GlState
-            {
-                Blend = true,
-                BlendFunc = (BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha)
-            });
-
-            var screen = _window.FramebufferSize;
+            var screen = new Vector2D<int>(ClientResources.Width, ClientResources.Height);
             GuiRenderer.DrawTexture(ClientResources.WhitePixel, new Rectangle(0, 0, screen.X, screen.Y), null,
-                new Color4(0f, 0f, 0f, 0.7f), false);
+                new Vector4D<float>(0f, 0f, 0f, 0.7f), false);
 
             var width = (int) ScaledResolution.GuiResolution.X;
             var height = (int) ScaledResolution.GuiResolution.Y;
             var titleX = (width - Font.MeasureWidth(Title, TitleScale)) / 2;
-            Font.DrawString(Title, titleX, height / 4, TitleScale, Color4.White);
+            Font.DrawString(Title, titleX, height / 4, TitleScale, new Vector4D<float>(1f,1f,1f,1f));
 
             base.Render();
         }

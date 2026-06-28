@@ -1,6 +1,7 @@
 ﻿using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
+using Silk.NET.Maths;
 
 namespace VanillaPlugin.Blocks
 {
@@ -25,7 +26,7 @@ namespace VanillaPlugin.Blocks
             ModelPath = modelPath;
         }
 
-        public override bool IsFullBlock(WorldBase world, Vector3i blockPos) => _fullBlock;
+        public override bool IsFullBlock(WorldBase world, Vector3D<int> blockPos) => _fullBlock;
         public override float Hardness => _hardness;
         public override ToolType PreferredTool => _tool;
         public override int RequiredToolTier => _toolTier;

@@ -1,6 +1,5 @@
 ﻿using System;
 using MinecraftClone3API.Entities;
-using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Graphics
 {
@@ -35,7 +34,7 @@ namespace MinecraftClone3API.Graphics
                 Forward = new Vector3((float) (Math.Sin(Yaw) * Math.Cos(Pitch)), (float) Math.Sin(Pitch),
                     (float) (Math.Cos(Yaw) * Math.Cos(Pitch)));
                 
-                Right = View.Column0.Xyz;
+                Right = Vector3D.Normalize(Vector3D.Cross(Forward, Vector3.UnitY));
             }
             else
             {
@@ -44,7 +43,7 @@ namespace MinecraftClone3API.Graphics
                 Right = ParentEntity.Right;
             }
 
-            View = Matrix4.LookAt(Position, Position + Forward, Vector3.UnitY);
+            View = Matrix4X4.CreateLookAt(Position, Position + Forward, Vector3.UnitY);
         }
 
         /// <summary>Places the camera for a third-person view: it looks along <paramref name="lookForward"/>
@@ -54,9 +53,9 @@ namespace MinecraftClone3API.Graphics
         public void UpdateThirdPerson(Vector3 eye, Vector3 lookForward, float distance)
         {
             Forward = lookForward;
-            Right = Vector3.Cross(Forward, Vector3.UnitY).Normalized();
+            Right = Vector3D.Normalize(Vector3D.Cross(Forward, Vector3.UnitY));
             Position = eye - lookForward * distance;
-            View = Matrix4.LookAt(Position, Position + Forward, Vector3.UnitY);
+            View = Matrix4X4.CreateLookAt(Position, Position + Forward, Vector3.UnitY);
         }
 
         public void Rotate(float pitch, float yaw)
@@ -64,8 +63,8 @@ namespace MinecraftClone3API.Graphics
             Pitch += pitch;
             Yaw += yaw;
 
-            Pitch = MathHelper.Clamp(Pitch, -MathHelper.PiOver2 + 0.0001f, MathHelper.PiOver2 - 0.0001f);
-            Yaw %= MathHelper.TwoPi;
+            Pitch = Math.Clamp(Pitch, -MathF.PI / 2f + 0.0001f, MathF.PI / 2f - 0.0001f);
+            Yaw %= MathF.PI * 2f;
         }
 
         public void Move(Vector3 v)
@@ -73,7 +72,7 @@ namespace MinecraftClone3API.Graphics
             var delta = Vector3.Zero;
             delta += Right * v.X;
             delta += Vector3.UnitY * v.Y;
-            delta += new Vector3(Forward.X, 0, Forward.Z).Normalized() * v.Z;
+            delta += Vector3D.Normalize(new Vector3(Forward.X, 0, Forward.Z)) * v.Z;
 
             Position += delta;
         }

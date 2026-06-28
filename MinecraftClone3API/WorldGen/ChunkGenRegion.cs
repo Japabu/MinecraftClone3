@@ -1,6 +1,6 @@
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.WorldGen
 {
@@ -14,9 +14,9 @@ namespace MinecraftClone3API.WorldGen
     {
         private readonly NoiseChunkGenerator _generator;
         private readonly CachedChunk _chunk;
-        private readonly Vector3i _min;
+        private readonly Vector3D<int> _min;
 
-        public ChunkGenRegion(NoiseChunkGenerator generator, CachedChunk chunk, Vector3i chunkPos)
+        public ChunkGenRegion(NoiseChunkGenerator generator, CachedChunk chunk, Vector3D<int> chunkPos)
         {
             _generator = generator;
             _chunk = chunk;

@@ -1,7 +1,7 @@
 using System;
+using Silk.NET.Maths;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Entities
 {
@@ -51,7 +51,7 @@ namespace MinecraftClone3API.Entities
             // The cell the entity came to rest in (corner-origin: block P fills [P, P+1]). The feet sit on the
             // support's top face — an integer Y, the resting cell's bottom — so Y rounds; X/Z are the block's
             // horizontal centre (cell + 0.5), so they floor.
-            var cell = new Vector3i(
+            var cell = new Vector3D<int>(
                 (int) MathF.Floor(Position.X),
                 (int) MathF.Round(Position.Y),
                 (int) MathF.Floor(Position.Z));

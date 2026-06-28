@@ -1,5 +1,5 @@
 ﻿using System;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Util
 {
@@ -21,19 +21,19 @@ namespace MinecraftClone3API.Util
         public int Red
         {
             get { return (Binary & 0x1F) >> 0; }
-            set { Binary = (ushort) (Binary & ~0x1F | MathHelper.Clamp(value, 0, 31) << 0 & 0x1F); }
+            set { Binary = (ushort) (Binary & ~0x1F | Math.Clamp(value, 0, 31) << 0 & 0x1F); }
         }
 
         public int Green
         {
             get { return (Binary & 0x3E0) >> 5; }
-            set { Binary = (ushort)(Binary & ~0x3E0 | MathHelper.Clamp(value, 0, 31) << 5 & 0x3E0); }
+            set { Binary = (ushort)(Binary & ~0x3E0 | Math.Clamp(value, 0, 31) << 5 & 0x3E0); }
         }
 
         public int Blue
         {
             get { return (Binary & 0x7C00) >> 10; }
-            set { Binary = (ushort)(Binary & ~0x7C00 | MathHelper.Clamp(value, 0, 31) << 10 & 0x7C00); }
+            set { Binary = (ushort)(Binary & ~0x7C00 | Math.Clamp(value, 0, 31) << 10 & 0x7C00); }
         }
 
         public int this[int id]
@@ -67,7 +67,7 @@ namespace MinecraftClone3API.Util
             Blue = blue;
         }
 
-        public Vector3 Vector3 => new Vector3(Red, Green, Blue);
+        public Vector3D<float> Vector3 => new Vector3D<float>(Red, Green, Blue);
 
         public override string ToString() => $"Red:{Red}; Green:{Green}; Blue:{Blue};";
     }

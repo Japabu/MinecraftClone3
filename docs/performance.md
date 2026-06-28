@@ -4,15 +4,77 @@ Why hot-path code looks the way it does, so a later change doesn't unknowingly u
 not open work.
 
 - **The geometry pass is triangle / primitive-setup bound — NOT fill, bandwidth, draw-call, or overdraw
-  bound.** Every other suspect was ruled out by measurement: batching all opaque draws into one
-  `glMultiDrawElementsBaseVertex` cut `renderMs` but left GPU time unchanged (Mesa non-indirect multidraw is a
-  CPU loop); removing the cutout `discard` to enable early-Z moved `geomMs` ~5 % (overdraw is negligible —
-  exposed-face meshing); the fullscreen composition pass is ~0.18 ms (fill is cheap). `geomMs` scales linearly
-  with **drawn-chunk count** (≈ triangle count), so the only lever is **fewer triangles** — which is what the
-  Phase-2 flat-top + skirt LOD meshing of distant terrain buys (`geomMs` ~4.8→1.2 ms, the big win; see
-  [state-gameloop.md](state-gameloop.md) for the LOD options). **The shadow PCF pass is the exception — it is
-  fill-bound and dominant on the integrated UHD 630**, so shorten `ShadowDistance` / `ShadowMapSize` there, not
-  geometry.
+  bound.** The whole visible opaque set draws in a single GPU-driven multidraw, so draw-call count is a
+  non-issue; overdraw is negligible (exposed-face meshing) and the fullscreen composition pass is cheap (fill
+  is not the lever). `geomMs` scales linearly with **drawn-chunk count** (≈ triangle count), so the only lever
+  is **fewer triangles** — which is what the Phase-2 flat-top + skirt LOD meshing of distant terrain buys (the
+  big win; see [state-gameloop.md](state-gameloop.md) for the LOD options). **The shadow-resolve PCF pass is
+  the exception — it is fill-bound**, so shorten `ShadowDistance` / `ShadowMapSize` there, not geometry.
+- **Culling is GPU-driven; the CPU never builds an opaque visible set.** The shared `ChunkMeshArena` publishes
+  one `ChunkMeta` per resident chunk (its world-space `MinCorner` + index range) into a storage buffer; each
+  frame `ChunkCuller.Dispatch` runs the `Cull` compute shader to frustum/distance-test those AABBs and append
+  a `DrawIndexedIndirect` command per visible chunk. The geometry and shadow passes then issue **one**
+  `MultiDrawIndexedIndirectCount`. **Known Metal cost:** wgpu lacks `MultiDrawIndirectCount` on Metal
+  (`Gpu.Features.MultiDrawIndirectCount` is false), so `ChunkCuller.Draw` falls back to a per-slot
+  `DrawIndexedIndirect` loop over every resident slot — the cull still zeroes culled slots to no-op commands,
+  but the loop is O(resident slots), not O(visible). The per-frame CPU scan (`ScanTransparentAndShadow`)
+  iterates `WorldClient.RenderList` only to build the CPU-sorted transparent draw list (the GPU can't sort
+  alpha) and to flag whether any sky-exposed chunk is in shadow range.
+- **The renderer iterates a main-thread `List`, not the `RenderData` `ConcurrentDictionary`.** The transparent
+  scan can't gate its work on player-chunk (the camera rotates), so its per-frame enumeration must be cheap.
+  `WorldClient.RenderList` (a plain main-thread `List<ChunkRenderData>`) mirrors `RenderData`'s values —
+  appended in `DrainRenderReady`, **swap-removed** in `UnloadChunk` via `ChunkRenderData.RenderListIndex`
+  (O(1)) — and the transparent/shadow scan iterates it by index. `RenderData` stays a `ConcurrentDictionary`
+  purely for by-position lookups. The profiler's `renderData` column reads `RenderList.Count` (a field)
+  instead of `RenderData.Count` (which acquires all the dictionary's locks). The LOD horizon mirrors the same
+  pattern (`LodRenderList`).
+- **Opaque chunk meshes share one arena, not a buffer per chunk.** `ChunkMeshArena` suballocates every chunk's
+  opaque vertices/indices out of one big set of GPU buffers via a coalescing first-fit `RangeAllocator`
+  (main-thread bookkeeping); positions are baked world-space at mesh time, so no per-chunk model matrix is
+  needed and the whole set is one multidraw. A remesh whose vertex/index counts match exactly reuses its
+  sub-range in place (and keeps its `MetaSlot`, so the `Allocation`'s meta index stays valid); otherwise it
+  frees and reallocates. Growth doubles the backing buffers on a transient command encoder submitted
+  immediately (independent of the frame encoder). `FlushMeta` re-uploads only when the metadata changed and
+  signals a cull bind-group rebuild (by handing back a new `MetaBuffer`) when the meta buffer grows.
+- **The packed vertex is 32 bytes.** Position float3 (12), uv float2 (8), a packed uint (4:
+  `texId | arrayId<<16 | normalIdx<<18 | material<<21`), tint RGBA8 (4), light RGBA8 (4) — see
+  `MeshBuffer.cs`. Voxel normals are exactly the 6 axes (a lossless index); tint and light are 0..1 and the
+  G-buffer stores them RGBA8 anyway (lossless at 8-bit). Halving the vertex roughly halves geometry-pass
+  vertex bandwidth (the bottleneck at high render distance) and the mesh-thread allocation; the vertex shader
+  unpacks back to the same varyings, so the fragment shader is unchanged. The arena and the transparent VAO
+  upload these as **five parallel vertex streams** (one buffer/attribute per slot, matching
+  `WorldGeometry.wgsl`); the shadow pipeline binds only slot 0 (position).
+- **The mesh upload is non-blocking (`ChunkRenderData.TryUpload`) — don't reintroduce a blocking upload.**
+  `ChunkRenderData.Update()` (mesh thread) holds the opaque-buffer + transparent-VAO locks for the entire CPU
+  remesh (tens of ms, per-vertex smooth-lighting), and a single edit remeshes the chunk plus up to six face
+  neighbours. A blocking upload taking those same locks stalled the render thread on every in-progress remesh
+  — the per-edit frame spike. `TryUpload` uses `Monitor.TryEnter`; on contention `WorldClient.RequeueUpload`
+  defers the chunk. The upload loop is **time-budgeted** (`UploadBudgetMs`, ~4 ms/frame), not a fixed chunk
+  count, because the mesh **pool** produces chunks faster than one frame can upload (a fixed cap throttled the
+  world-fill and ballooned the upload queue). Failures are collected and requeued *after* the loop, so each
+  position is dequeued at most once per frame.
+- **WebGPU resource creation + queue submission stay on the main thread.** Render-data creation
+  (`ChunkRenderData`) and the arena/VAO `QueueWrite` uploads run on the main thread, alongside the per-frame
+  surface + encoder + `Queue.Submit`. The mesh pool does CPU meshing only (`ChunkRenderData.Update` builds the
+  CPU `MeshBuffer`). The arena's `Upload` reuses an existing exact-fit sub-range to avoid an alloc/free churn,
+  and writes each stream with a single `QueueWrite` straight off the backing `List` (`CollectionsMarshal.
+  AsSpan`, no `ToArray`).
+- **The transparent VAO is per-chunk and lazily allocated.** Translucent faces need an independent per-frame
+  back-to-front sort, so each chunk keeps its own `SortedVertexArrayObject` (five vertex streams + an index
+  buffer it rewrites on every camera move via `Sort`). Its `_faceInfos`/`_uploadedFaces`/`_sortedIndices` and
+  the GPU buffers themselves are **allocated lazily on the first transparent face** — most chunks are fully
+  opaque, so eager capacity-1024 lists were ~24 KB of resident empty backing arrays per streamed chunk (the
+  dominant main-thread allocation while moving). `FaceInfo` is a **struct** (no per-face object); the sort
+  rebuilds indices into a reused `List<uint>` and re-`QueueWrite`s the index buffer.
+- **Meshing is allocation-free per face.** `ChunkMesher.AddFaceToVao` writes the four vertices straight into
+  the CPU `MeshBuffer` and appends the six indices in place from the shared winding pattern
+  (`MeshBuffer.AddFace(baseVertex, flipped, faceMiddle)`; per-face UVs cached on `BlockModel.FaceData`)
+  instead of newing arrays per face. The CPU vertex `List<T>`s are recycled through `VaoBufferPool`
+  (thread-safe `ConcurrentBag` per element type, pre-sized to a typical surface chunk's vertex count so a
+  drained-pool burst list doesn't 1024→2048→…→8192 double and discard every intermediate): `Add` rents on the
+  first vertex (mesh thread), `Clear` returns after the GPU upload (main thread), so a remesh allocates no
+  lists steady-state. (Chosen over a per-buffer `Reset()` that keeps capacity: that would pin every loaded
+  chunk's CPU mesh; the pool bounds retained buffers to the in-flight working set.)
 - **`WorldClient.MeshStepFor` keys LOD on horizontal (XZ) distance**, matching the horizontal LOD annulus +
   `EvictDistantLod`, so altitude never coarsens the horizon (flying up doesn't stair-step the ground).
 - **Chunk storage is bit-packed paletted** (`PaletteStorage`; see [world-model.md](world-model.md)). It
@@ -40,48 +102,14 @@ not open work.
   reuses `_unloadScratch`, dedups atomically via `_chunksReadyToRemove.Add` under that set's own lock.
   `WorldServer.Update()` drains with `foreach` + `Clear()`, not LINQ. `UpdateThread` blocks on `_lightSignal`
   when idle instead of `Thread.Sleep(1)`.
-- **The mesh upload is non-blocking (`ChunkRenderData.TryUpload`) — don't reintroduce a blocking upload.**
-  `ChunkRenderData.Update()` (mesh thread) holds the VAO locks for the entire CPU remesh (tens of ms,
-  per-vertex smooth-lighting), and a single edit remeshes the chunk plus up to six face neighbours. A blocking
-  `Upload()` taking those same locks stalled the render thread on every in-progress remesh — the per-edit
-  frame spike. `TryUpload` uses `Monitor.TryEnter`; on contention `WorldClient.RequeueUpload` defers the
-  chunk. The upload loop is **time-budgeted** (`UploadBudgetMs`, ~4 ms/frame), not a fixed chunk count,
-  because the mesh **pool** produces chunks faster than one frame can upload (a fixed cap throttled the
-  world-fill and ballooned the upload queue). Failures are collected and requeued *after* the loop, so each
-  position is dequeued at most once per frame.
-- **Chunk-mesh re-upload orphans the GPU buffer.** Re-specifying the *same* buffer with `glBufferData(data,
-  StaticDraw)` while the GPU is still drawing from it forces an implicit CPU↔GPU sync (the CPU blocks until
-  the draw finishes) — a per-edit spike under a deep frame queue, invisible to a CPU sampler. The shared
-  `GlBuffer.UploadArray` keeps `StaticDraw` for a chunk's **first** upload and on a **re-upload orphans** the
-  buffer (`glBufferData(target, size, IntPtr.Zero, DynamicDraw)` then `glBufferSubData`), so the driver hands
-  back fresh storage and retires the old one once the in-flight draw completes (a "buffer rename"). The sorted
-  VAO's index buffer stays `DynamicDraw` (`Sort()` rewrites it per frame). Orphaning is commonly-implemented,
-  well-supported on Mesa + macOS GL; the fallback if a target fails to orphan is an explicit N-buffer ring
-  (the 4.1 cap rules out GL 4.4 persistent-mapped buffers).
-  [Khronos Buffer Object Streaming](https://wikis.khronos.org/opengl/Buffer_Object_Streaming).
-- **VAO upload is zero-copy.** `VertexArrayObject`/`SortedVertexArrayObject`/`SpriteVertexArrayObject` upload
-  straight from the backing `List<T>` via `ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(list))`
-  (synchronous copy during the call) instead of `list.ToArray()`. Frustum culling
-  (`Frustum.SpehereIntersection`) uses a plain loop, not LINQ, and `ServerNetwork.StreamChunks` tests interest
-  against reused scratch lists instead of rebuilding a whole-world `HashSet<Vector3i>` per tick.
-- **Meshing is allocation-free per face.** `ChunkMesher.AddFaceToVao` writes the four vertices straight to the
-  VAO and appends the six indices in place via `VertexArrayObject.AddFace(baseVertex, flipped, faceMiddle)`
-  (winding patterns on the VAO; per-face UVs cached on `BlockModel.FaceData`) instead of newing arrays per
-  face. `SortedVertexArrayObject.FaceInfo` is a **struct** (no per-face object); its per-frame transparency
-  sort rebuilds indices into a reused `List<uint>` uploaded via `BufferSubData`+`AsSpan`. Its
-  `_faceInfos`/`_sortedIndices` lists are **allocated lazily on the first transparent face**, not eagerly at
-  capacity 1024 — most chunks are fully opaque, so eager lists were KBs of resident empty backing arrays per
-  chunk. The CPU vertex `List<T>`s are recycled through `VaoBufferPool` (thread-safe `ConcurrentBag` per
-  element type): `Add` rents on the first vertex (mesh thread), `Clear` returns after the GPU upload (main
-  thread), so a remesh allocates no lists steady-state. (Chosen over a per-VAO `Reset()` that keeps capacity:
-  that would pin every loaded chunk's CPU mesh; the pool bounds retained buffers to the in-flight working
-  set.) Non-meshing VAOs that build once and never `Clear` keep their rented lists for their lifetime.
 - **Client per-frame allocations are reused, not re-newed.** `WorldRenderer` keeps one static `Frustum` and
   calls `Set(viewProjection)` each frame instead of newing a `Plane[6]`. `WorldClient.Update` reuses
   `_toUploadScratch` and **caps** the packet drain (`MaxPacketsPerTick` 64) and render-ready drain
-  (`MaxRenderReadyPerTick` 256) so a burst can't process unbounded packets / create unbounded GL render-data
-  in one frame. `StateEngine.Update` reuses `_overlaysToRemove` and runs the overlay pass as a reverse `for`
-  loop with index access, not LINQ.
+  (`MaxRenderReadyPerTick` 256) so a burst can't process unbounded packets / create unbounded render-data in
+  one frame. `StateEngine.Update` reuses `_overlaysToRemove` and runs the overlay pass as a reverse `for` loop
+  with index access, not LINQ. Frustum culling (`Frustum.SpehereIntersection`) uses a plain loop, not LINQ,
+  and `ServerNetwork.StreamChunks` tests interest against reused scratch lists instead of rebuilding a
+  whole-world `HashSet<Vector3i>` per tick.
 - **GUI text and the profiler don't allocate per frame.** `Font.MeasureWidth`/`DrawRun` decode codepoints
   through `NextCodepoint(text, ref i)` instead of the `Codepoints` `yield` iterator (which allocated an
   enumerator per call — every label is measured *and* drawn each frame); the iterator is kept only for
@@ -117,12 +145,8 @@ not open work.
   remains and when the loaded-chunk count changes, via `ClientSession.StreamScanChunk/StreamScanLoadedCount`
   and `WorldClient._lastEvictChunk`). Standing still does **zero** per-frame chunk enumeration. Safe because
   chunks only ever stream in within `ViewDistance` (< `CacheDistance`).
-- **The renderer iterates a main-thread `List`, not the `RenderData` `ConcurrentDictionary`.**
-  `DrawGeometryFramebuffer` can't gate its frustum-cull on player-chunk (the camera rotates), so its per-frame
-  `RenderData` enumeration (an O(bucket-table) walk + heap-allocated enumerator) dominated the render thread
-  once the rendered set was large. Now `WorldClient.RenderList` (a plain main-thread `List<ChunkRenderData>`)
-  mirrors `RenderData`'s values — appended in `DrainRenderReady`, **swap-removed** in `UnloadChunk` via
-  `ChunkRenderData.RenderListIndex` (O(1)) — and `BuildVisibleSet` + the shadow caster cull iterate it by
-  index. `RenderData` stays a `ConcurrentDictionary` purely for by-position lookups. The profiler's
-  `renderData` column reads `RenderList.Count` (a field) instead of `RenderData.Count` (which acquires all the
-  dictionary's locks).
+- **The screenshot reads back the HDR scene target, not the swapchain.** `Screenshot` copies
+  `Renderer.HdrScene` (created with `CopySrc`); the scene target is bottom-up (Tonemap samples it y-up via uv)
+  so `DecodeHdr` flips rows to land the PNG top-down, and it's captured before tonemap/GUI flush so the HUD is
+  omitted. The copy's `bytesPerRow` is rounded
+  up to a multiple of 256 (a WebGPU requirement); the rgba16float scene is 8 bytes/texel.

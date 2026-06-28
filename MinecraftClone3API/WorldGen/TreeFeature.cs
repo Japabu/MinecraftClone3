@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.WorldGen
 {
@@ -39,7 +39,7 @@ namespace MinecraftClone3API.WorldGen
         /// origin chunk (no chunk writes), drawing the RNG in the EXACT order <see cref="Place"/> does
         /// (chance → x → z → [sea-level skip] → height), so the stream stays bit-identical to full-chunk gen and
         /// the LOD canopy lands on the same columns the real trees do. Used by the horizon LOD to show trees.</summary>
-        public void CollectTrees(IChunkGenRegion region, Vector3i originColumn, ref WorldGenRandom rng,
+        public void CollectTrees(IChunkGenRegion region, Vector3D<int> originColumn, ref WorldGenRandom rng,
             List<(int X, int Z, int TopY)> into)
         {
             for (var a = 0; a < _attemptsPerChunk; a++)
@@ -54,7 +54,7 @@ namespace MinecraftClone3API.WorldGen
             }
         }
 
-        public override void Place(IChunkGenRegion region, Vector3i originColumn, ref WorldGenRandom rng)
+        public override void Place(IChunkGenRegion region, Vector3D<int> originColumn, ref WorldGenRandom rng)
         {
             for (var a = 0; a < _attemptsPerChunk; a++)
             {

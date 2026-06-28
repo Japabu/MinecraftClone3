@@ -1,48 +1,160 @@
 using System;
 using System.IO;
-using OpenTK.Graphics.OpenGL4;
+using MinecraftClone3API.Graphics.Rhi;
+using Silk.NET.WebGPU;
 
 namespace MinecraftClone3API.Graphics
 {
     /// <summary>
-    /// Captures the default framebuffer to a PNG. Used by the benchmark flythrough to snapshot a few frames so
-    /// a rendering change can be verified visually (not just by FPS). Dependency-free: a minimal PNG encoder
-    /// (8-bit RGBA, uncompressed "stored" deflate blocks), since StbImageSharp is decode-only and we don't want
-    /// to pull in an image-write package for a debug feature.
+    /// Captures the rendered scene to a PNG. Used by the benchmark flythrough and the LOD inspector to snapshot
+    /// frames so a rendering change can be verified visually (not just by FPS). Dependency-free: a minimal PNG
+    /// encoder (8-bit RGBA, uncompressed "stored" deflate blocks), since StbImageSharp is decode-only and we
+    /// don't want an image-write package for a debug feature.
+    ///
+    /// <para>WebGPU has no <c>glReadPixels</c> against the presented surface (it isn't readable after present),
+    /// so the source is the renderer's owned HDR scene target (<see cref="Renderer.HdrScene"/>, rgba16float):
+    /// it is copied texture→buffer on a transient encoder, the buffer is mapped back, and each rgba16float
+    /// texel is ACES-tonemapped + gamma-encoded on the CPU to match <c>Tonemap.wgsl</c> so the PNG looks like
+    /// what is on screen. The readback is already top-down, so there is no vertical flip.</para>
     /// </summary>
-    public static class Screenshot
+    public static unsafe class Screenshot
     {
-        /// <summary>Reads the back buffer (main-thread GL) into a raw RGBA byte buffer (bottom-up, as
-        /// glReadPixels returns it). Used both to write a PNG and to diff two captures.</summary>
+        /// <summary>Reads the HDR scene target into a top-down RGBA8 byte buffer (already tonemapped to LDR).
+        /// Used both to write a PNG and to diff two captures. Returns an opaque-black buffer if the readback
+        /// fails (e.g. the scene texture isn't available).</summary>
         public static byte[] ReadBackBuffer(int width, int height)
         {
             var pixels = new byte[width * height * 4];
-            GL.PixelStore(PixelStoreParameter.PackAlignment, 1);
-            GL.ReadBuffer(ReadBufferMode.Back);
-            GL.ReadPixels(0, 0, width, height, PixelFormat.Rgba, PixelType.UnsignedByte, pixels);
+            var scene = Renderer.HdrScene;
+            if (scene == null || width <= 0 || height <= 0)
+            {
+                for (var i = 3; i < pixels.Length; i += 4) pixels[i] = 255;
+                return pixels;
+            }
+
+            // WebGPU requires the copy's bytesPerRow be a multiple of 256. The HDR scene is rgba16float = 8
+            // bytes/texel, so the padded row stride is the texel-row width rounded up to 256.
+            const int bytesPerTexel = 8;
+            var unpaddedRow = (uint)(width * bytesPerTexel);
+            var paddedRow = (unpaddedRow + 255u) & ~255u;
+            var bufferSize = (ulong)paddedRow * (ulong)height;
+
+            var readback = new GpuBuffer(bufferSize, BufferUsage.CopyDst | BufferUsage.MapRead, "screenshot-readback");
+            try
+            {
+                CopySceneToBuffer(scene, readback, paddedRow, (uint)width, (uint)height);
+                if (!MapRead(readback, bufferSize, out var src))
+                {
+                    for (var i = 3; i < pixels.Length; i += 4) pixels[i] = 255;
+                    return pixels;
+                }
+                DecodeHdr(src, pixels, width, height, (int)paddedRow);
+                Gpu.Api.BufferUnmap(readback.Handle);
+            }
+            finally
+            {
+                readback.Dispose();
+            }
             return pixels;
         }
 
-        /// <summary>Reads the back buffer and writes it to <paramref name="path"/> as PNG.</summary>
+        private static void CopySceneToBuffer(GpuTexture scene, GpuBuffer dst, uint paddedRow, uint width, uint height)
+        {
+            var encoder = GpuCommandEncoder.Create("screenshot-copy");
+            var source = new ImageCopyTexture
+            {
+                Texture = scene.Handle,
+                MipLevel = 0,
+                Origin = new Origin3D(0, 0, 0),
+                Aspect = TextureAspect.All,
+            };
+            var destination = new ImageCopyBuffer
+            {
+                Buffer = dst.Handle,
+                Layout = new TextureDataLayout { Offset = 0, BytesPerRow = paddedRow, RowsPerImage = height },
+            };
+            var copySize = new Extent3D(width, height, 1);
+            Gpu.Api.CommandEncoderCopyTextureToBuffer(encoder.Handle, in source, in destination, in copySize);
+            encoder.SubmitImmediate("screenshot-copy");
+        }
+
+        /// <summary>Best-effort synchronous map: request the map, then pump <c>DevicePoll(wait:true)</c> until
+        /// the callback fires. wgpu-native's poll drives the map callback, so this resolves on the same thread
+        /// without an event loop.</summary>
+        private static bool MapRead(GpuBuffer buffer, ulong size, out byte* data)
+        {
+            data = null;
+            var done = false;
+            var ok = false;
+            var callback = PfnBufferMapCallback.From((status, _) =>
+            {
+                done = true;
+                ok = status == BufferMapAsyncStatus.Success;
+            });
+            Gpu.Api.BufferMapAsync(buffer.Handle, MapMode.Read, 0, (nuint)size, callback, null);
+
+            for (var spins = 0; !done && spins < 1024; spins++)
+                Gpu.Native.DevicePoll(Gpu.Device, true, null);
+
+            if (!ok) return false;
+            data = (byte*)Gpu.Api.BufferGetConstMappedRange(buffer.Handle, 0, (nuint)size);
+            return data != null;
+        }
+
+        /// <summary>Tonemap (Narkowicz ACES) + gamma-encode each rgba16float texel to RGBA8, mirroring
+        /// <c>Tonemap.wgsl</c>, and skipping the 256-alignment row padding. The HDR scene's row 0 is the bottom
+        /// of the displayed image (Tonemap samples it y-up via uv), so rows are flipped to land top-down.</summary>
+        private static void DecodeHdr(byte* src, byte[] dst, int width, int height, int paddedRow)
+        {
+            for (var y = 0; y < height; y++)
+            {
+                var rowPtr = (Half*)(src + (long)y * paddedRow);
+                var dstRow = (height - 1 - y) * width * 4;
+                for (var x = 0; x < width; x++)
+                {
+                    var s = x * 4;
+                    var r = (float)rowPtr[s];
+                    var g = (float)rowPtr[s + 1];
+                    var b = (float)rowPtr[s + 2];
+
+                    var d = dstRow + x * 4;
+                    dst[d] = Encode(r);
+                    dst[d + 1] = Encode(g);
+                    dst[d + 2] = Encode(b);
+                    dst[d + 3] = 255;
+                }
+            }
+        }
+
+        // Mirrors Tonemap.wgsl: the scene colour is composited in display space, so the PNG just clamps to
+        // [0,1] — no tonemap curve, no gamma re-encode.
+        private static byte Encode(float x)
+        {
+            var clamped = x < 0f ? 0f : x > 1f ? 1f : x;
+            var v = (int)(clamped * 255f + 0.5f);
+            return (byte)(v < 0 ? 0 : v > 255 ? 255 : v);
+        }
+
+        /// <summary>Reads the scene and writes it to <paramref name="path"/> as PNG.</summary>
         public static void CaptureBackBuffer(string path, int width, int height)
         {
             if (width <= 0 || height <= 0) return;
             WritePng(path, width, height, ReadBackBuffer(width, height));
         }
 
-        /// <summary>Writes a bottom-up RGBA buffer (e.g. from <see cref="ReadBackBuffer"/>) to a PNG.</summary>
-        public static void WritePng(string path, int width, int height, byte[] bottomUpRgba)
+        /// <summary>Writes a top-down RGBA buffer (e.g. from <see cref="ReadBackBuffer"/>) to a PNG.</summary>
+        public static void WritePng(string path, int width, int height, byte[] topDownRgba)
         {
-            // glReadPixels rows are bottom-to-top; PNG rows are top-to-bottom. Build the raw image with a
-            // per-row filter byte (0 = none), flipping vertically.
+            // PNG rows are top-to-bottom and the readback is already top-down; build the raw image with a
+            // per-row filter byte (0 = none), no flip.
             var stride = width * 4;
             var raw = new byte[height * (stride + 1)];
             for (var y = 0; y < height; y++)
             {
-                var src = (height - 1 - y) * stride;
+                var src = y * stride;
                 var dst = y * (stride + 1);
                 raw[dst] = 0; // filter: none
-                System.Buffer.BlockCopy(bottomUpRgba, src, raw, dst + 1, stride);
+                System.Buffer.BlockCopy(topDownRgba, src, raw, dst + 1, stride);
             }
 
             using var fs = new FileStream(path, FileMode.Create, FileAccess.Write);

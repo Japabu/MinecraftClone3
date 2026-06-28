@@ -1,14 +1,14 @@
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Items
 {
     /// <summary>
     /// A registered item type — the thing an <see cref="ItemStack"/> references by id. Most items are the
     /// auto-generated block form (<see cref="ItemBlock"/>, created when a block is registered); standalone
-    /// items (sticks, ingots, tools) have no block and cannot be placed. The class is GL-free so the headless
+    /// items (sticks, ingots, tools) have no block and cannot be placed. The class is GPU-free so the headless
     /// server uses it too; the 2D inventory sprite (<see cref="TexturePath"/>) is loaded lazily, client-side.
     /// </summary>
     public class Item : RegistryEntry
@@ -36,7 +36,7 @@ namespace MinecraftClone3API.Items
 
         /// <summary>Server-side right-click action for a non-block item (the effect is server-authoritative).
         /// <paramref name="position"/> is the world cell the player clicked toward. No-op by default.</summary>
-        public virtual void OnUseServer(WorldServer world, EntityPlayer player, Vector3 position) { }
+        public virtual void OnUseServer(WorldServer world, EntityPlayer player, Vector3D<float> position) { }
 
         /// <summary>Whether <see cref="IsUsable"/> only fires when the crosshair is on a block (a spawn egg needs
         /// the targeted cell). A thrown item (the ender pearl) sets this false so it can be used aiming at the

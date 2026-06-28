@@ -1,12 +1,12 @@
 using System;
+using Silk.NET.Maths;
 using MinecraftClone3API.Blocks;
-using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Entities
 {
     /// <summary>
     /// Server-authoritative melee combat against creatures: damage application, invulnerability frames,
-    /// knockback, and death (loot drop + despawn). Stateless and GL-free, mirroring
+    /// knockback, and death (loot drop + despawn). Stateless and GPU-free, mirroring
     /// <see cref="PlayerSurvival"/>; the network layer calls in when an attack request arrives, and a hostile
     /// creature's AI calls <see cref="EntityCreature"/> retaliation through <see cref="PlayerSurvival"/>.
     /// </summary>
@@ -21,7 +21,7 @@ namespace MinecraftClone3API.Entities
         /// <summary>Applies <paramref name="damage"/> to a creature from an attacker at
         /// <paramref name="sourcePos"/>: skips it while the target is in hit-cooldown, otherwise subtracts
         /// health, knocks the target back, and on death rolls its loot table and marks it for despawn.</summary>
-        public static void DamageEntity(WorldServer world, EntityCreature target, float damage, Vector3 sourcePos)
+        public static void DamageEntity(WorldServer world, EntityCreature target, float damage, Vector3D<float> sourcePos)
         {
             if (target == null || target.Dead || target.HurtCooldown > 0 || damage <= 0f) return;
 
@@ -47,7 +47,7 @@ namespace MinecraftClone3API.Entities
             var loot = target.Type?.Loot;
             if (loot != null)
             {
-                var center = target.Position + new Vector3(0f, target.Type.Height * 0.5f, 0f);
+                var center = target.Position + new Vector3D<float>(0f, target.Type.Height * 0.5f, 0f);
                 foreach (var stack in loot.Roll(world.SpawnRng))
                     world.DropItem(stack, center);
             }

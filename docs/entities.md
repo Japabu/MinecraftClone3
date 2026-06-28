@@ -174,15 +174,32 @@ flat light value sampled at its position, so it shades/shadows like the surround
 [rendering.md](rendering.md)). Box models are textured from the **official Minecraft entity sheets**: each box uses
 Mojang's texture offsets + dimensions so the sheet maps straight on, with UVs normalized by the texture array's
 layer size. (Current Minecraft splits some mob sheets by climate variant, so the paths carry a suffix —
-`entity/pig/pig_temperate`, `entity/cow/cow_temperate`, `entity/chicken/chicken_temperate`.) Dropped items render as the spinning, bobbing 3D icon of their block (the same mesh
-[ItemIconRenderer](../MinecraftClone3API/Client/Graphics/ItemIconRenderer.cs) uses for the inventory). A
+`entity/pig/pig_temperate`, `entity/cow/cow_temperate`, `entity/chicken/chicken_temperate`.) Dropped items spin and
+bob: a block as the 3D icon of its block (the same mesh [ItemIconRenderer](../MinecraftClone3API/Client/Graphics/ItemIconRenderer.cs)
+uses for the inventory), a flat item as its extruded sprite, and a block entity (a chest) as its box model. A
 projectile (the ender pearl) instead renders as a single **camera-facing billboard** quad of its item sprite —
 the quad's local axes are mapped onto the camera's `Right`/`Up`/forward each frame so it always faces the viewer.
+
+Every per-instance draw rides one shared `EntityDrawList` (a dynamic-offset slot UBO `{model, light}` over the
+entity pipeline); `EntityRenderer`, `BlockEntityRenderer`, and `HeldItemRenderer` each own one. **Block entities**
+(chests, `Block.RendersAsBlockEntity`) are skipped by the chunk mesher and drawn by
+[`BlockEntityRenderer`](../MinecraftClone3API/Client/Graphics/BlockEntityRenderer.cs): it scans loaded chunks near
+the camera for block-data positions with a model, seats each box model at its cell (corner-origin `(P+0.5, P,
+P+0.5)`) oriented by `GetBlockEntityRotation`, and swings a chest's lid (+`lock`) about its hinge while its screen
+is open (`SetChestOpen`).
 
 The **local player** is normally excluded from rendering (it isn't in `world.Entities`), but in a third-person
 view (F5, see [state-gameloop.md](state-gameloop.md)) `EntityRenderer.Render` also draws it with the built-in
 player model at `PlayerController.PlayerEntity`. Its walk cycle is advanced from its own physics in
 `PlayerController` (via `Entity.AdvanceWalkCycle`), not the network-interpolation path the other entities use.
+
+**Held item.** A player's main-hand item (`Entity.HeldItemId`) hangs off the right-arm bone (`arm0`) so it swings
+with the body and remote clients see what's held — a block as its icon mesh, a flat item as its extruded sprite, a
+chest as its box model (`EntityRenderer.QueueHeldItem`). In **first person** the body is hidden, so
+[`HeldItemRenderer`](../MinecraftClone3API/Client/Graphics/HeldItemRenderer.cs) draws the lower-right viewmodel
+instead: the held stack posed in view space from the resource pack's `display.firstperson_righthand` transform
+(`ItemDisplay`, the vanilla `ItemInHandRenderer` math) plus a swing arc driven by `PlayerController.SwingPhase`,
+compressed into the front reverse-Z depth band (`SetViewport` min/max depth) so the world never clips it.
 
 **Models are data, not code.** Each type's geometry is a **Bedrock-edition geometry JSON** file (the
 Blockbench-native mob format — bones with `pivot`/`rotation`, cubes with absolute `origin`/`size`/`uv`), loaded

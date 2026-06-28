@@ -8,7 +8,7 @@ using MinecraftClone3API.Client;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Util
 {
@@ -69,13 +69,13 @@ namespace MinecraftClone3API.Util
         private enum Phase { Warmup, Streaming, Orbit, Return, Edit, Done }
 
         private static readonly System.Diagnostics.Stopwatch _clock = new System.Diagnostics.Stopwatch();
-        private static Vector3 _origin;
+        private static Vector3D<float> _origin;
         private static Phase _phase = Phase.Warmup;
         private static bool _recording;
         private static double _recordStartSeconds;
 
         // Anchors captured at each phase transition so the path is continuous (no teleport spikes).
-        private static Vector3 _phaseAnchor;
+        private static Vector3D<float> _phaseAnchor;
         private static float _orbitStartAngle;
         private static int _editsDone;
 
@@ -99,12 +99,27 @@ namespace MinecraftClone3API.Util
         private static readonly List<Sample> _samples = new List<Sample>(64 * 1024);
 
         // Frames to snapshot to PNG (recorded-elapsed fraction → name), so a render change can be checked
-        // visually, not just by FPS. Taken once each when the recorded clock passes the fraction.
-        private static readonly (double Frac, string Name)[] _captureSchedule =
+        // visually, not just by FPS. Ten equally-spaced captures within each recorded scene
+        // (streaming/orbit/return/edit), sampled at the centre of each tenth so they sit clear of the phase
+        // transitions. Taken once each when the recorded clock passes the fraction.
+        private static readonly (double Frac, string Name)[] _captureSchedule = BuildCaptureSchedule();
+        private static readonly bool[] _captureTaken = new bool[_captureSchedule.Length];
+
+        private static (double Frac, string Name)[] BuildCaptureSchedule()
         {
-            (0.16, "streaming"), (0.62, "return"), (0.90, "edit")
-        };
-        private static readonly bool[] _captureTaken = new bool[3];
+            var phases = new (string Name, double Start, double Duration)[]
+            {
+                ("streaming", 0.0,                            FStreaming),
+                ("orbit",     FStreaming,                     FOrbit),
+                ("return",    FStreaming + FOrbit,            FReturn),
+                ("edit",      FStreaming + FOrbit + FReturn,  FEdit),
+            };
+            var list = new System.Collections.Generic.List<(double, string)>();
+            foreach (var (name, start, dur) in phases)
+                for (var k = 0; k < 10; k++)
+                    list.Add((start + (k + 0.5) / 10.0 * dur, $"{name}-{k:00}"));
+            return list.ToArray();
+        }
 
         /// <summary>Applies CLI/env config. Call once before the window is created.</summary>
         public static void Configure(string[] args)
@@ -169,10 +184,10 @@ namespace MinecraftClone3API.Util
 
         /// <summary>Called by the world state once the join handshake completes and the player is at the spawn.
         /// Anchors the path origin and starts the timeline; recording begins after the warmup window.</summary>
-        public static void Begin(Vector3 origin)
+        public static void Begin(Vector3D<float> origin)
         {
             if (Active) return;
-            _origin = origin + new Vector3(OriginOffset, 0, OriginOffset);
+            _origin = origin + new Vector3D<float>(OriginOffset, 0, OriginOffset);
             _phaseAnchor = _origin;
             _phase = Phase.Warmup;
             Active = true;
@@ -198,7 +213,7 @@ namespace MinecraftClone3API.Util
             var newPhase = PhaseAt(rt);
             if (newPhase != _phase) EnterPhase(newPhase, player);
 
-            Vector3 pos;
+            Vector3D<float> pos;
             float yaw, pitch;
 
             switch (_phase)
@@ -207,7 +222,7 @@ namespace MinecraftClone3API.Util
                 {
                     // Rise to cruise altitude and slowly spin to load the spawn neighbourhood before recording.
                     var rise = (float) Math.Min(1.0, t / Math.Max(0.5, WarmupSeconds * 0.6));
-                    pos = _origin + new Vector3(0, CruiseAltitude * rise, 0);
+                    pos = _origin + new Vector3D<float>(0, CruiseAltitude * rise, 0);
                     yaw = (float) (t * 0.5);
                     pitch = -0.25f;
                     break;
@@ -216,7 +231,7 @@ namespace MinecraftClone3API.Util
                 {
                     // Straight heading into virgin terrain; gentle yaw/altitude oscillation to pan.
                     var local = (float) (rt - PhaseStart(Phase.Streaming));
-                    pos = _phaseAnchor + new Vector3(CruiseSpeed * local, 4f * (float) Math.Sin(local * 0.6), 0);
+                    pos = _phaseAnchor + new Vector3D<float>(CruiseSpeed * local, 4f * (float) Math.Sin(local * 0.6), 0);
                     yaw = 0.45f * (float) Math.Sin(local * 0.4);
                     pitch = -0.32f;
                     if ((int) local != _lastLodLogSecond) { _lastLodLogSecond = (int) local; SampleLodHealth(pos); }
@@ -226,12 +241,12 @@ namespace MinecraftClone3API.Util
                 {
                     var local = (float) (rt - PhaseStart(Phase.Orbit));
                     var dur = PhaseDuration(Phase.Orbit);
-                    var ang = _orbitStartAngle + (float) (local / dur) * OrbitRevolutions * MathHelper.TwoPi;
+                    var ang = _orbitStartAngle + (float) (local / dur) * OrbitRevolutions * (MathF.PI * 2f);
                     var center = _phaseAnchor;
-                    pos = center + new Vector3(MathF.Cos(ang) * OrbitRadius,
+                    pos = center + new Vector3D<float>(MathF.Cos(ang) * OrbitRadius,
                         6f * (float) Math.Sin(local * 0.5), MathF.Sin(ang) * OrbitRadius);
                     // Face along the tangent (direction of travel) so the camera always moves into fresh view.
-                    yaw = ang + MathHelper.PiOver2;
+                    yaw = ang + (MathF.PI / 2f);
                     pitch = -0.28f;
                     break;
                 }
@@ -240,10 +255,10 @@ namespace MinecraftClone3API.Util
                     // Fly back toward the spawn over already-visited (now evicted) ground → re-stream / regen.
                     var local = (float) (rt - PhaseStart(Phase.Return));
                     var dur = PhaseDuration(Phase.Return);
-                    var target = _origin + new Vector3(0, CruiseAltitude, 0);
+                    var target = _origin + new Vector3D<float>(0, CruiseAltitude, 0);
                     var frac = (float) Math.Min(1.0, local / dur);
-                    pos = Vector3.Lerp(_phaseAnchor, target, Smooth(frac))
-                          + new Vector3(0, 4f * (float) Math.Sin(local * 0.6), 0);
+                    pos = Vector3D.Lerp(_phaseAnchor, target, Smooth(frac))
+                          + new Vector3D<float>(0, 4f * (float) Math.Sin(local * 0.6), 0);
                     var dir = target - _phaseAnchor;
                     yaw = MathF.Atan2(dir.X, dir.Z);
                     pitch = -0.3f;
@@ -253,7 +268,7 @@ namespace MinecraftClone3API.Util
                 {
                     // Skim low over terrain near spawn, looking down, carving/placing blocks as we go.
                     var local = (float) (rt - PhaseStart(Phase.Edit));
-                    pos = _phaseAnchor + new Vector3(EditSpeed * local,
+                    pos = _phaseAnchor + new Vector3D<float>(EditSpeed * local,
                         EditAltitude - CruiseAltitude + 3f * (float) Math.Sin(local), EditSpeed * 0.4f * local);
                     yaw = 0.3f * (float) Math.Sin(local * 0.5);
                     pitch = -0.85f;
@@ -270,7 +285,7 @@ namespace MinecraftClone3API.Util
             player.Position = pos;
             player.PrevPosition = pos;
             player.InterpolatedPosition = pos;
-            player.Velocity = Vector3.Zero;
+            player.Velocity = Vector3D<float>.Zero;
             player.Yaw = yaw;
             player.Pitch = pitch;
             player.Rotate(0, 0); // recompute Forward/Right from Yaw/Pitch
@@ -282,7 +297,7 @@ namespace MinecraftClone3API.Util
         /// <summary>Samples LOD horizon health while cruising: the fraction of regions inside the LOD draw distance
         /// that are NOT yet meshed/uploaded. A sustained high value means the LOD mesh pipeline is starving behind
         /// continuous movement (the "walk far → horizon goes coarse/empty" regression) — surfaced in the report.</summary>
-        private static void SampleLodHealth(Vector3 p)
+        private static void SampleLodHealth(Vector3D<float> p)
         {
             var world = ClientProfiling.World;
             if (world == null) return;
@@ -365,7 +380,7 @@ namespace MinecraftClone3API.Util
             if (rt >= DurationSeconds && !Finished) Finish();
         }
 
-        /// <summary>Main-thread GL: snapshots the back buffer to a PNG when the recorded clock passes a
+        /// <summary>Main-thread GPU: snapshots the back buffer to a PNG when the recorded clock passes a
         /// scheduled point. Called from the render loop after the frame is drawn, before SwapBuffers.</summary>
         public static void CaptureFrame(int width, int height)
         {
@@ -453,7 +468,7 @@ namespace MinecraftClone3API.Util
                 // Treat the entry position as a point on the circle; centre is offset toward -X so the orbit
                 // sweeps over fresh ground rather than re-tracing the streaming line.
                 _orbitStartAngle = 0f;
-                _phaseAnchor = player.Position - new Vector3(OrbitRadius, 0, 0);
+                _phaseAnchor = player.Position - new Vector3D<float>(OrbitRadius, 0, 0);
             }
             Logger.Info($"[benchmark] phase: {next}  (t={RecordedElapsed:0.0}s)");
         }

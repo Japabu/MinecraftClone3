@@ -10,14 +10,12 @@ using MinecraftClone3API.Client.Graphics;
 using MinecraftClone3API.Client.StateSystem;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Graphics;
+using MinecraftClone3API.Graphics.Rhi;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Networking;
 using MinecraftClone3API.Util;
-using OpenTK.Graphics.OpenGL4;
-using OpenTK.Mathematics;
-using OpenTK.Windowing.Common;
-using OpenTK.Windowing.Desktop;
-using OpenTK.Windowing.GraphicsLibraryFramework;
+using Silk.NET.Input;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3.States
 {
@@ -27,11 +25,10 @@ namespace MinecraftClone3.States
 
         // Placeholder until the seed-derived spawn arrives in LoginAccept; the loading gate snaps the
         // player onto it once the surrounding chunks have streamed in (see UpdateLoading).
-        private static readonly Vector3 SpawnPos = new Vector3(0, 80, 0);
+        private static readonly Vector3D<float> SpawnPos = new Vector3D<float>(0, 80, 0);
 
         private const double LoadingTimeoutSeconds = 30;
 
-        private readonly GameWindow _window;
         private readonly bool _multiplayer;
         private readonly bool _benchmark;
 
@@ -72,17 +69,16 @@ namespace MinecraftClone3.States
         private const int MaxCatchUpTicks = 5;
 
         /// <summary>Singleplayer: runs the given world in an in-process server over a loopback connection.</summary>
-        public StateWorld(GameWindow window, WorldInfo world) : this(window, false, world, false) { }
+        public StateWorld(WorldInfo world) : this(false, world, false) { }
 
         /// <summary>Benchmark: singleplayer world driven by the automated <see cref="Benchmark"/> flythrough.</summary>
-        public StateWorld(GameWindow window, WorldInfo world, bool benchmark) : this(window, false, world, benchmark) { }
+        public StateWorld(WorldInfo world, bool benchmark) : this(false, world, benchmark) { }
 
         /// <summary>Multiplayer: connects to the dedicated server over TCP.</summary>
-        public StateWorld(GameWindow window, bool multiplayer = false) : this(window, multiplayer, null, false) { }
+        public StateWorld(bool multiplayer = false) : this(multiplayer, null, false) { }
 
-        private StateWorld(GameWindow window, bool multiplayer, WorldInfo world, bool benchmark)
+        private StateWorld(bool multiplayer, WorldInfo world, bool benchmark)
         {
-            _window = window;
             _multiplayer = multiplayer;
             _benchmark = benchmark;
 
@@ -92,7 +88,7 @@ namespace MinecraftClone3.States
 
             // Grab the cursor so relative mouse movement drives the camera (FPS-style). The benchmark drives the
             // camera itself and runs unattended, so it must NOT grab the cursor (that would trap the user's mouse).
-            _window.CursorState = benchmark ? CursorState.Hidden : CursorState.Grabbed;
+            ClientResources.Input.CursorMode = benchmark ? CursorMode.Hidden : CursorMode.Raw;
             PlayerController.ResetMouse();
 
             _player = new EntityPlayer {Position = SpawnPos};
@@ -174,7 +170,7 @@ namespace MinecraftClone3.States
         {
             if (_connectionFailed)
             {
-                StateEngine.ReplaceState(new GuiMainMenu(_window));
+                StateEngine.ReplaceState(new GuiMainMenu());
                 return;
             }
 
@@ -204,20 +200,10 @@ namespace MinecraftClone3.States
             UpdateDeathScreen();
             UpdateTeleport();
 
-            // The automated benchmark drives the camera itself (no player input / no pause overlay).
+            // The automated benchmark drives the camera itself (no player input / no pause overlay). Esc (pause)
+            // and the inventory key are handled in OnKeyDown — opening an overlay makes this state no longer the
+            // foreground layer, so StateEngine stops routing input to it.
             var active = focused && !_benchmark;
-            if (active && _window.KeyboardState.IsKeyPressed(Keys.Escape))
-            {
-                StateEngine.AddOverlay(new GuiPauseMenu(_window, _world));
-                active = false;
-            }
-            if (active && Keybinds.IsPressed(_window.KeyboardState, GameAction.Inventory))
-            {
-                StateEngine.AddOverlay(_world.GameMode == GameMode.Survival
-                    ? (GuiBase) new GuiInventory(_window, _world)
-                    : new GuiCreativeInventory(_window, _world));
-                active = false;
-            }
 
             // The world keeps simulating whenever it isn't explicitly paused: only the singleplayer Esc menu
             // pauses it (StateEngine.WorldPaused), so a container/inventory screen leaves furnaces smelting and
@@ -258,7 +244,7 @@ namespace MinecraftClone3.States
                 else Benchmark.DriveCamera(_player, _world);
                 PlayerController.Camera.Update();
             }
-            else if (active) PlayerController.UpdateFrame(_window, _world);
+            else if (active) PlayerController.UpdateFrame(_world, true);
 
             var c = GC.GetAllocatedBytesForCurrentThread();
             _phaseTimer.Restart();
@@ -277,6 +263,47 @@ namespace MinecraftClone3.States
             }
         }
 
+        // StateEngine routes input here only while gameplay is the foreground layer (no overlay open), so opening
+        // the pause/inventory overlay below stops further gameplay input without an explicit "active" flag. The
+        // benchmark drives itself and the loading gate has no player, so both swallow input entirely.
+
+        public override void OnKeyDown(Key key)
+        {
+            if (_loading || _connectionFailed || _benchmark) return;
+
+            if (key == Key.Escape)
+            {
+                StateEngine.AddOverlay(new GuiPauseMenu(_world));
+                return;
+            }
+            if (Keybinds.Matches(GameAction.Inventory, key))
+            {
+                StateEngine.AddOverlay(_world.GameMode == GameMode.Survival
+                    ? (GuiBase) new GuiInventory(_world)
+                    : new GuiCreativeInventory(_world));
+                return;
+            }
+            PlayerController.OnKeyDown(key);
+        }
+
+        public override void OnMouseDown(MouseButton button, Vector2D<float> guiPos)
+        {
+            if (_loading || _connectionFailed || _benchmark) return;
+            PlayerController.OnMouseDown(button);
+        }
+
+        public override void OnMouseUp(MouseButton button, Vector2D<float> guiPos)
+        {
+            if (_loading || _connectionFailed || _benchmark) return;
+            PlayerController.OnMouseUp(button);
+        }
+
+        public override void OnScroll(float delta)
+        {
+            if (_loading || _connectionFailed || _benchmark) return;
+            PlayerController.OnScroll(delta);
+        }
+
         /// <summary>Opens the death overlay when the server reports the player died, and closes it (snapping the
         /// player to the server's respawn point — the client is position-authoritative) once the server confirms
         /// the revive. Driven by the death flag in the player stats packet.</summary>
@@ -284,7 +311,7 @@ namespace MinecraftClone3.States
         {
             if (_world.PlayerDead && _deathScreen == null)
             {
-                _deathScreen = new GuiDeathScreen(_window, _world);
+                _deathScreen = new GuiDeathScreen(_world);
                 StateEngine.AddOverlay(_deathScreen);
             }
             else if (!_world.PlayerDead && _deathScreen != null)
@@ -295,9 +322,9 @@ namespace MinecraftClone3.States
                 _player.Position = _world.SpawnPosition;
                 _player.PrevPosition = _world.SpawnPosition;
                 _player.InterpolatedPosition = _world.SpawnPosition;
-                _player.Velocity = Vector3.Zero;
+                _player.Velocity = Vector3D<float>.Zero;
 
-                _window.CursorState = CursorState.Grabbed;
+                ClientResources.Input.CursorMode = CursorMode.Raw;
                 PlayerController.ResetMouse();
                 PlayerController.Camera.Update();
             }
@@ -322,7 +349,7 @@ namespace MinecraftClone3.States
         /// Called zero or more times per display frame by the accumulator in <see cref="Update"/>.</summary>
         private void Tick(bool stepPlayer)
         {
-            if (stepPlayer) PlayerController.Tick(_window, _world);
+            PlayerController.Tick(_world, stepPlayer);
 
             var a = GC.GetAllocatedBytesForCurrentThread();
             _phaseTimer.Restart();
@@ -359,7 +386,7 @@ namespace MinecraftClone3.States
                 _player.Position = _world.SpawnPosition;
                 _player.PrevPosition = _world.SpawnPosition;
                 _player.InterpolatedPosition = _world.SpawnPosition;
-                _player.Velocity = Vector3.Zero;
+                _player.Velocity = Vector3D<float>.Zero;
                 _spawnApplied = true;
             }
 
@@ -391,7 +418,7 @@ namespace MinecraftClone3.States
         {
             var feetChunk = WorldBase.ChunkInWorld(_player.Position.ToVector3i());
             return _world.LoadedChunks.ContainsKey(feetChunk) &&
-                   _world.LoadedChunks.ContainsKey(feetChunk - new Vector3i(0, 1, 0));
+                   _world.LoadedChunks.ContainsKey(feetChunk - new Vector3D<int>(0, 1, 0));
         }
 
         public override void Render()
@@ -404,35 +431,28 @@ namespace MinecraftClone3.States
                 return;
             }
 
-            var aspect = (float)_window.FramebufferSize.X / _window.FramebufferSize.Y;
-            // Far plane must clear the LOD horizon (well past the render distance) or the distant ring is
-            // clipped; covers LodRenderDistance + a region of margin. The near plane is raised from 0.01 to 0.1
-            // so a huge far plane (a 96-chunk horizon reaches ~1800 blocks) keeps enough depth precision to not
-            // z-fight near full-detail terrain — 0.1 still only clips when the camera is right against a block.
-            var farPlane = MathF.Max(512f, _world.LodRenderDistance + LodColumn.RegionBlocks * 2);
+            var aspect = (float)ClientResources.Width / ClientResources.Height;
             // Sprinting widens the FOV (eased in PlayerController), clamped so a high base FOV can't exceed 179°.
             var fov = MathF.Min(GraphicsSettings.Fov * PlayerController.FovScale, 179f);
-            var projection = Matrix4.CreatePerspectiveFieldOfView(
-                MathHelper.DegreesToRadians(fov), aspect, 0.1f, farPlane);
+            // Infinite-far reverse-Z: no far clip (the LOD horizon always reaches), and float depth keeps
+            // near-uniform precision to infinity, so the distant ring never z-fights against near terrain.
+            // Distance is bounded by the GPU cull compute, not a far plane. The near plane stays at 0.1 so it
+            // only clips when the camera is right against a block.
+            var projection = Projection.ReverseZPerspective(
+                (fov * (MathF.PI / 180f)), aspect, 0.1f);
             WorldRenderer.RenderWorld(_world, projection);
 
-            if (_window.CursorState == CursorState.Grabbed && !PlayerController.RenderSelf)
+            if (ClientResources.Input.CursorMode == CursorMode.Raw && !PlayerController.RenderSelf)
                 CrosshairRenderer.Render();
             HotbarRenderer.Render(_world.Inventory);
             SurvivalHud.Render(_world);
 
             if (!Profiler.Recording && !RenderDebug.ShowDiagnostics && !RenderDebug.ShowControls) return;
 
-            RenderState.Set(new GlState
-            {
-                Blend = true,
-                BlendFunc = (BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha)
-            });
-
             var y = 4;
             if (Profiler.Recording)
             {
-                Font.DrawString("● REC", 4, y, 2, new Color4(1f, 0.3f, 0.3f, 1f));
+                Font.DrawString("● REC", 4, y, 2, new Vector4D<float>(1f, 0.3f, 0.3f, 1f));
                 y += Font.LineHeight(2) + 4;
             }
 
@@ -440,8 +460,8 @@ namespace MinecraftClone3.States
             if (RenderDebug.ShowControls) DrawControls(y);
         }
 
-        private static readonly Color4 OverlayText = new Color4(1f, 1f, 1f, 1f);
-        private static readonly Color4 OverlayHeader = new Color4(0.55f, 0.8f, 1f, 1f);
+        private static readonly Vector4D<float> OverlayText = new Vector4D<float>(1f, 1f, 1f, 1f);
+        private static readonly Vector4D<float> OverlayHeader = new Vector4D<float>(0.55f, 0.8f, 1f, 1f);
 
         private void RenderLoading()
         {
@@ -482,8 +502,8 @@ namespace MinecraftClone3.States
             // SpawnChunkStreamTarget is an estimate of the chunks streamed by the time the spawn area is ready;
             // it only paces the bar, the real gate is SpawnChunksApplied above.
             const int spawnChunkStreamTarget = 96;
-            var frac = MathHelper.Clamp(_world.LoadedChunks.Count / (float)spawnChunkStreamTarget, 0f, 1f);
-            return MathHelper.Clamp(0.1f + 0.85f * frac, 0.1f, 0.95f);
+            var frac = Math.Clamp(_world.LoadedChunks.Count / (float)spawnChunkStreamTarget, 0f, 1f);
+            return Math.Clamp(0.1f + 0.85f * frac, 0.1f, 0.95f);
         }
 
         // Fixed keybinds for the F1 controls overlay (key column, description column).
@@ -496,7 +516,7 @@ namespace MinecraftClone3.States
             ("Fly up / down", "Space / Shift"),
             ("Look", "Mouse"),
             ("Break / Place", "Left / Right Click"),
-            ("Blocks", "number keys (keybindings.txt)"),
+            ("Hotbar slot", "1 - 9 / scroll"),
             ("Pause", "Esc"),
             ("", ""),
             ("F1", "controls (this)"),
@@ -561,8 +581,8 @@ namespace MinecraftClone3.States
             Profiler.Network = null;
             Profiler.Server = null;
 
-            // GL teardown must run here, on the main/GL thread. Stopping the server network and joining +
-            // saving the world is GL-free but can take seconds when many chunks are dirty (a burning furnace
+            // GPU teardown must run here, on the main/GPU thread. Stopping the server network and joining +
+            // saving the world is GPU-free but can take seconds when many chunks are dirty (a burning furnace
             // floods light, dirtying every chunk it touches). Doing it here would block the render loop for the
             // whole save; on macOS the window then goes unresponsive and its drawable surface wedges, so the
             // screen freezes on the last frame even though the game has already moved to the menu. Run it on a

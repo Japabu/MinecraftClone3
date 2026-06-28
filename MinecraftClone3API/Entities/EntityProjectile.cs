@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Entities
 {
@@ -62,8 +62,8 @@ namespace MinecraftClone3API.Entities
 
         // Fallback push directions, tried after the reverse-of-travel direction: up first (climb out onto the
         // surface), then the four horizontals as a last resort.
-        private static readonly Vector3[] FallbackDirs =
-            {Vector3.UnitY, -Vector3.UnitX, Vector3.UnitX, -Vector3.UnitZ, Vector3.UnitZ};
+        private static readonly Vector3D<float>[] FallbackDirs =
+            {Vector3D<float>.UnitY, -Vector3D<float>.UnitX, Vector3D<float>.UnitX, -Vector3D<float>.UnitZ, Vector3D<float>.UnitZ};
 
         private void Land(WorldServer world)
         {
@@ -78,11 +78,11 @@ namespace MinecraftClone3API.Entities
         /// (the vanilla target — normal for landing on a top face), else the player is pushed <b>back along the
         /// pearl's incoming path</b> (the side it flew in from is guaranteed open, so it never ends up on the far
         /// side of a thick wall), with up/horizontal fallbacks. Returns false if nothing clear is within reach.</summary>
-        private bool TryResolveLanding(WorldServer world, out Vector3 result)
+        private bool TryResolveLanding(WorldServer world, out Vector3D<float> result)
         {
             if (PlayerBoxClear(world, Position)) { result = Position; return true; }
 
-            if (Velocity.LengthSquared > 1e-6f && PushClear(world, -Velocity.Normalized(), out result))
+            if (Velocity.LengthSquared > 1e-6f && PushClear(world, -Vector3D.Normalize(Velocity), out result))
                 return true;
 
             foreach (var dir in FallbackDirs)
@@ -93,7 +93,7 @@ namespace MinecraftClone3API.Entities
             return false;
         }
 
-        private bool PushClear(WorldServer world, Vector3 dir, out Vector3 result)
+        private bool PushClear(WorldServer world, Vector3D<float> dir, out Vector3D<float> result)
         {
             for (var i = 1; i <= MaxNudge; i++)
             {
@@ -106,17 +106,17 @@ namespace MinecraftClone3API.Entities
 
         // True if a player-sized box stood at `feet` overlaps no solid collision box (cells are local 0..1, so
         // each box is offset by its cell origin as EntityPhysics does).
-        private static bool PlayerBoxClear(WorldServer world, Vector3 feet)
+        private static bool PlayerBoxClear(WorldServer world, Vector3D<float> feet)
         {
-            var min = new Vector3(feet.X - PlayerHalfWidth, feet.Y, feet.Z - PlayerHalfWidth);
-            var max = new Vector3(feet.X + PlayerHalfWidth, feet.Y + EntityPlayer.Height, feet.Z + PlayerHalfWidth);
+            var min = new Vector3D<float>(feet.X - PlayerHalfWidth, feet.Y, feet.Z - PlayerHalfWidth);
+            var max = new Vector3D<float>(feet.X + PlayerHalfWidth, feet.Y + EntityPlayer.Height, feet.Z + PlayerHalfWidth);
 
             for (var x = Floor(min.X); x <= Floor(max.X); x++)
             for (var y = Floor(min.Y); y <= Floor(max.Y); y++)
             for (var z = Floor(min.Z); z <= Floor(max.Z); z++)
             {
                 Scratch.Clear();
-                world.GetBlock(x, y, z).GetCollisionBoxes(world, new Vector3i(x, y, z), Scratch);
+                world.GetBlock(x, y, z).GetCollisionBoxes(world, new Vector3D<int>(x, y, z), Scratch);
                 for (var i = 0; i < Scratch.Count; i++)
                 {
                     var b = Scratch[i];
@@ -129,9 +129,9 @@ namespace MinecraftClone3API.Entities
             return true;
         }
 
-        private static bool IsSolid(WorldServer world, Vector3 pos)
+        private static bool IsSolid(WorldServer world, Vector3D<float> pos)
         {
-            var bp = new Vector3i((int) MathF.Floor(pos.X), (int) MathF.Floor(pos.Y), (int) MathF.Floor(pos.Z));
+            var bp = new Vector3D<int>((int) MathF.Floor(pos.X), (int) MathF.Floor(pos.Y), (int) MathF.Floor(pos.Z));
             Scratch.Clear();
             world.GetBlock(bp.X, bp.Y, bp.Z).GetCollisionBoxes(world, bp, Scratch);
             // GetCollisionBoxes reports boxes in local cell space (0..1), so offset by the cell origin (as

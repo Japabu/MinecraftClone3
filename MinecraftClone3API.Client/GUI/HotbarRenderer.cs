@@ -2,8 +2,7 @@ using MinecraftClone3API.Client.Graphics;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
-using OpenTK.Graphics.OpenGL4;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Client.GUI
 {
@@ -28,12 +27,6 @@ namespace MinecraftClone3API.Client.GUI
 
         public static void Render(Inventory inventory)
         {
-            RenderState.Set(new GlState
-            {
-                Blend = true,
-                BlendFunc = (BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha)
-            });
-
             var barW = BarWidth * Scale;
             var barH = BarHeight * Scale;
             var x0 = ((int) ScaledResolution.GuiResolution.X - barW) / 2;
@@ -70,11 +63,11 @@ namespace MinecraftClone3API.Client.GUI
         private static void DrawPlaceholder(int x0, int y0, int barW, int barH, int selected)
         {
             GuiRenderer.DrawTexture(ClientResources.WhitePixel, Rectangle.FromSize(x0, y0, barW, barH), null,
-                new Color4(0f, 0f, 0f, 0.6f));
+                new Vector4D<float>(0f, 0f, 0f, 0.6f));
             for (var i = 0; i < Inventory.HotbarSize; i++)
             {
                 var sx = x0 + (1 + i * SlotStride) * Scale;
-                var color = i == selected ? new Color4(1f, 1f, 1f, 0.9f) : new Color4(0.6f, 0.6f, 0.6f, 0.6f);
+                var color = i == selected ? new Vector4D<float>(1f, 1f, 1f, 0.9f) : new Vector4D<float>(0.6f, 0.6f, 0.6f, 0.6f);
                 GuiRenderer.DrawTexture(ClientResources.WhitePixel,
                     Rectangle.FromSize(sx, y0 + 1 * Scale, (SlotStride - 2) * Scale, (BarHeight - 2) * Scale), null, color);
             }

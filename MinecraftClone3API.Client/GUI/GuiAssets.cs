@@ -13,8 +13,8 @@ namespace MinecraftClone3API.Client.GUI
     {
         public const string Widgets = "minecraft/textures/gui/widgets.png";
 
-        // Modern (1.20.2+) HUD sprite layout: the old monolithic widgets.png / icons.png were split into
-        // individual sprite PNGs. Each is drawn whole (no sub-rect).
+        // Modern (1.20.2+) HUD sprite layout: each HUD element is its own sprite PNG under sprites/hud/,
+        // drawn whole (no sub-rect).
         public const string Hotbar = "minecraft/textures/gui/sprites/hud/hotbar.png";
         public const string HotbarSelection = "minecraft/textures/gui/sprites/hud/hotbar_selection.png";
         public const string Crosshair = "minecraft/textures/gui/sprites/hud/crosshair.png";

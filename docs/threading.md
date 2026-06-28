@@ -19,19 +19,19 @@
    ApplyThread   the SOLE writer of chunk contents: drains _applyQueue in packet order → decodes streamed
                  chunks (SP: clone the carried Chunk; MP: decompress + deserialize) and applies BlockChanges
                  deltas in place → publishes to LoadedChunks → hands positions to the main thread via
-                 _renderReady. NO GL. Sleeps on _applySignal when idle. ALSO the sole client writer of
+                 _renderReady. NO GPU. Sleeps on _applySignal when idle. ALSO the sole client writer of
                  LodStore (decodes LodColumnData off the same ordered queue → _lodRenderReady).
    MeshThread    a POOL of workers (Environment.ProcessorCount-2, ≥1), each draining the shared mesh queues →
-                 ChunkRenderData.Update()  (CPU vertex lists only, NO GL; holds the VAO locks for the whole
-                 remesh, so the main-thread upload must not block on them). It parallelizes because the
+                 ChunkRenderData.Update()  (CPU vertex lists only, NO GPU; holds the mesh-buffer locks for the
+                 whole remesh, so the main-thread upload must not block on them). It parallelizes because the
                  _meshPending claim (remove-under-_meshLock) gives each *queued* chunk to exactly ONE worker,
-                 workers only READ chunk storage (Invariant 5), and GL stays on the main thread (Invariant 1).
+                 workers only READ chunk storage (Invariant 5), and GPU work stays on the main thread (Invariant 1).
                  Each worker also computes its chunk's SkyExposed flag (plain-field idempotent write, read
                  lock-free by the shadow gate — benign torn read self-corrects next remesh).
                  **Subtlety:** the _meshPending claim is per *queue-epoch*, not per *instance* — if QueueMesh
                  re-enqueues a position (an edit/light delta) while a worker is mid-Update on it, a second
                  worker can Update the SAME ChunkRenderData concurrently. Benign, NOT a bug: both calls
-                 serialize on lock(_vao)+lock(_transparentVao), each is a complete self-contained remesh (own
+                 serialize on lock(_opaque)+lock(_transparentVao), each is a complete self-contained remesh (own
                  pooled lists, read-only storage), and TryUpload's Monitor.TryEnter never observes a half-built
                  mesh — the only cost is a redundant remesh (cannot fire during the edit-free load burst).
                  A small fraction of the pool is reserved *LOD-first* (lodWorkers = min(max(1, workers/4),
@@ -40,14 +40,15 @@
                  permanently non-empty, so LOD meshing starved completely and the horizon went unmeshed; the
                  reserved workers keep the LOD mesh queue ~0 (see [rendering.md](rendering.md)).
    Update()      (MAIN thread) pumps packets (routing ChunkData/BlockChanges to _applyQueue, handling
-                 entity/login inline), DrainRenderReady → creates ChunkRenderData (GL) + queues meshing,
-                 TryUploads meshed chunks (GL, non-blocking, time-budgeted per frame), evicts, disposes
-   RenderWorld() (MAIN thread) BuildVisibleSet runs the frustum + render-distance scan of RenderList, then
-                 the shadow + geometry + composition passes
+                 entity/login inline), DrainRenderReady → creates ChunkRenderData (GPU) + queues meshing,
+                 TryUploads meshed chunks (GPU buffer writes, non-blocking, time-budgeted per frame), evicts, disposes
+   RenderWorld() (MAIN thread) cull-compute dispatches GPU-cull opaque + LOD + shadow chunks;
+                 ScanTransparentAndShadow gathers only the CPU-sorted transparent list + shadow-receiver
+                 flag, then the shadow + geometry + composition passes run
 
  Client game loop (MinecraftClone3/Program.cs, display rate ~120 Hz, MAIN thread):
    OnUpdateFrame → StateEngine.Update() → StateWorld.Update():
-       per FRAME:  PlayerController.UpdateFrame (look/break/place/camera), world.Update() (GL + packet pump + evict)
+       per FRAME:  PlayerController.UpdateFrame (look/break/place/camera), world.Update() (GPU + packet pump + evict)
        per TICK (fixed 20 tps accumulator, 0..N times per frame) → StateWorld.Tick():
            PlayerController.Tick (one physics step)   // singleplayer + multiplayer
            integratedServer.Update();  network.Pump();  // singleplayer only (advances WorldServer.TickCount)
@@ -66,29 +67,34 @@ dedicated server), `ServerNetwork.Pump()`, and the client `SendMove`. Between ti
 so motion is smooth at the display rate. SP freezes the accumulator while paused (unfocused); MP keeps
 ticking the remote server. `UpdateFrequency` stays at the display rate — only the sim cadence is fixed.
 
-**The client chunk pipeline is split across three threads so the render thread does only GL + reads:** the
-apply thread decodes/mutates chunk storage, the mesh thread builds vertex lists, the main thread does the GL
-(render-data creation, upload) plus eviction. ChunkData and BlockChanges for the same chunk go through **one
+**The client chunk pipeline is split across three threads so the render thread does only GPU work + reads:** the
+apply thread decodes/mutates chunk storage, the mesh thread builds vertex lists, the main thread does the GPU
+work (render-data creation, upload) plus eviction. ChunkData and BlockChanges for the same chunk go through **one
 ordered `_applyQueue`** so a delta can never race ahead of the chunk it targets.
 
 ## Invariants
 
-**Invariant 1 — GL calls only on the main thread.** `new VertexArrayObject()` calls `GL.GenVertexArray`, so
-even *constructing* a `ChunkRenderData` is a GL call. Therefore `ChunkRenderData`s are created in
+**Invariant 1 — WebGPU resource creation + queue submission only on the main thread.** Uploading a mesh is
+the WebGPU work: `TryUpload` writes (and grows) the shared `ChunkMeshArena`'s GPU buffers and lazily creates +
+writes the transparent VAO's GPU buffers (the `ChunkRenderData` ctor itself allocates nothing on the GPU).
+Therefore `ChunkRenderData`s are created **and** uploaded in
 `WorldClient.DrainRenderReady` (main thread), **not** on the apply thread; the mesh thread only does CPU
-meshing (`ChunkRenderData.Update`); `Upload`/`Draw`/`Dispose` happen on the main thread. Never move GL off
-the main thread.
+meshing (`ChunkRenderData.Update`, vertex lists only); `Upload`/`Draw`/`Dispose` and the per-frame surface +
+command encoder + `Queue.Submit` happen on the main thread. (wgpu-native's queue + buffer writes are
+thread-safe, so moving chunk *upload* off the main thread is a planned level-up — see
+[known-issues.md](known-issues.md) — but the current model keeps upload main-thread.) Never move WebGPU work
+off the main thread.
 
 **Invariant 2 — `ChunkRenderData.TryUpload()` is gated on `Updated` and is non-blocking.** The mesh thread
 may enqueue the same chunk for upload more than once; `TryUpload` consumes+clears the vertex lists, so a
 redundant upload would otherwise see empty lists and blank the chunk until the next re-mesh — the `Updated`
 flag makes it a no-op. Don't remove it. **`TryUpload` must also never block:** `ChunkRenderData.Update()`
-(mesh thread) holds the `_vao`/`_transparentVao` locks for the *entire* CPU remesh (tens of ms — per-vertex
+(mesh thread) holds the `_opaque`/`_transparentVao` locks for the *entire* CPU remesh (tens of ms — per-vertex
 smooth-lighting), and a single edit remeshes the chunk **plus up to six face neighbours**. `TryUpload` uses
 `Monitor.TryEnter`; if the mesh thread holds the lock it returns `false` and `WorldClient` re-queues that
 chunk for a later frame instead of the render thread stalling on the lock for the whole remesh. The render
-path (`Draw`/`Sort`/`DrawTransparent`) takes **no** VAO lock, so rendering is never blocked by meshing; only
-the upload handoff needed decoupling.
+path (`Draw`/`Sort`/`DrawTransparent`) takes **no** mesh-buffer lock, so rendering is never blocked by meshing;
+only the upload handoff needed decoupling.
 
 **Invariant 3 — shared collections.** `LoadedChunks` is a `ConcurrentDictionary` (client: apply thread adds,
 main thread removes-on-evict, both + mesh thread read). `WorldClient.RenderData` is a `ConcurrentDictionary`

@@ -5,18 +5,15 @@ using MinecraftClone3API.Client.StateSystem;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
-using OpenTK.Graphics.OpenGL4;
-using OpenTK.Mathematics;
-using OpenTK.Windowing.Common;
-using OpenTK.Windowing.Desktop;
-using OpenTK.Windowing.GraphicsLibraryFramework;
+using Silk.NET.Input;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3.States
 {
     /// <summary>
     /// Lists the saved singleplayer worlds and lets the player create, load, or delete one. A state (not an
     /// overlay) so the create/delete navigations replace it cleanly; deletion is confirmed via a GuiConfirm
-    /// overlay, which is safe here since this screen owns no TextInput subscriptions.
+    /// overlay, which takes over as the foreground input layer while open.
     /// </summary>
     internal class GuiWorldSelection : GuiBase
     {
@@ -27,15 +24,13 @@ namespace MinecraftClone3.States
 
         private static Texture _background;
 
-        private readonly GameWindow _window;
         private readonly GuiWorldList _list;
         private readonly GuiButton _play;
         private readonly GuiButton _delete;
 
-        public GuiWorldSelection(GameWindow window)
+        public GuiWorldSelection()
         {
-            _window = window;
-            _window.CursorState = CursorState.Normal;
+            ClientResources.Input.CursorMode = CursorMode.Normal;
 
             if (_background == null)
                 _background = GlResources.ReadTexture("System/Textures/Gui/ResourceLoadingBackground.png");
@@ -59,29 +54,29 @@ namespace MinecraftClone3.States
             Elements.Add(_play);
 
             Elements.Add(new GuiButton(Rectangle.FromSize(x + step, y, buttonWidth, ButtonHeight), "Create New World",
-                () => StateEngine.ReplaceState(new GuiCreateWorld(_window))));
+                () => StateEngine.ReplaceState(new GuiCreateWorld())));
 
             _delete = new GuiButton(Rectangle.FromSize(x + 2 * step, y, buttonWidth, ButtonHeight), "Delete", Delete);
             Elements.Add(_delete);
 
             Elements.Add(new GuiButton(Rectangle.FromSize(x + 3 * step, y, buttonWidth, ButtonHeight), "Back",
-                () => StateEngine.ReplaceState(new GuiMainMenu(_window))));
+                () => StateEngine.ReplaceState(new GuiMainMenu())));
         }
 
         private void Play(WorldInfo world)
         {
             WorldManager.MarkPlayed(world);
-            StateEngine.ReplaceState(new StateWorld(_window, world));
+            StateEngine.ReplaceState(new StateWorld(world));
         }
 
         private void Delete()
         {
             var sel = _list.Selected;
             if (sel == null) return;
-            StateEngine.AddOverlay(new GuiConfirm(_window, $"Delete \"{sel.Name}\"?", () =>
+            StateEngine.AddOverlay(new GuiConfirm($"Delete \"{sel.Name}\"?", () =>
             {
                 WorldManager.DeleteWorld(sel);
-                StateEngine.ReplaceState(new GuiWorldSelection(_window));
+                StateEngine.ReplaceState(new GuiWorldSelection());
             }));
         }
 
@@ -92,25 +87,22 @@ namespace MinecraftClone3.States
             var hasSelection = _list.Selected != null;
             _play.Enabled = hasSelection;
             _delete.Enabled = hasSelection;
+        }
 
-            if (focused && _window.KeyboardState.IsKeyPressed(Keys.Escape))
-                StateEngine.ReplaceState(new GuiMainMenu(_window));
+        public override void OnKeyDown(Key key)
+        {
+            base.OnKeyDown(key);
+            if (key == Key.Escape)
+                StateEngine.ReplaceState(new GuiMainMenu());
         }
 
         public override void Render()
         {
-            RenderState.Set(new GlState
-            {
-                Blend = true,
-                BlendFunc = (BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha)
-            });
+            GuiRenderer.DrawCover(_background);
 
             var width = (int) ScaledResolution.GuiResolution.X;
-            var height = (int) ScaledResolution.GuiResolution.Y;
-            GuiRenderer.DrawTexture(_background, new Rectangle(0, 0, width, height), null);
-
             var titleX = (width - Font.MeasureWidth(Title, TitleScale)) / 2;
-            Font.DrawString(Title, titleX, 18, TitleScale, Color4.White);
+            Font.DrawString(Title, titleX, 18, TitleScale, new Vector4D<float>(1f,1f,1f,1f));
 
             base.Render();
         }

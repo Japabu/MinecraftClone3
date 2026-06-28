@@ -24,7 +24,7 @@ namespace MinecraftClone3API.Entities
         }
     }
 
-    /// <summary>What a creature drops when it dies. GL-free; rolled server-side by <see cref="EntityCombat"/>,
+    /// <summary>What a creature drops when it dies. GPU-free; rolled server-side by <see cref="EntityCombat"/>,
     /// which spawns the resulting stacks as dropped items.</summary>
     public sealed class LootTable
     {

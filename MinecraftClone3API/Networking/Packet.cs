@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Networking
 {
@@ -109,24 +109,24 @@ namespace MinecraftClone3API.Networking
             }
         }
 
-        protected static void WriteVector3i(BinaryWriter writer, Vector3i v)
+        protected static void WriteVector3i(BinaryWriter writer, Vector3D<int> v)
         {
             writer.Write(v.X);
             writer.Write(v.Y);
             writer.Write(v.Z);
         }
 
-        protected static Vector3i ReadVector3i(BinaryReader reader)
-            => new Vector3i(reader.ReadInt32(), reader.ReadInt32(), reader.ReadInt32());
+        protected static Vector3D<int> ReadVector3i(BinaryReader reader)
+            => new Vector3D<int>(reader.ReadInt32(), reader.ReadInt32(), reader.ReadInt32());
 
-        protected static void WriteVector3(BinaryWriter writer, Vector3 v)
+        protected static void WriteVector3(BinaryWriter writer, Vector3D<float> v)
         {
             writer.Write(v.X);
             writer.Write(v.Y);
             writer.Write(v.Z);
         }
 
-        protected static Vector3 ReadVector3(BinaryReader reader)
-            => new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+        protected static Vector3D<float> ReadVector3(BinaryReader reader)
+            => new Vector3D<float>(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
     }
 }

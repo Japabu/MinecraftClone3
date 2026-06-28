@@ -6,7 +6,7 @@ using MinecraftClone3API.IO;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using Newtonsoft.Json;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Graphics
 {
@@ -16,13 +16,13 @@ namespace MinecraftClone3API.Graphics
     /// resolved) composed with <c>ItemInHandRenderer</c>'s hand constants and swing. Change a model's display
     /// block in a resource pack and the held pose changes with it. A held block reads its already-parsed
     /// <see cref="BlockModel.Display"/>; a flat item's model is read on demand — <em>transforms only</em>, so
-    /// this never loads a texture, never touches GL, and never throws on an unresolved sprite.
+    /// this never loads a texture, never touches the GPU, and never throws on an unresolved sprite.
     /// </summary>
     internal static class ItemDisplay
     {
         // Minecraft ItemInHandRenderer.ITEM_POS_{X,Y,Z}: the right-hand base position, applied outermost (the
         // item arm transform translate, in view space).
-        private static readonly Matrix4 RightHand = Matrix4.CreateTranslation(0.56f, -0.52f, -0.72f);
+        private static readonly Matrix4 RightHand = Matrix4X4.CreateTranslation(0.56f, -0.52f, -0.72f);
 
         private const string FirstPerson = "firstperson_righthand";
 
@@ -63,11 +63,11 @@ namespace MinecraftClone3API.Graphics
         private static Matrix4 DisplayMatrix(BlockModel.DisplayEntry d)
         {
             var scale = d.Scale == Vector3.Zero ? Vector3.One : d.Scale;
-            return Matrix4.CreateScale(scale) *
-                   Matrix4.CreateRotationZ(MathHelper.DegreesToRadians(d.Rotation.Z)) *
-                   Matrix4.CreateRotationY(MathHelper.DegreesToRadians(d.Rotation.Y)) *
-                   Matrix4.CreateRotationX(MathHelper.DegreesToRadians(d.Rotation.X)) *
-                   Matrix4.CreateTranslation(d.Translation * (1f / 16f));
+            return Matrix4X4.CreateScale(scale) *
+                   Matrix4X4.CreateRotationZ(Scalar.DegreesToRadians(d.Rotation.Z)) *
+                   Matrix4X4.CreateRotationY(Scalar.DegreesToRadians(d.Rotation.Y)) *
+                   Matrix4X4.CreateRotationX(Scalar.DegreesToRadians(d.Rotation.X)) *
+                   Matrix4X4.CreateTranslation(d.Translation * (1f / 16f));
         }
 
         /// <summary>Minecraft <c>ItemInHandRenderer.swingArm</c> + <c>applyItemArmAttackTransform</c> for the
@@ -78,11 +78,11 @@ namespace MinecraftClone3API.Graphics
             var sqrt = MathF.Sqrt(a);
             var xz = MathF.Sin(sqrt * MathF.PI);
             var yy = MathF.Sin(a * a * MathF.PI);
-            return Matrix4.CreateRotationY(MathHelper.DegreesToRadians(-45f)) *
-                   Matrix4.CreateRotationX(MathHelper.DegreesToRadians(xz * -80f)) *
-                   Matrix4.CreateRotationZ(MathHelper.DegreesToRadians(xz * -20f)) *
-                   Matrix4.CreateRotationY(MathHelper.DegreesToRadians(45f + yy * -20f)) *
-                   Matrix4.CreateTranslation(
+            return Matrix4X4.CreateRotationY(Scalar.DegreesToRadians(-45f)) *
+                   Matrix4X4.CreateRotationX(Scalar.DegreesToRadians(xz * -80f)) *
+                   Matrix4X4.CreateRotationZ(Scalar.DegreesToRadians(xz * -20f)) *
+                   Matrix4X4.CreateRotationY(Scalar.DegreesToRadians(45f + yy * -20f)) *
+                   Matrix4X4.CreateTranslation(
                        -0.4f * MathF.Sin(sqrt * MathF.PI),
                        0.2f * MathF.Sin(sqrt * MathF.PI * 2f),
                        -0.2f * MathF.Sin(a * MathF.PI));

@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
+using Silk.NET.Maths;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Entities
 {
@@ -60,12 +60,12 @@ namespace MinecraftClone3API.Entities
         }
 
         // Clips a movement of `d` along `axis` (0=X,1=Y,2=Z) of the entity AABB at `feet` against solid blocks.
-        private static float Clip(WorldServer world, Vector3 feet, float halfWidth, float height, int axis, float d)
+        private static float Clip(WorldServer world, Vector3D<float> feet, float halfWidth, float height, int axis, float d)
         {
             if (d == 0) return 0;
 
-            var min = new Vector3(feet.X - halfWidth, feet.Y, feet.Z - halfWidth);
-            var max = new Vector3(feet.X + halfWidth, feet.Y + height, feet.Z + halfWidth);
+            var min = new Vector3D<float>(feet.X - halfWidth, feet.Y, feet.Z - halfWidth);
+            var max = new Vector3D<float>(feet.X + halfWidth, feet.Y + height, feet.Z + halfWidth);
 
             var x0 = Floor(Math.Min(min.X, min.X + (axis == 0 ? d : 0))) - 1;
             var x1 = Floor(Math.Max(max.X, max.X + (axis == 0 ? d : 0))) + 1;
@@ -79,12 +79,12 @@ namespace MinecraftClone3API.Entities
             for (var y = y0; y <= y1; y++)
             {
                 SolidBoxes.Clear();
-                world.GetBlock(x, y, z).GetCollisionBoxes(world, new Vector3i(x, y, z), SolidBoxes);
+                world.GetBlock(x, y, z).GetCollisionBoxes(world, new Vector3D<int>(x, y, z), SolidBoxes);
                 for (var bi = 0; bi < SolidBoxes.Count; bi++)
                 {
                     var box = SolidBoxes[bi];
-                    var bmin = new Vector3(x + box.Min.X, y + box.Min.Y, z + box.Min.Z);
-                    var bmax = new Vector3(x + box.Max.X, y + box.Max.Y, z + box.Max.Z);
+                    var bmin = new Vector3D<float>(x + box.Min.X, y + box.Min.Y, z + box.Min.Z);
+                    var bmax = new Vector3D<float>(x + box.Max.X, y + box.Max.Y, z + box.Max.Z);
                     d = ClipAxis(min, max, bmin, bmax, axis, d);
                 }
             }
@@ -92,7 +92,7 @@ namespace MinecraftClone3API.Entities
             return d;
         }
 
-        private static float ClipAxis(Vector3 min, Vector3 max, Vector3 bmin, Vector3 bmax, int axis, float d)
+        private static float ClipAxis(Vector3D<float> min, Vector3D<float> max, Vector3D<float> bmin, Vector3D<float> bmax, int axis, float d)
         {
             // The two axes orthogonal to `axis` must already overlap for the box to obstruct the move.
             if (axis != 0 && (max.X <= bmin.X + Epsilon || min.X >= bmax.X - Epsilon)) return d;

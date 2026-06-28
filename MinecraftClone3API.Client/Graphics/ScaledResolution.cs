@@ -1,4 +1,4 @@
-﻿using OpenTK.Mathematics;
+﻿
 
 namespace MinecraftClone3API.Client.Graphics
 {
@@ -45,7 +45,7 @@ namespace MinecraftClone3API.Client.Graphics
         {
             var window = ClientResources.Window;
             var framebuffer = (Vector2)window.FramebufferSize;
-            var client = (Vector2)window.ClientSize;
+            var client = (Vector2)window.Size;
             var framebufferPos = clientPos * framebuffer / client;
             return (framebufferPos - GuiOffset) / GuiScale;
         }

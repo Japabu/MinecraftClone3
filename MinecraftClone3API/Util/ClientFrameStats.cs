@@ -1,14 +1,14 @@
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Util
 {
     /// <summary>Per-frame client-side samples the render loop pushes into <see cref="Profiler.Record"/>.
-    /// Lets <see cref="Profiler"/> stay GL-free in Core while still logging client renderer/world stats:
+    /// Lets <see cref="Profiler"/> stay GPU-free in Core while still logging client renderer/world stats:
     /// the client (which owns <c>WorldClient</c>, <c>RenderDebug</c>, <c>GpuTimers</c>) fills this each frame
     /// so Core never reaches into client types. All fields default to 0 when there is no active world.</summary>
     public struct ClientFrameStats
     {
-        public Vector3i PlayerChunk;
+        public Vector3D<int> PlayerChunk;
 
         public int LoadedChunkCount;
         public int RenderListCount;

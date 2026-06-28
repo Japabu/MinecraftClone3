@@ -5,8 +5,8 @@ using MinecraftClone3API.Client.Graphics;
 using MinecraftClone3API.Client.GUI;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
-using OpenTK.Windowing.GraphicsLibraryFramework;
+using Silk.NET.Input;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3.States
 {
@@ -21,11 +21,11 @@ namespace MinecraftClone3.States
         private const int SubScale = 1;
         private const long DoubleClickMs = 400;
 
-        private static readonly Color4 RowNormal = new Color4(0.2f, 0.2f, 0.2f, 0.6f);
-        private static readonly Color4 RowHovered = new Color4(0.35f, 0.35f, 0.35f, 0.8f);
-        private static readonly Color4 RowSelected = new Color4(0.25f, 0.45f, 0.7f, 0.9f);
-        private static readonly Color4 SubColor = new Color4(0.7f, 0.7f, 0.7f, 1f);
-        private static readonly Color4 EmptyColor = new Color4(0.7f, 0.7f, 0.7f, 1f);
+        private static readonly Vector4D<float> RowNormal = new Vector4D<float>(0.2f, 0.2f, 0.2f, 0.6f);
+        private static readonly Vector4D<float> RowHovered = new Vector4D<float>(0.35f, 0.35f, 0.35f, 0.8f);
+        private static readonly Vector4D<float> RowSelected = new Vector4D<float>(0.25f, 0.45f, 0.7f, 0.9f);
+        private static readonly Vector4D<float> SubColor = new Vector4D<float>(0.7f, 0.7f, 0.7f, 1f);
+        private static readonly Vector4D<float> EmptyColor = new Vector4D<float>(0.7f, 0.7f, 0.7f, 1f);
 
         private readonly Rectangle _bounds;
         private readonly List<WorldInfo> _worlds;
@@ -50,37 +50,46 @@ namespace MinecraftClone3.States
         public WorldInfo Selected =>
             _selectedIndex >= 0 && _selectedIndex < _worlds.Count ? _worlds[_selectedIndex] : null;
 
+        private int IndexAt(Vector2D<float> position)
+        {
+            var inside = position.X >= _bounds.MinX && position.X <= _bounds.MaxX &&
+                         position.Y >= _bounds.MinY && position.Y <= _bounds.MaxY;
+            if (!inside) return -1;
+
+            var row = (int) (position.Y - _bounds.MinY) / RowHeight;
+            var index = _scroll + row;
+            return row < _visibleRows && index < _worlds.Count ? index : -1;
+        }
+
         public override void Update(bool focused)
         {
             _hoveredIndex = -1;
             if (!focused) return;
 
-            var mouse = ClientResources.Window.MouseState;
-            var position = ScaledResolution.ToGuiCoords(mouse.Position);
+            var position = ScaledResolution.ToGuiCoords(ClientResources.Input.MousePosition);
+            _hoveredIndex = IndexAt(position);
+        }
 
+        public override void OnScroll(float delta)
+        {
             var maxScroll = Math.Max(0, _worlds.Count - _visibleRows);
-            _scroll = MathHelper.Clamp(_scroll - (int) mouse.ScrollDelta.Y, 0, maxScroll);
+            _scroll = Math.Clamp(_scroll - (int) delta, 0, maxScroll);
+        }
 
-            var inside = position.X >= _bounds.MinX && position.X <= _bounds.MaxX &&
-                         position.Y >= _bounds.MinY && position.Y <= _bounds.MaxY;
-            if (inside)
-            {
-                var row = (int) (position.Y - _bounds.MinY) / RowHeight;
-                var index = _scroll + row;
-                if (row < _visibleRows && index < _worlds.Count) _hoveredIndex = index;
-            }
+        public override void OnMouseDown(MouseButton button, Vector2D<float> guiPos)
+        {
+            if (button != MouseButton.Left) return;
 
-            if (_hoveredIndex >= 0 &&
-                mouse.IsButtonDown(MouseButton.Left) && !mouse.WasButtonDown(MouseButton.Left))
-            {
-                _selectedIndex = _hoveredIndex;
+            var index = IndexAt(guiPos);
+            if (index < 0) return;
 
-                var now = Environment.TickCount64;
-                if (_lastClickIndex == _hoveredIndex && now - _lastClickMs <= DoubleClickMs)
-                    _onActivate?.Invoke(_worlds[_hoveredIndex]);
-                _lastClickMs = now;
-                _lastClickIndex = _hoveredIndex;
-            }
+            _selectedIndex = index;
+
+            var now = Environment.TickCount64;
+            if (_lastClickIndex == index && now - _lastClickMs <= DoubleClickMs)
+                _onActivate?.Invoke(_worlds[index]);
+            _lastClickMs = now;
+            _lastClickIndex = index;
         }
 
         public override void Render()
@@ -107,7 +116,7 @@ namespace MinecraftClone3.States
                 GuiRenderer.DrawTexture(ClientResources.WhitePixel, rowRect, null, fill);
 
                 var textX = rowRect.MinX + 8;
-                Font.DrawString(world.Name, textX, rowRect.MinY + 6, NameScale, Color4.White);
+                Font.DrawString(world.Name, textX, rowRect.MinY + 6, NameScale, new Vector4D<float>(1f,1f,1f,1f));
                 var sub = $"Seed: {world.Seed}    {world.LastPlayed:yyyy-MM-dd HH:mm}";
                 Font.DrawString(sub, textX, rowRect.MinY + 6 + Font.LineHeight(NameScale) + 2, SubScale, SubColor);
             }

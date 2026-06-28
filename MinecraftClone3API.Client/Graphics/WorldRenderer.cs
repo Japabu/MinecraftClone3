@@ -1,13 +1,15 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Client;
 using MinecraftClone3API.Client.Blocks;
 using MinecraftClone3API.Entities;
+using MinecraftClone3API.Graphics.Rhi;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
-using OpenTK.Graphics.OpenGL4;
+using Silk.NET.Maths;
+using Silk.NET.WebGPU;
 
 namespace MinecraftClone3API.Graphics
 {
@@ -24,18 +26,14 @@ namespace MinecraftClone3API.Graphics
         public const float SortDistance = 128;
         public const float SortDistanceSq = SortDistance * SortDistance;
 
-        // Reused across frames so the per-frame visibility pass allocates nothing steady-state; cleared
-        // at the top of DrawGeometryFramebuffer and grown to the working set. These three capacity-1024
-        // reference-type lists, re-newed every frame, were the single largest main-thread allocator in a
-        // trace (~11s of List<ChunkRenderData>..ctor → constant Gen0 GC pauses on the render thread).
-        private static readonly List<ChunkRenderData> _chunksToDraw = new List<ChunkRenderData>(1024);
+        // Reused across frames so the per-frame transparent scan allocates nothing steady-state. Opaque/LOD/
+        // shadow are GPU-culled now (the cull compute builds the indirect draw list); only the transparent
+        // chunks still need a CPU back-to-front sort, so these are the only per-frame visible-set lists kept.
         private static readonly List<ChunkRenderData> _transparentSortedChunks = new List<ChunkRenderData>(1024);
         private static readonly List<ChunkRenderData> _transparentChunks = new List<ChunkRenderData>(1024);
 
-        // Phase-2 distant-horizon LOD regions to draw this frame (the ring beyond the real-chunk render
-        // distance). Main-thread scratch, refilled each frame like _chunksToDraw. _lodRenderDistance is the
-        // block radius the LOD ring extends to (0 ⇒ LOD dormant), captured per frame from the world.
-        private static readonly List<LodRenderData> _lodToDraw = new List<LodRenderData>(256);
+        // The block radius the Phase-2 distant-horizon LOD ring extends to (0 ⇒ LOD dormant), captured per
+        // frame from the world. The cull compute frustum/distance-tests the LOD regions on the GPU.
         private static float _lodRenderDistance;
 
         // Width (blocks) of the dithered cross-fade band just inside the render distance, where full-detail
@@ -48,14 +46,6 @@ namespace MinecraftClone3API.Graphics
         private static readonly Comparison<ChunkRenderData> _transparentSort = (chunk1, chunk2)
             => (int) ((_sortCameraPos - chunk2.Middle).LengthSquared * 1000 -
                       (_sortCameraPos - chunk1.Middle).LengthSquared * 1000);
-
-        // Opaque chunks are drawn FRONT-TO-BACK (near first) so early-Z rejects occluded far fragments before
-        // the costly 3-MRT + texture-array fragment shader runs — pure overdraw reduction, identical pixels
-        // (depth resolves visibility either way). Without this the opaque list was in arbitrary RenderList
-        // order, shading then overwriting hidden fragments on the fill-bound iGPU.
-        private static readonly Comparison<ChunkRenderData> _opaqueSortNearFirst = (chunk1, chunk2)
-            => ((_sortCameraPos - chunk1.Middle).LengthSquared).CompareTo(
-                (_sortCameraPos - chunk2.Middle).LengthSquared);
 
         // Refilled in place each frame instead of allocating a fresh Plane[6] + 6 planes per call.
         private static readonly Frustum _viewFrustum = new Frustum();
@@ -70,7 +60,7 @@ namespace MinecraftClone3API.Graphics
 
         // Shadow coverage distance + map resolution, driven by the Shadow Quality preset (GraphicsSettings.
         // ShadowQuality): Low 96/512, Medium 160/1024 (default), High 256/2048. Computed live so the preset
-        // applies next frame; the map FBO is recreated by EnsureShadowMap when the size changes.
+        // applies next frame; the shadow map texture is recreated by EnsureTargets when the size changes.
         public static float ShadowDistance => GraphicsSettings.ShadowQuality switch
         {
             ShadowQuality.Low => 96f,
@@ -85,9 +75,6 @@ namespace MinecraftClone3API.Graphics
             _ => 1024
         };
 
-        // Tracks the size the live ShadowFramebuffer was built at; EnsureShadowMap recreates the FBO when the
-        // quality preset changes ShadowMapSize. Initialized to the size ClientResources builds it at.
-        private static int _shadowMapSize = ShadowFramebuffer.ShadowMapSize;
         // Pull the light eye this far past the bounding sphere toward the sun so casters just outside the slice
         // (e.g. a tall block) still shadow into it.
         private const float ShadowCasterExtent = 64f;
@@ -107,12 +94,11 @@ namespace MinecraftClone3API.Graphics
         private const float ShadowFadeHigh = 0.15f;
 
         private static readonly Frustum _shadowFrustum = new Frustum();
-        private static readonly List<ChunkRenderData> _shadowChunks = new List<ChunkRenderData>(1024);
         private static Matrix4 _lightViewProj;
         // World units per shadow texel (the shader scales its normal-offset bias by this).
         private static float _shadowTexelWorld;
 
-        // Set by BuildVisibleSet: true iff a visible chunk within ShadowDistance is sky-exposed. Gates the
+        // Set by the per-frame scan: true iff a visible chunk within ShadowDistance is sky-exposed. Gates the
         // sun shadow passes — deep in a cave no visible chunk is sky-lit, so the shadow depth pass (a fixed
         // per-frame cost, see CLAUDE.md) is skipped; look toward the surface and it runs again.
         private static bool _anyShadowReceiver;
@@ -156,11 +142,11 @@ namespace MinecraftClone3API.Graphics
         // Normalized clock position (0.25 = noon at startup) and the sun altitude sine derived from it; shared
         // by every time-of-day function so the sun colour, sky gradient, and sun direction stay in lockstep.
         private static float DayTime() => 0.25f + (float) (_dayTimeSeconds / DayLengthSeconds);
-        private static float SunHeight() => MathF.Sin(DayTime() * MathHelper.TwoPi);
+        private static float SunHeight() => MathF.Sin(DayTime() * MathF.PI * 2f);
 
         /// <summary>Day factor (0 night .. 1 full day) used to cross-fade every time-of-day colour: 0 once the
         /// sun is well below the horizon, 1 once it is well above.</summary>
-        private static float DayFactor() => MathHelper.Clamp((SunHeight() + 0.2f) / 0.4f, 0f, 1f);
+        private static float DayFactor() => Math.Clamp((SunHeight() + 0.2f) / 0.4f, 0f, 1f);
 
         /// <summary>Loads the sun and moon textures from the active resource pack. Must run after the resource
         /// packs are indexed (see GuiResourceLoading).</summary>
@@ -199,15 +185,15 @@ namespace MinecraftClone3API.Graphics
         {
             if (!_hasSky) return Vector3.Zero;
             var sunHeight = SunHeight();
-            var day = MathHelper.Clamp((sunHeight + 0.2f) / 0.4f, 0f, 1f);
-            var highness = MathHelper.Clamp(sunHeight, 0f, 1f);
+            var day = Math.Clamp((sunHeight + 0.2f) / 0.4f, 0f, 1f);
+            var highness = Math.Clamp(sunHeight, 0f, 1f);
 
             var horizon = new Vector3(1.0f, 0.5f, 0.25f);
             var noon = new Vector3(1.0f, 0.98f, 0.92f);
             var night = new Vector3(0.04f, 0.05f, 0.09f);
 
-            var dayColor = Vector3.Lerp(horizon, noon, highness);
-            return Vector3.Lerp(night, dayColor, day);
+            var dayColor = Vector3D.Lerp(horizon, noon, highness);
+            return Vector3D.Lerp(night, dayColor, day);
         }
 
         /// <summary>Ambient sky light for the current time of day: the soft blue fill that lights sky-exposed
@@ -220,7 +206,7 @@ namespace MinecraftClone3API.Graphics
             var day = DayFactor();
             var moon = new Vector3(0.05f, 0.06f, 0.11f);
             var sky = new Vector3(0.12f, 0.15f, 0.20f);
-            return Vector3.Lerp(moon, sky, day);
+            return Vector3D.Lerp(moon, sky, day);
         }
 
         /// <summary>Zenith colour of the background sky gradient: deep blue overhead by day, near-black at
@@ -231,7 +217,7 @@ namespace MinecraftClone3API.Graphics
             var day = DayFactor();
             var night = new Vector3(0.00f, 0.01f, 0.03f);
             var sky = new Vector3(0.28f, 0.50f, 0.92f);
-            return Vector3.Lerp(night, sky, day);
+            return Vector3D.Lerp(night, sky, day);
         }
 
         /// <summary>Horizon haze colour: a light hazy blue by day, dark at night. Doubles as the distance-fog
@@ -242,7 +228,7 @@ namespace MinecraftClone3API.Graphics
             var day = DayFactor();
             var night = new Vector3(0.01f, 0.02f, 0.05f);
             var sky = new Vector3(0.66f, 0.78f, 0.93f);
-            return Vector3.Lerp(night, sky, day);
+            return Vector3D.Lerp(night, sky, day);
         }
 
         /// <summary>Colour below the horizon (the void): a dim grey-blue by day, near-black at night.</summary>
@@ -252,7 +238,7 @@ namespace MinecraftClone3API.Graphics
             var day = DayFactor();
             var night = new Vector3(0.00f, 0.00f, 0.01f);
             var voidColor = new Vector3(0.18f, 0.22f, 0.28f);
-            return Vector3.Lerp(night, voidColor, day);
+            return Vector3D.Lerp(night, voidColor, day);
         }
 
         /// <summary>Sunrise/sunset glow colour, strongest when the sun is near the horizon and fading to black
@@ -261,13 +247,13 @@ namespace MinecraftClone3API.Graphics
         private static Vector3 SunsetColor()
         {
             if (!_hasSky) return Vector3.Zero;
-            var band = MathHelper.Clamp(1f - MathF.Abs(SunHeight()) / 0.30f, 0f, 1f);
+            var band = Math.Clamp(1f - MathF.Abs(SunHeight()) / 0.30f, 0f, 1f);
             return new Vector3(0.85f, 0.42f, 0.16f) * band;
         }
 
         /// <summary>Star brightness (0 by day, up to 1 at night), faded by the same day factor as everything
         /// else so the stars come out smoothly as the sky darkens.</summary>
-        private static float StarBrightness() => _hasSky ? MathHelper.Clamp(1f - DayFactor(), 0f, 1f) : 0f;
+        private static float StarBrightness() => _hasSky ? Math.Clamp(1f - DayFactor(), 0f, 1f) : 0f;
 
         /// <summary>Unit vector pointing from the world toward the sun, animated by the same day/night
         /// clock as <see cref="SunColor"/> so the brightest sun aligns with the highest sun. Drives the
@@ -275,8 +261,8 @@ namespace MinecraftClone3API.Graphics
         /// horizon, shadow pass skipped). The small Z tilt keeps shadows off the world axes.</summary>
         private static Vector3 SunDirection()
         {
-            var angle = DayTime() * MathHelper.TwoPi;
-            return Vector3.Normalize(new Vector3(MathF.Cos(angle), MathF.Sin(angle), 0.35f));
+            var angle = DayTime() * MathF.PI * 2f;
+            return Vector3D.Normalize(new Vector3(MathF.Cos(angle), MathF.Sin(angle), 0.35f));
         }
 
         /// <summary>Directional sun-term strength (0..1) for the current sun altitude: a smoothstep that ramps
@@ -284,12 +270,325 @@ namespace MinecraftClone3API.Graphics
         /// ambient. 0 at/below <see cref="ShadowFadeLow"/> (sun treated as down → the shadow pass is skipped).</summary>
         private static float SunFade(float sunY)
         {
-            var t = MathHelper.Clamp((sunY - ShadowFadeLow) / (ShadowFadeHigh - ShadowFadeLow), 0f, 1f);
+            var t = Math.Clamp((sunY - ShadowFadeLow) / (ShadowFadeHigh - ShadowFadeLow), 0f, 1f);
             return t * t * (3f - 2f * t);
         }
 
-        public static void RenderWorld(WorldClient world, Matrix4 projection)
+        // ----- GPU pipeline state (lazy-built once the device + resources exist) -------------------------------
+
+        private static bool _loaded;
+        private const string ShaderDir = "System/Shaders/";
+
+        private static ChunkCuller _opaqueCull;
+        private static ChunkCuller _shadowCull;
+        private static ChunkCuller _lodCull;
+
+        /// <summary>GeoParams UBO (16 B): the LOD cross-fade band + the cutout alpha-test flag. Three flavours
+        /// (opaque / LOD horizon / transparent), written each frame, one bind group each.</summary>
+        [StructLayout(LayoutKind.Sequential)]
+        private struct GeoParams
         {
+            public float FadeStart;
+            public float FadeEnd;
+            public uint FadeMode;
+            public uint Cutoff;
+        }
+
+        /// <summary>ShadowResolveParams UBO (224 B) — byte layout mirrors ShadowResolve.wgsl's header exactly.</summary>
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ShadowResolveParams
+        {
+            public Mat4 ViewProjectionInv;
+            public Mat4 View;
+            public Mat4 LightViewProj;
+            public float ShadowTexel;
+            public float ShadowDistance;
+            public float SunFade;
+            public float ShadowsEnabled;
+            public float ShadowSoftness;
+            public float ShadowMapTexel;
+            public float Pad0;
+            public float Pad1;
+        }
+
+        /// <summary>CompositionParams UBO (320 B) — byte layout mirrors Composition.wgsl's header exactly. Each
+        /// vec3 field is immediately followed by the scalar that fills its 16-byte tail padding.</summary>
+        [StructLayout(LayoutKind.Sequential)]
+        private struct CompositionParams
+        {
+            public Mat4 ViewProjectionInv;
+            public Mat4 View;
+            public Vector3 SunColor; public float ShadowDistance;
+            public Vector3 SkyAmbient; public float SunFade;
+            public Vector3 MinLight; public float ShadowStrength;
+            public Vector3 AmbientFloor; public float ShadowsEnabled;
+            public Vector3 CameraPos; public float DebugShadow;
+            public Vector3 SunDirection; public float Time;
+            public Vector3 MoonColor; public float MoonFade;
+            public Vector3 SkyColor; public float StarBrightness;
+            public Vector3 HorizonColor; public float SunSize;
+            public Vector3 VoidColor; public float MoonSize;
+            public Vector3 SunsetColor; public float SkyDistance;
+            public float FogStart; public float FogEnd;
+            public float Pad0; public float Pad1;
+            public Vector3 UnderwaterColor; public float Underwater;
+        }
+
+        private static GpuShaderModule _geometryModule;
+        private static GpuBindGroupLayout _geoParamsLayout;
+        private static GpuPipelineLayout _geometryPipeLayout;
+        private static GpuRenderPipeline _geometryPipeline;
+        private static GpuRenderPipeline _transparentPipeline;
+
+        private static GpuBuffer _geoOpaqueUbo, _geoLodUbo, _geoTransparentUbo;
+        private static GpuBindGroup _geoOpaqueBind, _geoLodBind, _geoTransparentBind;
+
+        private static GpuShaderModule _shadowModule;
+        private static GpuPipelineLayout _shadowPipeLayout;
+        private static GpuRenderPipeline _shadowPipeline;
+        private static GpuBuffer _shadowFrameUbo;
+        private static GpuBindGroup _shadowFrameBind;
+
+        private static GpuShaderModule _shadowResolveModule;
+        private static GpuBindGroupLayout _shadowResolveParamsLayout;
+        private static GpuBindGroupLayout _shadowResolveTexLayout;
+        private static GpuPipelineLayout _shadowResolvePipeLayout;
+        private static GpuRenderPipeline _shadowResolvePipeline;
+        private static GpuBuffer _shadowResolveUbo;
+        private static GpuBindGroup _shadowResolveParamsBind;
+        private static GpuBindGroup _shadowResolveTexBind;
+
+        private static GpuShaderModule _compositionModule;
+        private static GpuBindGroupLayout _compositionParamsLayout;
+        private static GpuBindGroupLayout _compositionTexLayout;
+        private static GpuPipelineLayout _compositionPipeLayout;
+        private static GpuRenderPipeline _compositionPipeline;
+        private static GpuBuffer _compositionUbo;
+        private static GpuBindGroup _compositionParamsBind;
+        private static GpuBindGroup _compositionTexBind;
+
+        private static GpuBindGroup _atlasBind;
+        private static GpuTexture _atlasArray0Cache;
+
+        private static GpuTexture _shadowMap;
+        private static int _shadowMapSize;
+        private static GpuTexture _shadowResolve;
+        private static int _resolveWidth, _resolveHeight;
+
+        private static void EnsureLoaded()
+        {
+            if (_loaded) return;
+            _loaded = true;
+
+            ChunkCuller.Load(ResourceReader.ReadString);
+            _opaqueCull = new ChunkCuller("opaque");
+            _shadowCull = new ChunkCuller("shadow");
+            _lodCull = new ChunkCuller("lod");
+
+            BuildGeometryPipelines();
+            BuildShadowPipeline();
+            BuildShadowResolvePipeline();
+            BuildCompositionPipeline();
+        }
+
+        private static void BuildGeometryPipelines()
+        {
+            _geometryModule = new GpuShaderModule(ResourceReader.ReadString(ShaderDir + "WorldGeometry.wgsl"), "worldGeometry");
+            _geoParamsLayout = new GpuBindGroupLayout(new[]
+            {
+                GpuBindGroupLayout.Buffer(0, ShaderStage.Vertex | ShaderStage.Fragment, BufferBindingType.Uniform),
+            }, "geoParams");
+
+            _geometryPipeLayout = new GpuPipelineLayout(new[]
+            {
+                GpuPipelineLayout.Ptr(GpuLayouts.Frame),
+                GpuPipelineLayout.Ptr(_geoParamsLayout),
+                GpuPipelineLayout.Ptr(GpuLayouts.BlockAtlas),
+            }, label: "worldGeometry");
+
+            var colorFormats = GBufferTargets.ColorFormats;
+            Span<ColorTargetDesc> opaqueTargets = stackalloc ColorTargetDesc[3]
+            {
+                new ColorTargetDesc(colorFormats[0]),
+                new ColorTargetDesc(colorFormats[1]),
+                new ColorTargetDesc(colorFormats[2]),
+            };
+            // GreaterEqual (the reverse-Z equivalent of GL's Lequal): a coplanar face at exactly the same depth
+            // still draws, so a block model's overlay layer (e.g. the grass-side tinted overlay over its base)
+            // isn't depth-rejected — a strict Greater would drop it and lose the tint.
+            var geoDepth = new DepthDesc(GBufferTargets.DepthFormat, true, CompareFunction.GreaterEqual);
+            // NOTE: if all terrain renders inside-out/invisible, flip FrontFace or CullMode — winding-convention check
+            _geometryPipeline = new GpuRenderPipeline(_geometryPipeLayout, _geometryModule, "vs_main", "fs_main",
+                ChunkMeshArena.GeometryVertexLayout, opaqueTargets, geoDepth,
+                cullMode: CullMode.Back, frontFace: FrontFace.Ccw, label: "worldGeometry");
+
+            // Transparent: same shader/layout, but the diffuse target alpha-blends while normal/light write
+            // cleanly (so the water flag in normal.w and the surface's own light survive composition).
+            Span<ColorTargetDesc> transparentTargets = stackalloc ColorTargetDesc[3]
+            {
+                new ColorTargetDesc(colorFormats[0], GpuRenderPipeline.AlphaBlend),
+                new ColorTargetDesc(colorFormats[1]),
+                new ColorTargetDesc(colorFormats[2]),
+            };
+            _transparentPipeline = new GpuRenderPipeline(_geometryPipeLayout, _geometryModule, "vs_main", "fs_main",
+                ChunkMeshArena.GeometryVertexLayout, transparentTargets, geoDepth,
+                cullMode: CullMode.Back, frontFace: FrontFace.Ccw, label: "worldTransparent");
+
+            var geoBytes = (ulong) Marshal.SizeOf<GeoParams>();
+            _geoOpaqueUbo = new GpuBuffer(geoBytes, BufferUsage.Uniform | BufferUsage.CopyDst, "geoParams.opaque");
+            _geoLodUbo = new GpuBuffer(geoBytes, BufferUsage.Uniform | BufferUsage.CopyDst, "geoParams.lod");
+            _geoTransparentUbo = new GpuBuffer(geoBytes, BufferUsage.Uniform | BufferUsage.CopyDst, "geoParams.transparent");
+
+            _geoOpaqueBind = new GpuBindGroup(_geoParamsLayout, new[] { GpuBindGroup.Buffer(0, _geoOpaqueUbo) }, "geoParams.opaque");
+            _geoLodBind = new GpuBindGroup(_geoParamsLayout, new[] { GpuBindGroup.Buffer(0, _geoLodUbo) }, "geoParams.lod");
+            _geoTransparentBind = new GpuBindGroup(_geoParamsLayout, new[] { GpuBindGroup.Buffer(0, _geoTransparentUbo) }, "geoParams.transparent");
+        }
+
+        private static void BuildShadowPipeline()
+        {
+            _shadowModule = new GpuShaderModule(ResourceReader.ReadString(ShaderDir + "ShadowDepth.wgsl"), "shadowDepth");
+            // The ShadowFrame WGSL struct is a single mat4x4 at group(0) binding(0); the shared Frame BGL shape
+            // (one vertex/fragment-visible uniform) matches it, so reuse it for the bind group.
+            _shadowPipeLayout = new GpuPipelineLayout(new[] { GpuPipelineLayout.Ptr(GpuLayouts.Frame) }, label: "shadowDepth");
+            // depthBias(2)/slopeScale(4) for the shadow pass. Under reverse-Z the bias sign may
+            // need flipping (logged in docs/known-issues.md). Cull None: the mesher emits single-sided faces.
+            var shadowDepth = new DepthDesc(GBufferTargets.DepthFormat, true, CompareFunction.Greater,
+                depthBias: 2, depthBiasSlopeScale: 4f);
+            _shadowPipeline = new GpuRenderPipeline(_shadowPipeLayout, _shadowModule, "vs_main", null,
+                ChunkMeshArena.ShadowVertexLayout, ReadOnlySpan<ColorTargetDesc>.Empty, shadowDepth,
+                cullMode: CullMode.None, label: "shadowDepth");
+
+            _shadowFrameUbo = new GpuBuffer((ulong) Marshal.SizeOf<Mat4>(),
+                BufferUsage.Uniform | BufferUsage.CopyDst, "shadowFrame");
+            _shadowFrameBind = new GpuBindGroup(GpuLayouts.Frame, new[] { GpuBindGroup.Buffer(0, _shadowFrameUbo) }, "shadowFrame");
+        }
+
+        private static void BuildShadowResolvePipeline()
+        {
+            _shadowResolveModule = new GpuShaderModule(ResourceReader.ReadString(ShaderDir + "ShadowResolve.wgsl"), "shadowResolve");
+            _shadowResolveParamsLayout = new GpuBindGroupLayout(new[]
+            {
+                GpuBindGroupLayout.Buffer(0, ShaderStage.Fragment, BufferBindingType.Uniform),
+            }, "shadowResolveParams");
+            _shadowResolveTexLayout = new GpuBindGroupLayout(new[]
+            {
+                GpuBindGroupLayout.Texture(0, ShaderStage.Fragment, TextureSampleType.Float),
+                GpuBindGroupLayout.Texture(1, ShaderStage.Fragment, TextureSampleType.Depth),
+                GpuBindGroupLayout.Texture(2, ShaderStage.Fragment, TextureSampleType.Float),
+                GpuBindGroupLayout.Texture(3, ShaderStage.Fragment, TextureSampleType.Depth),
+                GpuBindGroupLayout.Sampler(4, ShaderStage.Fragment, SamplerBindingType.Filtering),
+                GpuBindGroupLayout.Sampler(5, ShaderStage.Fragment, SamplerBindingType.Comparison),
+            }, "shadowResolveTex");
+            _shadowResolvePipeLayout = new GpuPipelineLayout(new[]
+            {
+                GpuPipelineLayout.Ptr(_shadowResolveParamsLayout),
+                GpuPipelineLayout.Ptr(_shadowResolveTexLayout),
+            }, label: "shadowResolve");
+            _shadowResolvePipeline = new GpuRenderPipeline(_shadowResolvePipeLayout, _shadowResolveModule, "vs_main", "fs_main",
+                ReadOnlySpan<VertexBufferDesc>.Empty,
+                stackalloc[] { new ColorTargetDesc(TextureFormat.Rgba8Unorm) }, depth: null, label: "shadowResolve");
+
+            _shadowResolveUbo = new GpuBuffer((ulong) Marshal.SizeOf<ShadowResolveParams>(),
+                BufferUsage.Uniform | BufferUsage.CopyDst, "shadowResolveParams");
+            _shadowResolveParamsBind = new GpuBindGroup(_shadowResolveParamsLayout,
+                new[] { GpuBindGroup.Buffer(0, _shadowResolveUbo) }, "shadowResolveParams");
+        }
+
+        private static void BuildCompositionPipeline()
+        {
+            _compositionModule = new GpuShaderModule(ResourceReader.ReadString(ShaderDir + "Composition.wgsl"), "composition");
+            _compositionParamsLayout = new GpuBindGroupLayout(new[]
+            {
+                GpuBindGroupLayout.Buffer(0, ShaderStage.Fragment, BufferBindingType.Uniform),
+            }, "compositionParams");
+            _compositionTexLayout = new GpuBindGroupLayout(new[]
+            {
+                GpuBindGroupLayout.Texture(0, ShaderStage.Fragment, TextureSampleType.Float),
+                GpuBindGroupLayout.Texture(1, ShaderStage.Fragment, TextureSampleType.Float),
+                GpuBindGroupLayout.Texture(2, ShaderStage.Fragment, TextureSampleType.Depth),
+                GpuBindGroupLayout.Texture(3, ShaderStage.Fragment, TextureSampleType.Float),
+                GpuBindGroupLayout.Texture(4, ShaderStage.Fragment, TextureSampleType.Float),
+                GpuBindGroupLayout.Texture(5, ShaderStage.Fragment, TextureSampleType.Float),
+                GpuBindGroupLayout.Texture(6, ShaderStage.Fragment, TextureSampleType.Float),
+                GpuBindGroupLayout.Sampler(7, ShaderStage.Fragment, SamplerBindingType.Filtering),
+                GpuBindGroupLayout.Sampler(8, ShaderStage.Fragment, SamplerBindingType.Filtering),
+            }, "compositionTex");
+            _compositionPipeLayout = new GpuPipelineLayout(new[]
+            {
+                GpuPipelineLayout.Ptr(_compositionParamsLayout),
+                GpuPipelineLayout.Ptr(_compositionTexLayout),
+            }, label: "composition");
+            _compositionPipeline = new GpuRenderPipeline(_compositionPipeLayout, _compositionModule, "vs_main", "fs_main",
+                ReadOnlySpan<VertexBufferDesc>.Empty,
+                stackalloc[] { new ColorTargetDesc(Renderer.HdrFormat) }, depth: null, label: "composition");
+
+            _compositionUbo = new GpuBuffer((ulong) Marshal.SizeOf<CompositionParams>(),
+                BufferUsage.Uniform | BufferUsage.CopyDst, "compositionParams");
+            _compositionParamsBind = new GpuBindGroup(_compositionParamsLayout,
+                new[] { GpuBindGroup.Buffer(0, _compositionUbo) }, "compositionParams");
+        }
+
+        /// <summary>Builds (and rebuilds on resize / shadow-quality change) the shadow map + half-res resolve
+        /// targets owned by the world renderer. The G-buffer + HDR scene targets are owned elsewhere
+        /// (ClientResources / Renderer); only their views are referenced. Invalidates the texture bind groups
+        /// (rebuilt lazily) when a target it references is recreated.</summary>
+        private static void EnsureTargets()
+        {
+            if (_shadowMap == null || _shadowMapSize != ShadowMapSize)
+            {
+                _shadowMapSize = ShadowMapSize;
+                _shadowMap?.Dispose();
+                _shadowMap = new GpuTexture((uint) _shadowMapSize, (uint) _shadowMapSize, TextureFormat.Depth32float,
+                    TextureUsage.RenderAttachment | TextureUsage.TextureBinding, label: "shadowMap");
+                _shadowResolveTexBind = null;
+            }
+
+            var halfW = Math.Max(1, ClientResources.Width / 2);
+            var halfH = Math.Max(1, ClientResources.Height / 2);
+            if (_shadowResolve == null || _resolveWidth != halfW || _resolveHeight != halfH)
+            {
+                _resolveWidth = halfW;
+                _resolveHeight = halfH;
+                _shadowResolve?.Dispose();
+                _shadowResolve = new GpuTexture((uint) halfW, (uint) halfH, TextureFormat.Rgba8Unorm,
+                    TextureUsage.RenderAttachment | TextureUsage.TextureBinding, label: "shadowResolve");
+                _compositionTexBind = null;
+            }
+
+            // The G-buffer textures are recreated on framebuffer resize (ClientResources), so the texture bind
+            // groups that sample them must be rebuilt too. Width/Height changing implies a resolve-size change
+            // above, which already nulls them; this is the defensive belt for any out-of-band G-buffer recreate.
+            if (ClientResources.GBuffer.Width != _resolveWidth * 2 && _resolveWidth * 2 != ClientResources.Width)
+            {
+                _shadowResolveTexBind = null;
+                _compositionTexBind = null;
+            }
+        }
+
+        private static unsafe void EnsureAtlasBind()
+        {
+            var array0 = BlockTextureUploader.ArrayAt(0);
+            if (_atlasBind != null && _atlasArray0Cache == array0) return;
+            _atlasBind?.Dispose();
+            _atlasBind = new GpuBindGroup(GpuLayouts.BlockAtlas, new[]
+            {
+                GpuBindGroup.Texture(0, BlockTextureUploader.ArrayAt(0).View),
+                GpuBindGroup.Texture(1, BlockTextureUploader.ArrayAt(1).View),
+                GpuBindGroup.Texture(2, BlockTextureUploader.ArrayAt(2).View),
+                GpuBindGroup.Texture(3, BlockTextureUploader.ArrayAt(3).View),
+                GpuBindGroup.Sampler(4, GpuSamplers.Block),
+            }, "blockAtlas");
+            _atlasArray0Cache = array0;
+        }
+
+        public static unsafe void RenderWorld(WorldClient world, Matrix4 projection)
+        {
+            EnsureLoaded();
+            EnsureTargets();
+            EnsureAtlasBind();
+
+            var camera = PlayerController.Camera;
+
             // Server-authoritative time of day; sampled once so every sun term this frame is consistent. The
             // benchmark pins it (FixedTimeOfDay) for reproducible sun/shadow conditions.
             _dayTimeSeconds = FixedTimeOfDay ?? world.WorldTimeSeconds;
@@ -297,113 +596,163 @@ namespace MinecraftClone3API.Graphics
             _fogColor = world.FogColor;
             _ambientFloor = world.AmbientLight;
 
-            var viewProjection = PlayerController.Camera.View * projection;
-            var viewProjectionInv = viewProjection.Inverted();
+            var viewProjection = camera.View * projection;
+            Matrix4X4.Invert(viewProjection, out var viewProjectionInv);
             _viewFrustum.Set(viewProjection);
-            var viewFrustum = _viewFrustum;
+            _lodRenderDistance = world.LodRenderDistance;
+
+            Renderer.SetFrameUniform(camera.View, projection, camera.Position);
 
             var toSun = SunDirection();
             // The directional sun term -- and with it the shadows -- fade out together as the sun nears the
             // horizon, so dusk converges smoothly to ambient instead of the sun term popping when the shadow
             // pass cuts off. sunUp (term present) is exactly sunFade > 0.
-            // A sunless dimension has no directional sun (so no shadow pass); it is lit by block light + the
-            // ambient floor only.
             var sunFade = _hasSky ? SunFade(toSun.Y) : 0f;
             var sunUp = sunFade > 0f;
 
             // Eye-in-liquid underwater murk. Block P fills [P, P+1] (corner-origin), so floor(v) is the block
             // containing the camera — matching PlayerPhysics' liquid sampling. The murk colour dims with the
             // daylight (sun + ambient) so it's bright blue by day, near-black at night or in a flooded cave.
-            var cam = PlayerController.Camera.Position;
+            var cam = camera.Position;
             _underwater = world.GetBlock((int) MathF.Floor(cam.X), (int) MathF.Floor(cam.Y),
                 (int) MathF.Floor(cam.Z)).IsLiquid;
             var litTint = _hasSky ? SkyAmbient() + SunColor() * sunFade : _ambientFloor;
-            var bright = MathHelper.Clamp(MathF.Max(litTint.X, MathF.Max(litTint.Y, litTint.Z)), 0.12f, 1f);
+            var bright = Math.Clamp(MathF.Max(litTint.X, MathF.Max(litTint.Y, litTint.Z)), 0.12f, 1f);
             _underwaterColor = new Vector3(0.05f, 0.17f, 0.40f) * bright;
 
-            // Per-pass GPU timing (F3 profiler shadowMs/geomMs/compMs); no-op unless recording.
-            GpuTimers.Enabled = Profiler.Recording;
-            GpuTimers.BeginFrame();
+            // Slim CPU scan: gather the visible transparent chunks (back-to-front CPU sort — the GPU can't sort
+            // alpha) and flag whether any visible chunk is sky-exposed (gates the shadow passes). Opaque + LOD +
+            // shadow casters are GPU-culled, so no CPU opaque list is built.
+            ScanTransparentAndShadow(world, camera, _viewFrustum);
 
-            // Build the visible set (frustum + render-distance scan): fills the draw lists and flags whether
-            // any visible chunk is sky-exposed, so the shadow passes can be skipped when none is (deep cave).
-            BuildVisibleSet(world, PlayerController.Camera, viewFrustum);
-            _lodRenderDistance = world.LodRenderDistance;
-            BuildLodVisibleSet(world, PlayerController.Camera, viewFrustum);
+            var shadowPass = sunUp && _anyShadowReceiver && GraphicsSettings.ShadowsEnabled;
+            RenderDebug.ShadowPass = shadowPass;
 
-            RenderDebug.ShadowPass = sunUp && _anyShadowReceiver && GraphicsSettings.ShadowsEnabled;
-            if (RenderDebug.ShadowPass)
+            world.OpaqueArena.FlushMeta();
+            world.LodArena.FlushMeta();
+
+            var lodActive = _lodRenderDistance > RenderDistance && !world.ForceLodOff;
+
+            var encoder = Renderer.Encoder;
+
+            // --- Cull dispatches (compute) recorded BEFORE the geometry render pass: compute passes can't nest
+            // inside a render pass. Each culler writes its own indirect draw list + count. ---
+            if (shadowPass)
             {
-                GpuTimers.Begin(GpuTimers.Pass.Shadow);
-                DrawShadowMap(world, PlayerController.Camera, projection, toSun);
-                GpuTimers.End(GpuTimers.Pass.Shadow);
+                BuildLightMatrix(camera, projection, toSun);
+                _shadowCull.Dispatch(encoder, world.OpaqueArena, _shadowFrustum, camera.Position,
+                    maxDistance: 0f, chunkExtent: Chunk.Size);
+            }
+            _opaqueCull.Dispatch(encoder, world.OpaqueArena, _viewFrustum, camera.Position,
+                RenderDistance, Chunk.Size);
+            if (lodActive)
+                _lodCull.Dispatch(encoder, world.LodArena, _viewFrustum, camera.Position,
+                    _lodRenderDistance, 2f * 140f);
+
+            // --- Shadow depth pass ---
+            if (shadowPass) DrawShadowMap(world);
+
+            // --- Geometry (G-buffer) pass: opaque (indirect multidraw), LOD horizon (indirect), transparent
+            // (per-chunk back-to-front), then the overlays draw into the same pass. ---
+            WriteGeoParams();
+            var geomPass = ClientResources.GBuffer.BeginGeometryPass(encoder);
+            geomPass.SetBindGroup(0, Renderer.FrameBindGroup);
+            geomPass.SetBindGroup(2, _atlasBind);
+
+            geomPass.SetPipeline(_geometryPipeline);
+            geomPass.SetBindGroup(1, _geoOpaqueBind);
+            world.OpaqueArena.BindGeometry(geomPass);
+            _opaqueCull.Draw(geomPass);
+
+            if (lodActive)
+            {
+                geomPass.SetBindGroup(1, _geoLodBind);
+                world.LodArena.BindGeometry(geomPass);
+                _lodCull.Draw(geomPass);
             }
 
-            var wireframe = false;
-            if (wireframe) GL.PolygonMode(TriangleFace.Front, PolygonMode.Line);
+            geomPass.SetPipeline(_transparentPipeline);
+            geomPass.SetBindGroup(0, Renderer.FrameBindGroup);
+            geomPass.SetBindGroup(1, _geoTransparentBind);
+            geomPass.SetBindGroup(2, _atlasBind);
+            foreach (var chunk in _transparentChunks)
+                chunk.DrawTransparent(geomPass);
 
-            GpuTimers.Begin(GpuTimers.Pass.Geometry);
-            DrawGeometryFramebuffer(world, PlayerController.Camera, projection);
-            GpuTimers.End(GpuTimers.Pass.Geometry);
+            EntityRenderer.Render(geomPass, world, camera);
+            BlockEntityRenderer.Render(geomPass, world, camera);
+            PlayerController.Render(geomPass, camera);
+            ChunkBorderRenderer.Render(geomPass, camera);
+            // Last: the first-person viewmodel compresses its depth band so it sits on top of the world.
+            HeldItemRenderer.Render(geomPass, world, camera);
 
-            if (wireframe) GL.PolygonMode(TriangleFace.Front, PolygonMode.Fill);
+            geomPass.End();
+            geomPass.Release();
 
-            GpuTimers.Begin(GpuTimers.Pass.Composition);
-            // Resolve the shadow PCF at half res first (the old per-pixel-at-full-res cost was ~45% of the
-            // frame); composition then depth-aware-upsamples it. Gated like DrawShadowMap — when skipped the
-            // resolve buffer is stale but composition's same early-outs never sample it.
-            if (RenderDebug.ShadowPass) DrawShadowResolve(PlayerController.Camera, viewProjectionInv, sunFade);
-            DrawComposition(PlayerController.Camera, viewProjectionInv, sunFade);
-            GpuTimers.End(GpuTimers.Pass.Composition);
+            // --- Shadow resolve (half-res PCF) ---
+            if (shadowPass) DrawShadowResolve(camera, viewProjectionInv, sunFade);
 
-            GpuTimers.EndFrame();
+            // --- Composition into the HDR scene ---
+            DrawComposition(camera, viewProjectionInv, sunFade, shadowPass, lodActive);
+
+            Renderer.MarkSceneRendered();
         }
 
-        /// <summary>Recreates the shadow framebuffer when the Shadow Quality preset changes its resolution
-        /// (GL, main-thread — called inside the shadow pass). A no-op when the size already matches.</summary>
-        private static void EnsureShadowMap()
+        /// <summary>Slim per-frame CPU scan: builds the back-to-front transparent draw list (the GPU can't sort
+        /// alpha) and flags <see cref="_anyShadowReceiver"/> (true iff a visible sky-exposed chunk is within
+        /// ShadowDistance). Opaque/LOD/shadow visibility is decided on the GPU by the cull compute.</summary>
+        private static void ScanTransparentAndShadow(WorldClient world, Camera camera, Frustum viewFrustum)
         {
-            if (_shadowMapSize == ShadowMapSize) return;
+            _transparentSortedChunks.Clear();
+            _transparentChunks.Clear();
+            _anyShadowReceiver = false;
 
-            _shadowMapSize = ShadowMapSize;
-            ClientResources.ShadowFramebuffer?.Dispose();
-            ClientResources.ShadowFramebuffer = new ShadowFramebuffer(_shadowMapSize);
+            var renderDistanceSq = RenderDistanceSq;
+            var shadowDistanceSq = ShadowDistanceSq;
+
+            var renderList = world.RenderList;
+            for (var i = 0; i < renderList.Count; i++)
+            {
+                var renderData = renderList[i];
+                var chunkMiddle = renderData.Middle;
+                var lengthSq = (camera.Position - chunkMiddle).LengthSquared;
+                if (lengthSq > renderDistanceSq) continue;
+                if (!viewFrustum.SpehereIntersection(chunkMiddle, Chunk.Radius)) continue;
+
+                if (renderData.HasTransparency)
+                {
+                    if (lengthSq < SortDistanceSq)
+                    {
+                        renderData.SortTransparentFaces();
+                        _transparentSortedChunks.Add(renderData);
+                    }
+                    else _transparentChunks.Add(renderData);
+                }
+
+                if (renderData.SkyExposed && lengthSq <= shadowDistanceSq) _anyShadowReceiver = true;
+            }
+
+            // Sort the near transparent chunks back-to-front, then append them after the far ones so the closer
+            // surfaces overdraw correctly.
+            _sortCameraPos = camera.Position;
+            _transparentSortedChunks.Sort(_transparentSort);
+            _transparentChunks.AddRange(_transparentSortedChunks);
         }
 
-        /// <summary>Renders opaque chunk depth from the sun's orthographic point of view into the shadow
-        /// framebuffer. Re-draws the already-uploaded chunk VAOs (no remesh, main-thread GL only); the
-        /// shadow-resolve pass samples it to attenuate the sky/sun term. The map is fit to the bounding sphere
-        /// of the [ShadowNear, ShadowDistance] view-frustum slice (radius constant as the camera rotates →
-        /// stable size). Deliberately NOT texel-snapped — the sun advances every frame, so snapping to the
-        /// rotating light-space texel grid would turn the shadow's smooth crawl into whole-texel flicker; the
-        /// soft low-res PCF keeps camera-motion shimmer down instead. See CLAUDE.md.</summary>
-        private static void DrawShadowMap(WorldClient world, Camera camera, Matrix4 projection, Vector3 toSun)
+        /// <summary>Computes the orthographic sun view-projection fit to the bounding sphere of the
+        /// [ShadowNear, ShadowDistance] view-frustum slice (radius constant as the camera rotates → stable size,
+        /// no shimmer) and the matching shadow frustum the GPU shadow cull tests against. Deliberately NOT
+        /// texel-snapped — see CLAUDE.md.</summary>
+        private static void BuildLightMatrix(Camera camera, Matrix4 projection, Vector3 toSun)
         {
-            // Frustum half-angle tangents straight from the projection (robust to FOV/aspect/resize):
-            // Row0.X = 1/tan(fovX/2), Row1.Y = 1/tan(fovY/2). k2 turns a slice depth z into its corner
-            // radius z*sqrt(k2), used for the analytic bounding sphere below.
-            var tanHalfH = 1f / projection.Row0.X;
-            var tanHalfV = 1f / projection.Row1.Y;
+            // Frustum half-angle tangents from the projection: Silk Matrix4X4 is 1-indexed, so Row1.X = 1/tan(fovX/2)
+            // and Row2.Y = 1/tan(fovY/2). k2 turns a slice depth z into its corner radius z*sqrt(k2).
+            var tanHalfH = 1f / projection.Row1.X;
+            var tanHalfV = 1f / projection.Row2.Y;
             var k2 = tanHalfH * tanHalfH + tanHalfV * tanHalfV;
 
             // LookAt up vector; the UnitZ fallback only triggers if the sun is nearly straight up (never,
             // given SunDirection's permanent Z tilt).
             var up = MathF.Abs(toSun.Y) > 0.99f ? Vector3.UnitZ : Vector3.UnitY;
-
-            GraphicsDebug.PushGroup("Shadow");
-
-            EnsureShadowMap();
-
-            // Cull disabled: the voxel mesher only emits exposed (single-sided) faces, so there are no back
-            // faces — culling would drop the sun-facing surfaces. Polygon offset pushes shadow depth back to
-            // fight self-shadowing acne (paired with the normal-offset + depth bias in the resolve shader).
-            RenderState.Set(new GlState {CullFace = false, DepthTest = true, DepthFunc = DepthFunction.Lequal});
-            GL.Enable(EnableCap.PolygonOffsetFill);
-            GL.PolygonOffset(2f, 4f);
-
-            var shader = ClientResources.ShadowDepthShader;
-            shader.Bind();
-            var uLightViewProj = shader.GetUniformLocation("uLightViewProj");
 
             // Analytic bounding sphere of the whole [ShadowNear, ShadowDistance] frustum slice. Centre rides
             // the camera forward axis (only the camera position, not its orientation, moves it); radius depends
@@ -421,373 +770,170 @@ namespace MinecraftClone3API.Graphics
 
             var distBack = radius + ShadowCasterExtent;
             var lightEye = center + toSun * distBack;
-            var lightView = Matrix4.LookAt(lightEye, center, up);
-            var lightProj = Matrix4.CreateOrthographic(2f * radius, 2f * radius, 0f, distBack + radius);
+            var lightView = Matrix4X4.CreateLookAt(lightEye, center, up);
+            var lightProj = Projection.ReverseZOrtho(-radius, radius, -radius, radius, 0f, distBack + radius);
             _lightViewProj = lightView * lightProj;
             _shadowFrustum.Set(_lightViewProj);
-
-            var shadowChunks = _shadowChunks;
-            shadowChunks.Clear();
-            var renderList = world.RenderList;
-            for (var i = 0; i < renderList.Count; i++)
-            {
-                var renderData = renderList[i];
-                // Transparent chunks don't cast shadows (a solid shadow from translucent geometry is wrong);
-                // skip chunks with no opaque geometry entirely (they'd contribute zero-index sub-draws).
-                if (renderData.HasTransparency || !renderData.HasOpaque) continue;
-                if (!_shadowFrustum.SpehereIntersection(renderData.Middle, Chunk.Radius)) continue;
-                shadowChunks.Add(renderData);
-            }
-
-            ClientResources.ShadowFramebuffer.Bind();
-            GL.Clear(ClearBufferMask.DepthBufferBit);
-            GL.UniformMatrix4(uLightViewProj, false, ref _lightViewProj);
-
-            // One batched multidraw over the shadow casters' shared arena sub-ranges (position-only VAO).
-            world.OpaqueArena.Draw(shadowChunks, true);
-
-            GL.Disable(EnableCap.PolygonOffsetFill);
-            ClientResources.ShadowFramebuffer.Unbind(ClientResources.Window.FramebufferSize.X, ClientResources.Window.FramebufferSize.Y);
-            GraphicsDebug.PopGroup();
         }
 
-        /// <summary>Fills the opaque/transparent draw lists for this frame — a linear scan of every loaded
-        /// chunk, frustum- and render-distance-culled — and flags whether the sun shadow passes are needed
-        /// (<see cref="_anyShadowReceiver"/>: true iff a visible sky-exposed chunk is within ShadowDistance).</summary>
-        private static void BuildVisibleSet(WorldClient world, Camera camera, Frustum viewFrustum)
+        /// <summary>Renders opaque chunk depth from the sun's orthographic point of view into the shadow map.
+        /// One GPU-culled indirect multidraw over the opaque arena (position-only vertex stream); the
+        /// shadow-resolve pass samples it to attenuate the sky/sun term.</summary>
+        private static unsafe void DrawShadowMap(WorldClient world)
         {
-            _chunksToDraw.Clear();
-            _transparentSortedChunks.Clear();
-            _transparentChunks.Clear();
-            _anyShadowReceiver = false;
+            var encoder = Renderer.Encoder;
+            _shadowFrameUbo.QueueWriteStruct(MatrixConvert.ToGpu(_lightViewProj));
 
-            // Snapshot the live (settings-driven) distances once so the per-chunk loop reads locals, not the
-            // property getters, each iteration.
-            var renderDistanceSq = RenderDistanceSq;
-            var shadowDistanceSq = ShadowDistanceSq;
-
-            var renderList = world.RenderList;
-            for (var i = 0; i < renderList.Count; i++)
-            {
-                var renderData = renderList[i];
-                var chunkMiddle = renderData.Middle;
-                // Distance cull FIRST (one subtract + dot) so the ~3000 loaded-but-out-of-render-distance
-                // chunks at high render distance are rejected before the 6-plane frustum test.
-                var lengthSq = (camera.Position - chunkMiddle).LengthSquared;
-                if (lengthSq > renderDistanceSq) continue;
-                if (!viewFrustum.SpehereIntersection(chunkMiddle, Chunk.Radius)) continue;
-
-                if (renderData.HasTransparency)
-                {
-                    if (lengthSq < SortDistanceSq)
-                    {
-                        renderData.SortTransparentFaces();
-                        _transparentSortedChunks.Add(renderData);
-                    }
-                    else _transparentChunks.Add(renderData);
-                }
-                else _chunksToDraw.Add(renderData);
-
-                if (renderData.SkyExposed && lengthSq <= shadowDistanceSq) _anyShadowReceiver = true;
-            }
-
-            // Sort the near transparent chunks back-to-front, then build the final opaque draw list as
-            // opaque + all transparent (so a transparent chunk's opaque faces are drawn in the opaque pass).
-            _sortCameraPos = camera.Position;
-            _transparentSortedChunks.Sort(_transparentSort);
-            _transparentChunks.AddRange(_transparentSortedChunks);
-            _chunksToDraw.AddRange(_transparentChunks);
-
-            RenderDebug.DrawnChunks = _chunksToDraw.Count;
+            var depth = new DepthAttachment(_shadowMap.View, LoadOp.Clear, 0f);
+            var pass = RenderPassBuilder.Begin(encoder, ReadOnlySpan<ColorAttachment>.Empty, depth);
+            pass.SetPipeline(_shadowPipeline);
+            pass.SetBindGroup(0, _shadowFrameBind);
+            world.OpaqueArena.BindShadow(pass);
+            _shadowCull.Draw(pass);
+            pass.End();
+            pass.Release();
         }
 
-        /// <summary>Frustum + distance cull of the Phase-2 LOD regions into <see cref="_lodToDraw"/>. Keeps any
-        /// region overlapping the ring [RenderDistance, LodRenderDistance] (nearest/farthest-point test so the
-        /// boundary never gaps); the geometry pass draws them under the real chunks (DepthFunc.Less), so the
-        /// inner overlap is hidden behind loaded chunks. Empty (no work) when the LOD horizon is dormant.</summary>
-        private static void BuildLodVisibleSet(WorldClient world, Camera camera, Frustum viewFrustum)
+        /// <summary>Writes the three GeoParams UBOs for this frame. LOD cross-fade band: full-detail chunks
+        /// dissolve into the horizon over [RD - FadeBandWidth, RD]; disabled (band pushed past the far plane)
+        /// when the horizon is dormant so chunks never fade into nothing. Transparent never fades.</summary>
+        private static void WriteGeoParams()
         {
-            _lodToDraw.Clear();
-            var far = _lodRenderDistance;
-            // Inner edge pulled in by the fade band so the horizon has geometry to dither IN against the chunks
-            // dithering OUT (else the band would be chunk-discard against empty horizon = holes).
-            var near = RenderDistance - FadeBandWidth;
-            if (far <= RenderDistance || world.ForceLodOff) { RenderDebug.LodDrawn = 0; return; }
-
-            var list = world.LodRenderList;
-            for (var i = 0; i < list.Count; i++)
-            {
-                var rd = list[i];
-                var dist = (camera.Position - rd.Middle).Length;
-                if (dist - rd.Radius > far) continue;        // entirely beyond the LOD horizon
-                if (dist + rd.Radius < near) continue;        // entirely inside the real-chunk core
-                if (!viewFrustum.SpehereIntersection(rd.Middle, rd.Radius)) continue;
-                _lodToDraw.Add(rd);
-            }
-
-            RenderDebug.LodDrawn = _lodToDraw.Count;
-        }
-
-        private static void DrawGeometryFramebuffer(WorldClient world, Camera camera, Matrix4 projection)
-        {
-            RenderState.Set(new GlState {CullFace = true, DepthTest = true, DepthFunc = DepthFunction.Lequal});
-
-            GraphicsDebug.PushGroup("Geometry");
-            ClientResources.GeometryFramebuffer.Bind();
-            ClientResources.GeometryFramebuffer.Clear(Color4.DarkBlue);
-            //ClientResources.GeometryFramebuffer.Clear(Color4.Transparent);    Breaks transparency
-
-            var shader = ClientResources.WorldGeometryShader;
-            shader.Bind();
-            // Uniform/sampler locations are queried by name (GLSL 4.10 has no explicit
-            // layout(location=)/layout(binding=) for uniforms; macOS caps OpenGL at 4.1).
-            var uCutoff = shader.GetUniformLocation("uCutoff");
-            GL.UniformMatrix4(shader.GetUniformLocation("uView"), false, ref camera.View);
-            GL.UniformMatrix4(shader.GetUniformLocation("uProjection"), false, ref projection);
-            GL.Uniform1(uCutoff, 1);
-            GL.Uniform1(shader.GetUniformLocation("uTextures16"), 0);
-            GL.Uniform1(shader.GetUniformLocation("uTextures64"), 1);
-            GL.Uniform1(shader.GetUniformLocation("uTextures256"), 2);
-            GL.Uniform1(shader.GetUniformLocation("uTextures1024"), 3);
-
-            // LOD cross-fade band: full-detail chunks dissolve into the horizon over [RD - FadeBandWidth, RD].
-            // Disabled (start past the far plane) when the horizon is dormant, so chunks never fade into nothing.
-            var uFadeMode = shader.GetUniformLocation("uFadeMode");
             var fadeActive = _lodRenderDistance > RenderDistance;
-            GL.Uniform3(shader.GetUniformLocation("uCameraPos"), camera.Position.X, camera.Position.Y, camera.Position.Z);
-            GL.Uniform1(shader.GetUniformLocation("uFadeStart"), fadeActive ? RenderDistance - FadeBandWidth : 1e9f);
-            GL.Uniform1(shader.GetUniformLocation("uFadeEnd"), fadeActive ? RenderDistance : 1e9f + 1f);
+            var fadeStart = fadeActive ? RenderDistance - FadeBandWidth : 1e9f;
+            var fadeEnd = fadeActive ? RenderDistance : 1e9f + 1f;
 
-            GlTextureUploader.Bind();
-            Samplers.BindBlockTextureSampler();
+            _geoOpaqueUbo.QueueWriteStruct(new GeoParams
+                { FadeStart = fadeStart, FadeEnd = fadeEnd, FadeMode = 0, Cutoff = 1 });
+            _geoLodUbo.QueueWriteStruct(new GeoParams
+                { FadeStart = fadeStart, FadeEnd = fadeEnd, FadeMode = 1, Cutoff = 1 });
+            _geoTransparentUbo.QueueWriteStruct(new GeoParams
+                { FadeStart = 1e9f, FadeEnd = 1e9f + 1f, FadeMode = 0, Cutoff = 0 });
+        }
 
-            // Draw all opaque chunk geometry (incl. the opaque faces of transparent chunks) front-to-back in
-            // ONE batched multidraw over the shared arena (positions are baked world-space → no per-chunk matrix).
-            // uFadeMode 0 = these near chunks fade OUT across the band.
-            GL.Uniform1(uFadeMode, 0);
-            GraphicsDebug.PushGroup("Opaque");
-            world.OpaqueArena.Draw(_chunksToDraw, false);
-            GraphicsDebug.PopGroup();
-
-            // Phase-2 distant horizon: draw the LOD ring UNDER the real chunks — DepthFunc.Less means an
-            // already-drawn (nearer) real chunk wins, so the inner overlap is hidden and the streaming frontier
-            // never holes or double-images. Same shader + G-buffer, just coarse baked-light geometry past the
-            // render distance. Restore Lequal so RenderState's tracked state stays consistent.
-            if (_lodToDraw.Count > 0)
+        /// <summary>Resolves the sun shadow at half resolution: a fullscreen triangle runs the 12-tap PCF (moved
+        /// out of composition) per half-res pixel, writing the shadow factor + normalized depth that composition
+        /// depth-aware-upsamples. Reads the G-buffer normal/depth/light + the shadow depth map.</summary>
+        private static unsafe void DrawShadowResolve(Camera camera, Matrix4 viewProjectionInv, float sunFade)
+        {
+            var encoder = Renderer.Encoder;
+            _shadowResolveUbo.QueueWriteStruct(new ShadowResolveParams
             {
-                GraphicsDebug.PushGroup("LodHorizon");
-                GL.Uniform1(uFadeMode, 1);   // LOD fades IN across the band (complementary to the chunks)
-                GL.DepthFunc(DepthFunction.Less);
-                world.LodArena.Draw(_lodToDraw, false);
-                GL.DepthFunc(DepthFunction.Lequal);
-                GL.Uniform1(uFadeMode, 0);   // restore for the transparent chunk pass (near → no fade)
-                GraphicsDebug.PopGroup();
-            }
-
-            RenderState.Set(new GlState
-            {
-                CullFace = true, DepthTest = true, DepthFunc = DepthFunction.Lequal,
-                Blend = true, BlendFunc = (BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha)
+                ViewProjectionInv = MatrixConvert.ToGpu(viewProjectionInv),
+                View = MatrixConvert.ToGpu(camera.View),
+                LightViewProj = MatrixConvert.ToGpu(_lightViewProj),
+                ShadowTexel = _shadowTexelWorld,
+                ShadowDistance = ShadowDistance,
+                SunFade = sunFade,
+                ShadowsEnabled = GraphicsSettings.ShadowsEnabled ? 1f : 0f,
+                ShadowSoftness = ShadowSoftness,
+                ShadowMapTexel = 1f / _shadowMapSize,
             });
-            // Blend only the diffuse attachment (translucency); the normal+light attachments must be written
-            // cleanly by the front-most transparent surface so the water flag (normal.w) and the surface's own
-            // light survive instead of blending toward the background and becoming unreadable in composition.
-            // Restored right after so RenderState's single Blend bool stays the whole per-buffer description.
-            GL.Disable(IndexedEnableCap.Blend, 1);
-            GL.Disable(IndexedEnableCap.Blend, 2);
-            GL.Uniform1(uCutoff, 0);
 
-            //Draw transparent blocks back to front (per-chunk: each needs its own back-to-front face sort)
-            GraphicsDebug.PushGroup("Transparent");
-            foreach (var chunk in _transparentChunks)
-                chunk.DrawTransparent();
-            GraphicsDebug.PopGroup();
-
-            GL.Enable(IndexedEnableCap.Blend, 1);
-            GL.Enable(IndexedEnableCap.Blend, 2);
-
-            RenderState.Set(new GlState {CullFace = true, DepthTest = true, DepthFunc = DepthFunction.Lequal});
-
-            GraphicsDebug.PushGroup("Overlays");
-            EntityRenderer.Render(world, camera, projection);
-            BlockEntityRenderer.Render(world, camera, projection);
-            PlayerController.Render(camera, projection);
-            ChunkBorderRenderer.Render(camera, projection);
-            // Last: it compresses depth so the first-person viewmodel sits on top of the world.
-            HeldItemRenderer.Render(world, camera, projection);
-            GraphicsDebug.PopGroup();
-
-            ClientResources.GeometryFramebuffer.Unbind(ClientResources.Window.FramebufferSize.X, ClientResources.Window.FramebufferSize.Y);
-            GraphicsDebug.PopGroup();
-        }
-
-        private static void DrawLightFramebuffer(WorldServer world, Matrix4 viewProjectionInv, Frustum viewFrustum)
-        {
-            //TODO: Lighting?
-
-            /*
-            GL.Disable(EnableCap.DepthTest);
-            GL.Disable(EnableCap.CullFace);
-            GL.Enable(EnableCap.Blend);
-            GL.BlendFunc(BlendingFactorSrc.One, BlendingFactorDest.One);
-
-            ClientResources.LightFramebuffer.Bind();
-            ClientResources.LightFramebuffer.Clear(Color4.Black);
-
-            ClientResources.PointLightShader.Bind();
-            GL.UniformMatrix4(0, false, ref viewProjectionInv);
-
-            
-            foreach (var light in world.Lights.Select(light => light as PointLight))
+            if (_shadowResolveTexBind == null)
             {
-                if (light == null || !viewFrustum.SpehereIntersection(light.Position, light.Range)) continue;
-                GL.Uniform3(4, light.Position);
-                GL.Uniform3(5, light.Color);
-                GL.Uniform1(6, light.Range);
-                ClientResources.ScreenRectVao.Draw();
+                var gbuffer = ClientResources.GBuffer;
+                _shadowResolveTexBind = new GpuBindGroup(_shadowResolveTexLayout, new[]
+                {
+                    GpuBindGroup.Texture(0, gbuffer.Normal.View),
+                    GpuBindGroup.Texture(1, gbuffer.Depth.View),
+                    GpuBindGroup.Texture(2, gbuffer.Light.View),
+                    GpuBindGroup.Texture(3, _shadowMap.View),
+                    GpuBindGroup.Sampler(4, GpuSamplers.Framebuffer),
+                    GpuBindGroup.Sampler(5, GpuSamplers.ShadowCompare),
+                }, "shadowResolveTex");
             }
-            
-            ClientResources.LightFramebuffer.Unbind(Program.Window.FramebufferSize.X, Program.Window.FramebufferSize.Y);
 
-            GL.Disable(EnableCap.Blend);
-            */
+            var color = ColorAttachment.ClearTo(_shadowResolve.View, 0, 0, 0, 1);
+            var pass = RenderPassBuilder.Begin(encoder, stackalloc[] { color });
+            pass.SetPipeline(_shadowResolvePipeline);
+            pass.SetBindGroup(0, _shadowResolveParamsBind);
+            pass.SetBindGroup(1, _shadowResolveTexBind);
+            pass.Draw(3);
+            pass.End();
+            pass.Release();
         }
 
-        /// <summary>Resolves the sun shadow at HALF resolution into <see cref="ClientResources.
-        /// ShadowResolveFramebuffer"/>: a fullscreen quad runs the 12-tap PCF (moved out of the composition
-        /// pass) per half-res pixel, writing the shadow factor + normalized depth. Composition then
-        /// depth-aware-upsamples it. This trades the full-res PCF (~45% of the GPU frame) for a quarter-count
-        /// PCF + a cheap upsample. Reads the G-buffer normal/depth/light + the shadow depth map.</summary>
-        private static void DrawShadowResolve(Camera camera, Matrix4 viewProjectionInv, float sunFade)
+        /// <summary>Composes the G-buffer + baked light + resolved sun shadow into the HDR scene, draws the
+        /// procedural sky for background pixels, shades water, and fogs into the horizon. All the day/night
+        /// colours + matrices + sky/fog/water uniforms go into the 320-byte CompositionParams UBO.</summary>
+        private static unsafe void DrawComposition(Camera camera, Matrix4 viewProjectionInv, float sunFade,
+            bool shadowPass, bool lodActive)
         {
-            GraphicsDebug.PushGroup("ShadowResolve");
-            var fb = ClientResources.ShadowResolveFramebuffer;
-            fb.Bind();
-            // Fullscreen quad: no depth test, no culling.
-            RenderState.Set(new GlState {CullFace = false, DepthTest = false});
+            var encoder = Renderer.Encoder;
 
-            ClientResources.GeometryFramebuffer.BindTexturesAndSamplers();
-            ClientResources.ShadowFramebuffer.BindDepthTexture(TextureUnit.Texture4);
-            var sh = ClientResources.ShadowResolveShader;
-            sh.Bind();
-            GL.Uniform1(sh.GetUniformLocation("uNormal"), 1);
-            GL.Uniform1(sh.GetUniformLocation("uDepth"), 2);
-            GL.Uniform1(sh.GetUniformLocation("uLight"), 3);
-            GL.Uniform1(sh.GetUniformLocation("uShadowMap"), 4);
-            GL.UniformMatrix4(sh.GetUniformLocation("uViewProjectionInv"), false, ref viewProjectionInv);
-            GL.UniformMatrix4(sh.GetUniformLocation("uView"), false, ref camera.View);
-            GL.UniformMatrix4(sh.GetUniformLocation("uLightViewProj"), false, ref _lightViewProj);
-            GL.Uniform1(sh.GetUniformLocation("uShadowTexel"), _shadowTexelWorld);
-            GL.Uniform1(sh.GetUniformLocation("uShadowMapTexel"), 1f / _shadowMapSize);
-            GL.Uniform1(sh.GetUniformLocation("uShadowDistance"), ShadowDistance);
-            GL.Uniform1(sh.GetUniformLocation("uSunFade"), sunFade);
-            GL.Uniform1(sh.GetUniformLocation("uShadowSoftness"), ShadowSoftness);
-            GL.Uniform1(sh.GetUniformLocation("uShadowsEnabled"), GraphicsSettings.ShadowsEnabled ? 1f : 0f);
-            ClientResources.ScreenRectVao.Draw();
-
-            fb.Unbind(ClientResources.Window.FramebufferSize.X, ClientResources.Window.FramebufferSize.Y);
-            GraphicsDebug.PopGroup();
-        }
-
-        private static void DrawComposition(Camera camera, Matrix4 viewProjectionInv, float sunFade)
-        {
-            GraphicsDebug.PushGroup("Composition");
-            GL.ClearColor(Color4.DarkBlue);
-            GL.Clear(ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit | ClearBufferMask.ColorBufferBit);
-
-            //GL.Enable(EnableCap.Blend);
-
-            // BindTexturesAndSamplers binds the geometry light buffer (baked block lighting) to
-            // unit 3, so the separate deferred LightFramebuffer is no longer bound here.
-            ClientResources.GeometryFramebuffer.BindTexturesAndSamplers();
-            // Resolved half-res sun shadow on unit 4 (units 0-3 are the G-buffer). Sampled with texelFetch, so
-            // clear any sampler object on the unit. uSunFade (0..1) scales the whole directional sun term and
-            // gates shadow sampling; it is 0 when the sun is down (the shadow passes were skipped) so the
-            // shader treats everything as lit-by-block-light-and-ambient and never reads the stale buffer.
-            GL.ActiveTexture(TextureUnit.Texture4);
-            GL.BindTexture(TextureTarget.Texture2D, ClientResources.ShadowResolveFramebuffer.Texture.Id);
-            GL.BindSampler(4, 0);
-            var comp = ClientResources.CompositionShader;
-            comp.Bind();
-            GL.Uniform1(comp.GetUniformLocation("uDiffuse"), 0);
-            GL.Uniform1(comp.GetUniformLocation("uNormal"), 1);
-            GL.Uniform1(comp.GetUniformLocation("uDepth"), 2);
-            GL.Uniform1(comp.GetUniformLocation("uLight"), 3);
-            GL.Uniform1(comp.GetUniformLocation("uShadowResolved"), 4);
-            GL.Uniform1(comp.GetUniformLocation("uShadowDistance"), ShadowDistance);
-            GL.UniformMatrix4(comp.GetUniformLocation("uViewProjectionInv"), false, ref viewProjectionInv);
-            GL.UniformMatrix4(comp.GetUniformLocation("uView"), false, ref camera.View);
-            GL.Uniform1(comp.GetUniformLocation("uSunFade"), sunFade);
-            GL.Uniform1(comp.GetUniformLocation("uShadowStrength"), ShadowStrength);
-            // When shadows are disabled the resolve pass is skipped, leaving a stale buffer bound; this tells
-            // the shader to treat every sky-lit surface as fully lit instead of sampling that stale buffer.
-            GL.Uniform1(comp.GetUniformLocation("uShadowsEnabled"), GraphicsSettings.ShadowsEnabled ? 1f : 0f);
-            GL.Uniform1(comp.GetUniformLocation("uDebugShadow"), RenderDebug.ShadowFactor ? 1f : 0f);
-            GL.Uniform3(comp.GetUniformLocation("uMinLight"), GraphicsSettings.Brightness,
-                GraphicsSettings.Brightness, GraphicsSettings.Brightness);
-            // Minimum light a dimension floods everywhere (0 in the Overworld; a small glow in a sunless one so
-            // unlit ground isn't pitch black). Applied generically in the composition shader.
-            GL.Uniform3(comp.GetUniformLocation("uAmbientFloor"), _ambientFloor.X, _ambientFloor.Y, _ambientFloor.Z);
-            var sun = SunColor();
-            GL.Uniform3(comp.GetUniformLocation("uSunColor"), sun.X, sun.Y, sun.Z);
-            var skyAmbient = SkyAmbient();
-            GL.Uniform3(comp.GetUniformLocation("uSkyAmbient"), skyAmbient.X, skyAmbient.Y, skyAmbient.Z);
-            // Camera position + sun direction + a wrapped wave-scroll time. Shared by the background sky (the
-            // view-ray reconstruction) and the water surface (Fresnel sky reflection + sun specular + animated
-            // normals reconstruct the view vector from the same uniforms). uTime wraps at 3600 s for precision.
-            var toSun = SunDirection();
-            GL.Uniform3(comp.GetUniformLocation("uCameraPos"), camera.Position.X, camera.Position.Y, camera.Position.Z);
-            GL.Uniform3(comp.GetUniformLocation("uSunDirection"), toSun.X, toSun.Y, toSun.Z);
-            GL.Uniform1(comp.GetUniformLocation("uTime"), (float) (_dayTimeSeconds % 3600.0));
-            // Night-time moon glint on water: the moon sits opposite the sun, so it fades in (uMoonFade) as the
-            // sun drops below the horizon, mirroring uSunFade for the day. The cool tint is the moonlight colour
-            // the water specular reflects (the sun's own specular is gated to daytime by uSunFade).
-            GL.Uniform1(comp.GetUniformLocation("uMoonFade"), SunFade(-toSun.Y));
-            GL.Uniform3(comp.GetUniformLocation("uMoonColor"), 0.55f, 0.62f, 0.85f);
-
-            // Background sky: the gradient/sunset/sun/moon/stars are rendered procedurally per background pixel
-            // in the composition shader (no extra geometry, no remesh — same fullscreen pass) and water reflects
-            // the same SkyColor. All it needs are the time-of-day colours computed here and the pack sun/moon
-            // textures on units 5/6.
-            var skyColor = SkyZenithColor();
-            GL.Uniform3(comp.GetUniformLocation("uSkyColor"), skyColor.X, skyColor.Y, skyColor.Z);
-            var horizon = SkyHorizonColor();
-            GL.Uniform3(comp.GetUniformLocation("uHorizonColor"), horizon.X, horizon.Y, horizon.Z);
-            var voidColor = SkyVoidColor();
-            GL.Uniform3(comp.GetUniformLocation("uVoidColor"), voidColor.X, voidColor.Y, voidColor.Z);
-            var sunset = SunsetColor();
-            GL.Uniform3(comp.GetUniformLocation("uSunsetColor"), sunset.X, sunset.Y, sunset.Z);
-            GL.Uniform1(comp.GetUniformLocation("uStarBrightness"), StarBrightness());
-            GL.Uniform1(comp.GetUniformLocation("uSunSize"), SunSize);
-            GL.Uniform1(comp.GetUniformLocation("uMoonSize"), MoonSize);
             // Far-plane (sky) vs terrain split + distance fog. When the Phase-2 LOD horizon is active the drawn
-            // geometry reaches LodRenderDistance (well past RenderDistance), so the sky-distance threshold and
-            // the fog band move out to that horizon — otherwise the LOD ring would be painted as sky (depth ≥
-            // uSkyDistance) or fully fogged out. The fog melts the coarse far ring into uHorizonColor right
-            // before the sky takes over, hiding the LOD edge. Dormant LOD ⇒ this is just RenderDistance as before.
-            var horizonDistance = _lodRenderDistance > RenderDistance ? _lodRenderDistance : RenderDistance;
-            GL.Uniform1(comp.GetUniformLocation("uSkyDistance"), horizonDistance + 48f);
-            GL.Uniform1(comp.GetUniformLocation("uFogStart"), horizonDistance * 0.72f);
-            GL.Uniform1(comp.GetUniformLocation("uFogEnd"), horizonDistance * 0.97f);
+            // geometry reaches LodRenderDistance, so the sky-distance threshold and the fog band move out to that
+            // horizon (else the LOD ring would be painted as sky or fully fogged out). Dormant LOD ⇒ RenderDistance.
+            var horizonDistance = lodActive ? _lodRenderDistance : RenderDistance;
+            var toSun = SunDirection();
 
-            // Underwater murk: fog the whole scene (and the sky) into the water colour over a short distance.
-            GL.Uniform1(comp.GetUniformLocation("uUnderwater"), _underwater ? 1f : 0f);
-            GL.Uniform3(comp.GetUniformLocation("uUnderwaterColor"), _underwaterColor.X, _underwaterColor.Y,
-                _underwaterColor.Z);
+            _compositionUbo.QueueWriteStruct(new CompositionParams
+            {
+                ViewProjectionInv = MatrixConvert.ToGpu(viewProjectionInv),
+                View = MatrixConvert.ToGpu(camera.View),
+                SunColor = SunColor(),
+                ShadowDistance = ShadowDistance,
+                SkyAmbient = SkyAmbient(),
+                SunFade = sunFade,
+                MinLight = new Vector3(GraphicsSettings.Brightness, GraphicsSettings.Brightness, GraphicsSettings.Brightness),
+                ShadowStrength = ShadowStrength,
+                // Minimum light a dimension floods everywhere (0 in the Overworld; a small glow in a sunless one
+                // so unlit ground isn't pitch black). Applied generically in the composition shader.
+                AmbientFloor = _ambientFloor,
+                // When shadows are disabled / not run this frame the resolve pass is skipped, leaving a stale
+                // buffer; tell the shader to treat every sky-lit surface as fully lit, never sampling that buffer.
+                ShadowsEnabled = (GraphicsSettings.ShadowsEnabled && shadowPass) ? 1f : 0f,
+                CameraPos = camera.Position,
+                DebugShadow = RenderDebug.ShadowFactor ? 1f : 0f,
+                SunDirection = toSun,
+                Time = (float) (_dayTimeSeconds % 3600.0),
+                // Night-time moon glint on water: the moon sits opposite the sun, so it fades in as the sun
+                // drops below the horizon (SunFade(-toSun.Y)), mirroring the sun's day fade.
+                MoonColor = new Vector3(0.55f, 0.62f, 0.85f),
+                MoonFade = SunFade(-toSun.Y),
+                SkyColor = SkyZenithColor(),
+                StarBrightness = StarBrightness(),
+                HorizonColor = SkyHorizonColor(),
+                SunSize = SunSize,
+                VoidColor = SkyVoidColor(),
+                MoonSize = MoonSize,
+                SunsetColor = SunsetColor(),
+                SkyDistance = horizonDistance + 48f,
+                FogStart = horizonDistance * 0.72f,
+                FogEnd = horizonDistance * 0.97f,
+                Underwater = _underwater ? 1f : 0f,
+                UnderwaterColor = _underwaterColor,
+            });
 
-            GL.Uniform1(comp.GetUniformLocation("uSunTexture"), 5);
-            GL.Uniform1(comp.GetUniformLocation("uMoonTexture"), 6);
-            GL.ActiveTexture(TextureUnit.Texture5);
-            GL.BindTexture(TextureTarget.Texture2D, (SunTexture ?? ClientResources.WhitePixel).Id);
-            Samplers.BindCelestialSampler(5);
-            GL.ActiveTexture(TextureUnit.Texture6);
-            GL.BindTexture(TextureTarget.Texture2D, (MoonTexture ?? ClientResources.WhitePixel).Id);
-            Samplers.BindCelestialSampler(6);
+            if (_compositionTexBind == null)
+            {
+                var gbuffer = ClientResources.GBuffer;
+                var sun = (SunTexture ?? ClientResources.WhitePixel).View;
+                var moon = (MoonTexture ?? ClientResources.WhitePixel).View;
+                _compositionTexBind = new GpuBindGroup(_compositionTexLayout, new[]
+                {
+                    GpuBindGroup.Texture(0, gbuffer.Diffuse.View),
+                    GpuBindGroup.Texture(1, gbuffer.Normal.View),
+                    GpuBindGroup.Texture(2, gbuffer.Depth.View),
+                    GpuBindGroup.Texture(3, gbuffer.Light.View),
+                    GpuBindGroup.Texture(4, _shadowResolve.View),
+                    GpuBindGroup.Texture(5, sun),
+                    GpuBindGroup.Texture(6, moon),
+                    GpuBindGroup.Sampler(7, GpuSamplers.Framebuffer),
+                    GpuBindGroup.Sampler(8, GpuSamplers.Celestial),
+                }, "compositionTex");
+            }
 
-            ClientResources.ScreenRectVao.Draw();
-            GraphicsDebug.PopGroup();
-
-            //GL.Disable(EnableCap.Blend);
+            // Composition writes every pixel (background sky included), so the load op is irrelevant — clear.
+            var color = ColorAttachment.ClearTo(Renderer.HdrScene.View, 0, 0, 0, 1);
+            var pass = RenderPassBuilder.Begin(encoder, stackalloc[] { color });
+            pass.SetPipeline(_compositionPipeline);
+            pass.SetBindGroup(0, _compositionParamsBind);
+            pass.SetBindGroup(1, _compositionTexBind);
+            pass.Draw(3);
+            pass.End();
+            pass.Release();
         }
     }
 }

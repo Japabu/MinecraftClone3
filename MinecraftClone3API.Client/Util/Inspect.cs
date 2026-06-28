@@ -6,7 +6,7 @@ using MinecraftClone3API.Client.Blocks;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Util
 {
@@ -31,12 +31,12 @@ namespace MinecraftClone3API.Util
         public static int Height = 1080;
         public static int RenderDistanceChunks = 16;
         public static double FixedTimeOfDay = 220.0;
-        public static Vector3 OriginShift;   // diagnostic: anchor the poses this far from the world origin
+        public static Vector3D<float> OriginShift;   // diagnostic: anchor the poses this far from the world origin
 
         private struct Pose
         {
             public string Name;
-            public Vector3 Offset;  // from the spawn origin
+            public Vector3D<float> Offset;  // from the spawn origin
             public float Yaw;       // radians
             public float Pitch;     // radians
         }
@@ -47,14 +47,14 @@ namespace MinecraftClone3API.Util
         // pan. (A low horizontal look mostly framed sky + fog, which is why full==LOD there.)
         private static readonly Pose[] Poses =
         {
-            new Pose { Name = "terrain",   Offset = new Vector3(67, 42, 0),  Yaw = 0f,    Pitch = -0.32f },
-            new Pose { Name = "downrings", Offset = new Vector3(50, 58, 0),  Yaw = 0f,    Pitch = -0.55f },
-            new Pose { Name = "offaxis",   Offset = new Vector3(90, 44, 16), Yaw = 0.55f, Pitch = -0.34f },
+            new Pose { Name = "terrain",   Offset = new Vector3D<float>(67, 42, 0),  Yaw = 0f,    Pitch = -0.32f },
+            new Pose { Name = "downrings", Offset = new Vector3D<float>(50, 58, 0),  Yaw = 0f,    Pitch = -0.55f },
+            new Pose { Name = "offaxis",   Offset = new Vector3D<float>(90, 44, 16), Yaw = 0.55f, Pitch = -0.34f },
             // Phase-2: look OUT to the distant LOD horizon from up high (terrain should recede continuously into
             // fog far past the 256-block render distance, no hard chunk edge); and a high down-look across the
             // detail→LOD seam to check for holes / double-images.
-            new Pose { Name = "horizon",   Offset = new Vector3(0, 90, 0),   Yaw = 0f,    Pitch = -0.14f },
-            new Pose { Name = "farseam",   Offset = new Vector3(0, 150, 0),  Yaw = 0.4f,  Pitch = -0.42f },
+            new Pose { Name = "horizon",   Offset = new Vector3D<float>(0, 90, 0),   Yaw = 0f,    Pitch = -0.14f },
+            new Pose { Name = "farseam",   Offset = new Vector3D<float>(0, 150, 0),  Yaw = 0.4f,  Pitch = -0.42f },
         };
 
         private enum State { Stream, FullSettle, CaptureFull, LodSettle, CaptureLod, Advance, Done }
@@ -65,7 +65,7 @@ namespace MinecraftClone3API.Util
         private const double MinStateSeconds = 0.1;
         private const double StateTimeoutSeconds = 30.0;
 
-        private static Vector3 _origin;
+        private static Vector3D<float> _origin;
         private static int _poseIndex;
         private static State _state;
         private static int _lastLoaded = -1;
@@ -94,7 +94,7 @@ namespace MinecraftClone3API.Util
                     case "inspect-time": double.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out FixedTimeOfDay); break;
                     case "inspect-offset":
                         if (float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var off))
-                            OriginShift = new Vector3(off, 0, off);
+                            OriginShift = new Vector3D<float>(off, 0, off);
                         break;
                 }
             }
@@ -108,7 +108,7 @@ namespace MinecraftClone3API.Util
             WorldRenderer.FixedTimeOfDay = FixedTimeOfDay;
         }
 
-        public static void Begin(Vector3 origin)
+        public static void Begin(Vector3D<float> origin)
         {
             if (Active) return;
             _origin = origin;
@@ -131,13 +131,13 @@ namespace MinecraftClone3API.Util
             player.Position = pos;
             player.PrevPosition = pos;
             player.InterpolatedPosition = pos;
-            player.Velocity = Vector3.Zero;
+            player.Velocity = Vector3D<float>.Zero;
             player.Yaw = pose.Yaw;
             player.Pitch = pose.Pitch;
             player.Rotate(0, 0);
         }
 
-        /// <summary>State machine + captures. Main-thread GL (called from the render loop after the frame is
+        /// <summary>State machine + captures. Main-thread GPU (called from the render loop after the frame is
         /// drawn, before SwapBuffers). Drives the per-pose settle → full-detail capture → LOD capture → diff.</summary>
         public static void Tick(int fbWidth, int fbHeight)
         {

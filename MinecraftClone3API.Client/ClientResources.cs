@@ -1,118 +1,58 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
+using MinecraftClone3API.Client.Graphics;
+using MinecraftClone3API.Client.Input;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
-using OpenTK.Windowing.Desktop;
-using OpenTK.Windowing.GraphicsLibraryFramework;
+using Silk.NET.Windowing;
 
 namespace MinecraftClone3API.Client
 {
+    /// <summary>
+    /// The client's window + input + shared-render-resource hub. Holds the Silk.NET window and the
+    /// <see cref="InputManager"/> (the engine reads input from <c>ClientResources.Input</c> rather than
+    /// threading it through state methods), the deferred <see cref="GBufferTargets"/>, and the small shared
+    /// textures. The renderer's pipelines/HDR target live in <see cref="Renderer"/>; per-world targets
+    /// (shadow map/resolve) live in <see cref="WorldRenderer"/>.
+    /// </summary>
     public static class ClientResources
     {
         private const string PluginDir = "System/";
 
-        public static GameWindow Window;
+        public static IWindow Window;
+        public static InputManager Input;
 
-        public static GeometryFramebuffer GeometryFramebuffer;
-        public static TextureFramebuffer LightFramebuffer;
-        public static ShadowFramebuffer ShadowFramebuffer;
-        // Half-resolution resolved sun shadow (the shadow PCF runs into this, then composition upsamples).
-        public static TextureFramebuffer ShadowResolveFramebuffer;
+        public static GBufferTargets GBuffer;
 
-        public static Shader WorldGeometryShader;
-        public static Shader EntityGeometryShader;
-        public static Shader CompositionShader;
-        public static Shader PointLightShader;
-        public static Shader BlockOutlineShader;
-        public static Shader BlockBreakShader;
-        public static Shader SpriteShader;
-        public static Shader ItemIconShader;
-        public static Shader ShadowDepthShader;
-        public static Shader ShadowResolveShader;
-
-        public static SpriteVertexArrayObject ScreenRectVao;
-
-        public static Texture LoadingTexture;
         public static Texture WhitePixel;
 
-        public static readonly Dictionary<Keys, string> Keybindings = new Dictionary<Keys, string>();
+        public static int Width => Window.FramebufferSize.X;
+        public static int Height => Window.FramebufferSize.Y;
 
-        public static void Load(GameWindow window)
+        public static void Load(IWindow window, InputManager input)
         {
             Window = window;
+            Input = input;
 
-            ResizeFrameBuffers();
-            Window.Resize += args => ResizeFrameBuffers();
+            Renderer.Load(Width, Height, ResourceReader.ReadString);
+            GBuffer = new GBufferTargets(Width, Height);
+            ScaledResolution.Update();
 
-            WorldGeometryShader = GlResources.ReadShader(PluginDir + "Shaders/WorldGeometry");
-            EntityGeometryShader = GlResources.ReadShader(PluginDir + "Shaders/EntityGeometry");
-            CompositionShader = GlResources.ReadShader(PluginDir + "Shaders/Composition");
-            PointLightShader = GlResources.ReadShader(PluginDir + "Shaders/PointLight");
-            BlockOutlineShader = GlResources.ReadShader(PluginDir + "Shaders/BlockOutline");
-            BlockBreakShader = GlResources.ReadShader(PluginDir + "Shaders/BlockBreak");
-            SpriteShader = GlResources.ReadShader(PluginDir + "Shaders/Sprite");
-            ItemIconShader = GlResources.ReadShader(PluginDir + "Shaders/ItemIcon");
-            ShadowDepthShader = GlResources.ReadShader(PluginDir + "Shaders/ShadowDepth");
-            ShadowResolveShader = GlResources.ReadShader(PluginDir + "Shaders/ShadowResolve");
+            Window.FramebufferResize += OnFramebufferResize;
 
-            // Fixed-size shadow map (not window-sized), so created once here rather than in ResizeFrameBuffers.
-            ShadowFramebuffer = new ShadowFramebuffer(ShadowFramebuffer.ShadowMapSize);
-
-            ScreenRectVao = new SpriteVertexArrayObject();
-            ScreenRectVao.Add(new Vector2(-1, +1), Vector2.Zero, Vector3.Zero);
-            ScreenRectVao.Add(new Vector2(+1, +1), Vector2.Zero, Vector3.Zero);
-            ScreenRectVao.Add(new Vector2(-1, -1), Vector2.Zero, Vector3.Zero);
-            ScreenRectVao.Add(new Vector2(+1, -1), Vector2.Zero, Vector3.Zero);
-            ScreenRectVao.AddFace(new uint[] {0, 2, 1, 1, 2, 3});
-            ScreenRectVao.Upload();
-
-            Samplers.Load();
-
-            WhitePixel = new Texture(new TextureData(new byte[] {255, 255, 255, 255}, 1, 1));
+            WhitePixel = new Texture(new TextureData(new byte[] { 255, 255, 255, 255 }, 1, 1));
 
             CommonResources.MissingModel = ResourceReader.ReadBlockModel("System/Models/MissingModel.json");
             CommonResources.MissingTexture = ResourceReader.ReadBlockTexture("System/Textures/Blocks/MissingTexture.png");
-
-            //TODO: Remove
-
-            if (File.Exists(GamePaths.KeybindingsFile))
-            {
-                var lines = File.ReadAllLines(GamePaths.KeybindingsFile);
-                foreach (var line in lines)
-                {
-                    var splits = line.Split('=');
-
-                    if (splits.Length != 2) continue;
-
-                    if (Enum.TryParse(splits[0], true, out Keys key))
-                    {
-                        Keybindings.Add(key, splits[1]);
-                    }
-                }
-            }
-            else
-            {
-                Logger.Error($"Keybindings file \"{GamePaths.KeybindingsFile}\" was not found!");
-            }
         }
 
-        private static void ResizeFrameBuffers()
+        private static void OnFramebufferResize(Vector2i size)
         {
-            GeometryFramebuffer?.Dispose();
-            GeometryFramebuffer = new GeometryFramebuffer(Window.FramebufferSize.X, Window.FramebufferSize.Y);
-
-            LightFramebuffer?.Dispose();
-            LightFramebuffer = new TextureFramebuffer(Window.FramebufferSize.X, Window.FramebufferSize.Y, false);
-
-            // Half the framebuffer resolution (rounded up): the resolved sun shadow runs the shadow PCF at
-            // quarter the pixel count, then the composition pass depth-aware-upsamples it back to full res.
-            ShadowResolveFramebuffer?.Dispose();
-            ShadowResolveFramebuffer = new TextureFramebuffer(
-                Math.Max(1, (Window.FramebufferSize.X + 1) / 2),
-                Math.Max(1, (Window.FramebufferSize.Y + 1) / 2), false);
+            Renderer.Resize(size.X, size.Y);
+            GBuffer?.Resize(size.X, size.Y);
+            ScaledResolution.Update();
         }
     }
 }

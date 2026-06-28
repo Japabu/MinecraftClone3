@@ -1,8 +1,7 @@
 using MinecraftClone3API.Client.Graphics;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.Util;
-using OpenTK.Graphics.OpenGL4;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Client.GUI
 {
@@ -18,12 +17,6 @@ namespace MinecraftClone3API.Client.GUI
 
         public static void Render()
         {
-            RenderState.Set(new GlState
-            {
-                Blend = true,
-                BlendFunc = (BlendingFactor.OneMinusDstColor, BlendingFactor.OneMinusSrcColor)
-            });
-
             var s = Size * Scale;
             var x = ((int) ScaledResolution.GuiResolution.X - s) / 2;
             var y = ((int) ScaledResolution.GuiResolution.Y - s) / 2;
@@ -31,7 +24,8 @@ namespace MinecraftClone3API.Client.GUI
             var crosshair = GuiAssets.Get(GuiAssets.Crosshair);
             if (crosshair != null)
             {
-                GuiRenderer.DrawTexture(crosshair, Rectangle.FromSize(x, y, s, s), null);
+                GuiRenderer.DrawTexture(crosshair, Rectangle.FromSize(x, y, s, s), null,
+                    new Vector4D<float>(1f, 1f, 1f, 1f), true, invert: true);
                 return;
             }
 
@@ -43,10 +37,11 @@ namespace MinecraftClone3API.Client.GUI
             var thickness = Scale;
             var cx = x + (s - thickness) / 2;
             var cy = y + (s - thickness) / 2;
+            var white = new Vector4D<float>(1f, 1f, 1f, 1f);
             GuiRenderer.DrawTexture(ClientResources.WhitePixel,
-                Rectangle.FromSize(cx, y, thickness, s), null, Color4.White);
+                Rectangle.FromSize(cx, y, thickness, s), null, white, true, invert: true);
             GuiRenderer.DrawTexture(ClientResources.WhitePixel,
-                Rectangle.FromSize(x, cy, s, thickness), null, Color4.White);
+                Rectangle.FromSize(x, cy, s, thickness), null, white, true, invert: true);
         }
     }
 }

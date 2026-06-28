@@ -1,6 +1,8 @@
 # CLAUDE.md
 
-A from-scratch Minecraft-like voxel engine in C# on OpenTK (OpenGL). Custom deferred renderer with a
+A from-scratch Minecraft-like voxel engine in C# on WebGPU (Silk.NET.WebGPU → wgpu-native → Metal on macOS,
+Vulkan on Linux, D3D12 on Windows; windowing/input via Silk.NET). Custom GPU-driven deferred renderer (a
+compute shader frustum/distance-culls chunks into an indirect-multidraw buffer) with HDR + reverse-Z, a
 Distant-Horizons-style far-terrain LOD horizon, plugin system, chunked world with RGB block-light +
 sky-light propagation and a dynamic day/night cycle, a
 plugin-extensible world generator (biomes, ores, trees, caves, oceans), player movement (MC-exact walking +
@@ -21,36 +23,40 @@ in-process server over a loopback connection; multiplayer connects to a dedicate
 
 ```
 MinecraftClone3.sln
-├── MinecraftClone3API        Core engine library — GL-FREE. The headless server links only this.
+├── MinecraftClone3API        Core engine library — GPU-FREE (no graphics API; Silk.NET.Maths only). Server links only this.
 │   ├── Blocks/               WorldBase, WorldServer, Chunk (storage), CachedChunk, Block, LightLevel, PaletteStorage
 │   ├── Entities/             Entity, EntityPlayer, PlayerPhysics (NOT PlayerController — that's client input)
-│   ├── Graphics/             GL-free CPU model/mesh data: BlockModel, BlockStateDefinition, BlockTexture,
+│   ├── Graphics/             GPU-free CPU model/mesh data: BlockModel, BlockStateDefinition, BlockTexture,
 │   │                         TextureData, MeshBuffer, BlockTextureManager (CPU half), VaoBufferPool
-│   ├── IO/                   GamePaths, WorldManager (+WorldInfo), FileSystem*, ResourceReader (GL-free), CommonResources
+│   ├── IO/                   GamePaths, WorldManager (+WorldInfo), FileSystem*, ResourceReader (GPU-free), CommonResources
 │   ├── Networking/           IConnection, Packet(s), Loopback/Tcp connections, ServerNetwork, ClientSession
 │   ├── Plugins/              PluginManager, IPlugin, PluginContext
 │   ├── WorldGen/             Dimension, Biome, Feature, Carver, BiomeSource, NoiseChunkGenerator, region, RNG
 │   └── Util/                 GameRegistry, BlockRegistry, ChunkMesher, WorldSerializer, OpenSimplexNoise, Profiler, ClientFrameStats
-├── MinecraftClone3API.Client Client renderer library (needs a GL context). References Core.
+├── MinecraftClone3API.Client Client renderer library (needs a GPU + window). References Core.
 │   ├── Blocks/               WorldClient (client world replica)
-│   ├── Graphics/             WorldRenderer, ChunkRenderData, EntityRenderer, VAOs, Camera, RenderDebug,
-│   │                         GlResources/GlTextureUploader (GL halves of the resource readers)
+│   ├── Graphics/             WorldRenderer, Renderer (frame conductor), ChunkRenderData, ChunkMeshArena + ChunkCuller
+│   │                         (GPU-driven cull), EntityRenderer, Camera, RenderDebug, GlResources/BlockTextureUploader
+│   │                         (GPU halves of the resource readers)
+│   │   └── Rhi/              WebGPU wrappers (all `unsafe` Silk.NET.WebGPU interop): Gpu/GpuContext, GpuBuffer,
+│   │                         GpuTexture/GpuSampler, GpuShaderModule, Gpu{Render,Compute}Pipeline, bind groups, passes
 │   ├── GUI/                  GuiBase, GuiButton, GuiSlider, GuiTextInput, Font, widgets
 │   ├── StateSystem/          StateEngine, StateBase, GuiBase
 │   ├── Entities/             PlayerController (client input/camera), ClientProfiling (per-frame sampler)
 │   └── Util/                 Benchmark, Inspect
-├── MinecraftClone3           Client executable (OpenTK GameWindow, ~120 Hz). Owns Program + States/. Links Client.
-├── MinecraftClone3Server     Dedicated headless server executable (no GL). Links Core only.
+├── MinecraftClone3           Client executable (Silk.NET window + input, ~120 Hz). Owns Program + States/. Links Client.
+├── MinecraftClone3Server     Dedicated headless server executable (no GPU). Links Core only.
 └── VanillaPlugin             Content plugin: blocks (Stone, Sand, OakLog, Water, ores, ...) + the Overworld
                               dimension, biomes, ore/tree features (VanillaPlugin/WorldGen/). Links Client (GUI blocks).
 ```
 
 `MinecraftClone3` and `MinecraftClone3Server` are thin shells; nearly everything is in the two API libraries.
-**The Core/Client split makes the "server code must not touch GL" rule compiler-enforced**: Core is GL-free
-(OpenTK *math* only), the GL renderer lives in `MinecraftClone3API.Client`, and the server links only Core —
-so a server-reachable path that reaches for GL/window state now fails to compile rather than crashing at run
-time. Core grants `[InternalsVisibleTo("MinecraftClone3API.Client")]` so the renderer keeps using Core
-internals (mesher, chunk codec); this is one-way (Core never sees Client, the server never gets the grant).
+**The Core/Client split makes the "server code must not touch the GPU" rule compiler-enforced**: Core is
+GPU-free (Silk.NET.*Maths* only, no Silk.NET.WebGPU/Windowing/Input), the WebGPU renderer lives in
+`MinecraftClone3API.Client`, and the server links only Core — so a server-reachable path that reaches for
+GPU/window state now fails to compile rather than crashing at run time. Core grants
+`[InternalsVisibleTo("MinecraftClone3API.Client")]` so the renderer keeps using Core internals (mesher, chunk
+codec); this is one-way (Core never sees Client, the server never gets the grant).
 Both API assemblies keep the **same root namespaces** (`MinecraftClone3API.*`, incl. `MinecraftClone3API.Graphics`
 for the model-data types that physically moved to Core) — the assembly a file lives in is decoupled from its
 namespace, so moving a file across the boundary needs no `using` changes.
@@ -63,7 +69,7 @@ and don't rely on nullable annotations.
 
 ```bash
 dotnet build MinecraftClone3.sln -c Debug          # build everything
-dotnet run --project MinecraftClone3 -c Debug       # run the client (needs a DISPLAY / GL context)
+dotnet run --project MinecraftClone3 -c Debug       # run the client (needs a GPU + window)
 dotnet run --project MinecraftClone3Server -c Debug # run the dedicated server (headless, Ctrl-C to save+stop)
 ```
 
@@ -85,12 +91,13 @@ These are the cross-cutting rules you can break *without realizing it*. The full
 the linked doc; this is the short "don't violate this" list.
 
 **Threading & concurrency** (full: [docs/threading.md](docs/threading.md))
-- **GL only on the main thread.** Even *constructing* a `ChunkRenderData` is a GL call (`GL.GenVertexArray`).
-  Meshing (`ChunkRenderData.Update`) is CPU-only and runs on the mesh pool; render-data creation, `Upload`,
-  `Draw`, `Dispose` are main-thread.
+- **GPU work is on the main thread.** Meshing (`ChunkRenderData.Update`) is CPU-only on the mesh pool;
+  render-data `Upload`/`Draw`/`Dispose` and the per-frame surface + encoder + `Queue.Submit` are main-thread.
+  (The WebGPU queue + resource creation are thread-safe in wgpu-native, so moving chunk *upload* off the main
+  thread is a planned level-up — see `docs/known-issues.md` — but the current model is main-thread upload.)
 - **`ChunkRenderData.TryUpload()` is gated on `Updated` and must stay non-blocking** (`Monitor.TryEnter`, not
-  a blocking `Upload`). The mesh thread holds the VAO locks for a whole remesh; a blocking upload stalled the
-  render thread. Don't reintroduce one.
+  a blocking `Upload`). The mesh thread holds the opaque buffer + transparent-VAO locks for a whole remesh; a
+  blocking upload stalled the render thread. Don't reintroduce one.
 - **Per-`PaletteStorage`-container single writer + copy-on-grow** (full: [docs/world-model.md](docs/world-model.md)).
   A published storage's palette/bit-width are immutable; growth publishes a NEW storage via a `volatile`
   field. Each container (block ids / light / sky) has exactly one writer thread. **Never add a second writer.**
@@ -101,7 +108,7 @@ the linked doc; this is the short "don't violate this" list.
   (re-installing the plugin restores it). So adding/removing/reordering blocks/items never corrupts a world.
 
 **Architecture** (full: [docs/architecture.md](docs/architecture.md), [docs/world-model.md](docs/world-model.md))
-- **Storage vs. mesh are decoupled.** `Chunk` is pure GL-free storage (the headless server builds chunks);
+- **Storage vs. mesh are decoupled.** `Chunk` is pure GPU-free storage (the headless server builds chunks);
   the GPU mesh is a separate client-only `ChunkRenderData`. Don't merge them.
 - **One client path, two transports** — loopback (SP) / TCP (MP). Keep them behaviourally identical; only the
   in-process transport shortcuts serialization.
@@ -122,14 +129,18 @@ the linked doc; this is the short "don't violate this" list.
   / `PlayerSerializer.Version`) so old saves are cleanly rejected rather than misread. Writes are atomic
   (temp + rename); region `.rd` files self-compact to reclaim re-saved chunks; dirty chunks + players autosave
   on a timer (not only on unload/shutdown).
-- **OpenGL is capped at 4.1 Core / GLSL 4.10** (macOS limit): query uniform/sampler locations by name (no
-  `layout(binding=)` on uniforms); vertex-attribute/fragment-output locations *do* use `layout(location=)`.
-- **Block code that runs on the server must not touch client/GL/window state** (server-side light sim calls
-  `Block.GetLightLevel`; reading the keyboard there crashed `BlockTorch`). Mostly **compiler-enforced** now:
-  Core (which the server links) cannot reference the GL renderer or the ambient input/window/`RenderDebug`
-  statics — those live only in `MinecraftClone3API.Client`. The one residual gap is `Block`'s two client-only
-  virtuals (`GetPlacementMetadata(KeyboardState …)`, `OnActivated(GameWindow …)`), whose OpenTK *input* param
-  types Core still references; the server never invokes them.
+- **Shaders are WGSL; the renderer targets WebGPU via wgpu-native** (Metal on macOS). Reverse-Z with z ∈ [0,1]
+  clip (depth cleared to 0, compare `Greater`); matrices upload row-major straight into WGSL's column-major
+  (that copy *is* the transpose — see `Rhi/MatrixConvert`). `MultiDrawIndexedIndirectCount` and push constants
+  are wgpu-native extensions (feature-gated in `GpuFeatures`). Uniforms are grouped bind groups (group 0
+  per-frame, group 1 per-pass, group 2 textures/samplers) + push constants / dynamic-offset UBOs for per-draw;
+  UBO field layout follows WGSL std140 (`vec3`+`f32` packs to 16 B), so C# UBO structs must mirror it exactly.
+- **Block code that runs on the server must not touch client/GPU/window state** (server-side light sim calls
+  `Block.GetLightLevel`; reading the keyboard there crashed `BlockTorch`). **Fully compiler-enforced**: Core
+  (which the server links) cannot reference the WebGPU renderer or the ambient input/window/`RenderDebug`
+  statics — those live only in `MinecraftClone3API.Client`, and `Block`'s client-facing virtuals
+  (`GetPlacementMetadata`, `OnActivated`) now take only Core types (`EntityPlayer`/`BlockRaytraceResult`/
+  `WorldBase`), so no graphics/input type leaks into Core at all.
 
 ---
 
@@ -169,6 +180,6 @@ the linked doc; this is the short "don't violate this" list.
 | Items/registry, inventory, hotbar HUD, creative screen, 3D icons, crafting (recipes + 2x2/3x3) | [docs/inventory.md](docs/inventory.md) |
 | Resource cascade, plugin loading, resource packs, models/textures | [docs/resources.md](docs/resources.md) |
 | Reading 1:1 behavior/models/recipes out of the user's MC jar (assets + cfr-decompiling hardcoded Java) | [docs/minecraft-reference.md](docs/minecraft-reference.md) |
-| F1/F3/F4/F7/F10 debug keys, the profiler CSVs, dotnet-trace, RenderDoc | [docs/profiling.md](docs/profiling.md) |
+| F1/F3/F4/F7/F10 debug keys, the profiler CSVs, dotnet-trace, GPU frame capture | [docs/profiling.md](docs/profiling.md) |
 | Hot-path code — why it's shaped that way (**don't regress these**) | [docs/performance.md](docs/performance.md) |
 | Open work, deferred features, accepted limitations | [docs/known-issues.md](docs/known-issues.md) |

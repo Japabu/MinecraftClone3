@@ -3,8 +3,7 @@ using MinecraftClone3API.Client.Graphics;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.Util;
-using OpenTK.Graphics.OpenGL4;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Client.GUI
 {
@@ -23,12 +22,6 @@ namespace MinecraftClone3API.Client.GUI
         public static void Render(WorldClient world)
         {
             if (world.GameMode != GameMode.Survival || !world.StatsReceived) return;
-
-            RenderState.Set(new GlState
-            {
-                Blend = true,
-                BlendFunc = (BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha)
-            });
 
             // Sit the two rows just above the hotbar, aligned to its left/right edges.
             var barW = 182 * Scale;
@@ -70,11 +63,11 @@ namespace MinecraftClone3API.Client.GUI
 
         private static void DrawPlaceholder(Rectangle dest, float remaining, bool heart)
         {
-            GuiRenderer.DrawTexture(ClientResources.WhitePixel, dest, null, new Color4(0f, 0f, 0f, 0.4f));
+            GuiRenderer.DrawTexture(ClientResources.WhitePixel, dest, null, new Vector4D<float>(0f, 0f, 0f, 0.4f));
             if (remaining < 1f) return;
 
             var full = remaining >= 2f;
-            var color = heart ? new Color4(0.85f, 0.1f, 0.1f, 1f) : new Color4(0.6f, 0.4f, 0.15f, 1f);
+            var color = heart ? new Vector4D<float>(0.85f, 0.1f, 0.1f, 1f) : new Vector4D<float>(0.6f, 0.4f, 0.15f, 1f);
             var w = full ? IconSize - 4 : (IconSize - 4) / 2;
             GuiRenderer.DrawTexture(ClientResources.WhitePixel,
                 Rectangle.FromSize(dest.MinX + 2, dest.MinY + 2, w, IconSize - 4), null, color);

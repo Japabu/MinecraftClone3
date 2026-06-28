@@ -4,196 +4,44 @@ using System.Globalization;
 using MinecraftClone3.States;
 using MinecraftClone3API.Client;
 using MinecraftClone3API.Client.Graphics;
-using MinecraftClone3API.Graphics;
+using MinecraftClone3API.Client.Input;
 using MinecraftClone3API.Client.StateSystem;
-using MinecraftClone3API.Entities;
+using MinecraftClone3API.Graphics;
+using MinecraftClone3API.Graphics.Rhi;
 using MinecraftClone3API.Util;
-using OpenTK.Graphics.OpenGL4;
-using OpenTK.Mathematics;
-using OpenTK.Windowing.Common;
-using OpenTK.Windowing.Desktop;
-using OpenTK.Windowing.GraphicsLibraryFramework;
+using Silk.NET.Input;
+using Silk.NET.Maths;
+using Silk.NET.Windowing;
 
 namespace MinecraftClone3
 {
-    internal class GameClient : GameWindow
+    /// <summary>
+    /// The client entry point. Creates the Silk.NET window, brings up the WebGPU device + surface
+    /// (<see cref="GpuContext"/>) and the event-driven <see cref="InputManager"/> once the window exists, and
+    /// drives the fixed update / per-frame render loop through the <see cref="StateEngine"/>. The frame
+    /// lifecycle itself (swapchain acquire, HDR scene target, tonemap, present) lives in <see cref="Renderer"/>;
+    /// this file only opens and closes each frame around <see cref="StateEngine.Render"/>.
+    /// </summary>
+    internal static class Program
     {
-        public GameClient(GameWindowSettings gameWindowSettings, NativeWindowSettings nativeWindowSettings)
-            : base(gameWindowSettings, nativeWindowSettings)
-        {
-        }
+        private static IWindow _window;
+        private static InputManager _input;
 
-        protected override void OnLoad()
-        {
-            base.OnLoad();
+        /// <summary>The live window. Exposed for the few places that need window-level state (closing the game).</summary>
+        public static IWindow Window => _window;
 
-            CursorState = CursorState.Hidden;
-
-            // GL resources can only be created once the context exists, so the first
-            // state is added here rather than before Run() (unlike the old OpenTK 2 flow).
-            StateEngine.AddState(new GuiResourceLoading(this));
-        }
-
-        protected override void OnResize(ResizeEventArgs e)
-        {
-            base.OnResize(e);
-            // Use the framebuffer size, not ClientSize: on HiDPI/Retina displays the
-            // framebuffer is larger (e.g. 2x) than the logical client size, and a viewport
-            // sized to ClientSize would only cover one corner of the window.
-            GL.Viewport(0, 0, FramebufferSize.X, FramebufferSize.Y);
-            ScaledResolution.Update();
-        }
-
-        protected override void OnFocusedChanged(FocusedChangedEventArgs e)
-        {
-            base.OnFocusedChanged(e);
-            if (IsFocused)
-                PlayerController.ResetMouse();
-        }
-
-        private readonly Stopwatch _workTimer = new Stopwatch();
-        private readonly Stopwatch _swapTimer = new Stopwatch();
-        // Measures the gap from end-of-render to the next OnUpdateFrame: OpenTK's loop runs
-        // NewInputFrame + ProcessWindowEvents (the GLFW poll, where an async/vsync present surfaces on
-        // Linux/GLX) there, which none of our other timers see. A frameMs spike that isn't in
-        // update/render/swap shows up here.
-        private readonly Stopwatch _gapTimer = new Stopwatch();
-        private double _lastUpdateMs;
-        private double _lastSwapMs;
-        private double _lastGapMs;
-        private int _updateCalls;
-
-        // GL_TIME_ELAPSED whole-frame timer queries: the actual GPU time for the render commands, separating
-        // "GPU genuinely slow" from "GPU fast, the wait is vsync/present/event overhead". Created lazily once
-        // the GL context exists. A ring (not a 1-frame ping-pong) harvested newest-ready, because with vsync
-        // off the CPU runs several frames ahead of the GPU, so last frame's query usually isn't done yet — a
-        // 1-frame read would perpetually miss and freeze gpuMs at a stale value. See GpuTimers for the detail.
-        private const int GpuRing = 8;
-        private int[] _gpuQueries;
-        private bool[] _gpuPending;
-        private long[] _gpuQueryFrame;
-        private bool _gpuQueriesReady;
-        private long _gpuFrame;
-        private long _gpuLastHarvested = -1;
-        private double _lastGpuMs;
-
-        protected override void OnUpdateFrame(FrameEventArgs e)
-        {
-            if (_gapTimer.IsRunning) _lastGapMs = _gapTimer.Elapsed.TotalMilliseconds;
-
-            base.OnUpdateFrame(e);
-
-            _updateCalls++;
-            _workTimer.Restart();
-            StateEngine.Update();
-            _lastUpdateMs = _workTimer.Elapsed.TotalMilliseconds;
-        }
-
-        protected override void OnRenderFrame(FrameEventArgs e)
-        {
-            base.OnRenderFrame(e);
-
-            if (!_gpuQueriesReady)
-            {
-                _gpuQueries = new int[GpuRing];
-                _gpuPending = new bool[GpuRing];
-                _gpuQueryFrame = new long[GpuRing];
-                for (var i = 0; i < GpuRing; i++) _gpuQueries[i] = GL.GenQuery();
-                _gpuQueriesReady = true;
-            }
-
-            // Harvest the newest ring slot whose result has arrived (only reads when available, so no stall).
-            var best = -1;
-            var bestFrame = _gpuLastHarvested;
-            for (var i = 0; i < GpuRing; i++)
-            {
-                if (!_gpuPending[i]) continue;
-                if (_gpuQueryFrame[i] <= _gpuLastHarvested) { _gpuPending[i] = false; continue; }
-                GL.GetQueryObject(_gpuQueries[i], GetQueryObjectParam.QueryResultAvailable, out int available);
-                if (available != 0 && _gpuQueryFrame[i] > bestFrame) { best = i; bestFrame = _gpuQueryFrame[i]; }
-            }
-            if (best >= 0)
-            {
-                GL.GetQueryObject(_gpuQueries[best], GetQueryObjectParam.QueryResult, out long elapsedNs);
-                _lastGpuMs = elapsedNs / 1_000_000.0;
-                _gpuPending[best] = false;
-                _gpuLastHarvested = bestFrame;
-            }
-
-            var writeQuery = (int) (_gpuFrame % GpuRing);
-            var allocBefore = GC.GetAllocatedBytesForCurrentThread();
-            _workTimer.Restart();
-            GL.BeginQuery(QueryTarget.TimeElapsed, _gpuQueries[writeQuery]);
-            StateEngine.Render();
-            GL.EndQuery(QueryTarget.TimeElapsed);
-            var renderMs = _workTimer.Elapsed.TotalMilliseconds;
-            var renderAlloc = GC.GetAllocatedBytesForCurrentThread() - allocBefore;
-
-            _gpuQueryFrame[writeQuery] = _gpuFrame;
-            _gpuPending[writeQuery] = true;
-            _gpuFrame++;
-
-            // Mirror the frame timings for the on-screen diagnostics overlay (F3). It is drawn inside the
-            // StateEngine.Render above, so it reads the previous frame's values — invisible for a HUD. Frame
-            // time is EMA-smoothed so the displayed FPS doesn't jitter.
-            RenderDebug.FrameMs = RenderDebug.FrameMs <= 0 ? e.Time * 1000 : RenderDebug.FrameMs * 0.92 + e.Time * 1000 * 0.08;
-            RenderDebug.GpuMs = _lastGpuMs;
-            RenderDebug.UpdateMs = _lastUpdateMs;
-
-            // e.Time is the wall-clock interval since the last render frame (catches real fps drops).
-            // renderMs/updateMs are CPU work; swapMs is the SwapBuffers call; gapMs is OpenTK's
-            // poll/present gap; gpuMs is actual GPU render time (GL_TIME_ELAPSED). When frameMs is high
-            // but update/render/swap are small, gapMs vs gpuMs says whether it's present/event overhead
-            // or the GPU itself — the two stalls a CPU sampler can't see.
-            Profiler.Record(e.Time, _lastUpdateMs, renderMs, _lastSwapMs, _lastGapMs, _lastGpuMs,
-                _updateCalls, renderAlloc, ClientProfiling.SampleFrame());
-            if (Inspect.Active)
-            {
-                Inspect.Tick(FramebufferSize.X, FramebufferSize.Y);
-            }
-            else
-            {
-                Benchmark.Tick(e.Time, _lastUpdateMs, renderMs, _lastGpuMs);
-                Benchmark.CaptureFrame(FramebufferSize.X, FramebufferSize.Y);
-            }
-            _updateCalls = 0;
-
-            _swapTimer.Restart();
-            SwapBuffers();
-            _lastSwapMs = _swapTimer.Elapsed.TotalMilliseconds;
-
-            _gapTimer.Restart();
-
-            // The benchmark/inspect modes close the window when their scripted run completes.
-            if (Benchmark.Finished || Inspect.Finished) Close();
-        }
-
-        protected override void OnUnload()
-        {
-            Profiler.Stop();
-            StateEngine.Exit();
-            base.OnUnload();
-        }
-    }
-
-    internal class Program
-    {
-        public static GameClient Window;
+        private static readonly Stopwatch _workTimer = new Stopwatch();
+        private static readonly Stopwatch _presentTimer = new Stopwatch();
+        private static double _lastUpdateMs;
+        private static int _updateCalls;
 
         private static void Main(string[] args)
         {
             //Make exceptions be english (wtf microsoft???)
             System.Threading.Thread.CurrentThread.CurrentUICulture = CultureInfo.InvariantCulture;
 
-            // RenderDoc can only hook our GL context over GLX (X11); under native Wayland GLFW makes an EGL
-            // context it can't capture ("unknown window"). Force the X11 backend when launched under RenderDoc
-            // (it sets RENDERDOC_CAPOPTS) or when MC3_FORCE_X11=1; normal runs keep native Wayland.
-            if (Environment.GetEnvironmentVariable("RENDERDOC_CAPOPTS") != null ||
-                Environment.GetEnvironmentVariable("MC3_FORCE_X11") == "1")
-                GLFW.InitHint(InitHintPlatform.Platform, Platform.X11);
-
-            // Saved graphics options seed the window so it opens with the user's vsync/fullscreen choice;
-            // runtime changes go through the GraphicsSettings setters (which push onto the live window).
+            // Saved graphics options seed the window so it opens with the user's fullscreen choice; vsync is the
+            // wgpu surface present mode, pushed onto the renderer once the surface exists (see OnLoad).
             GraphicsSettings.Load();
             Keybinds.Load();
 
@@ -205,30 +53,108 @@ namespace MinecraftClone3
             if (Inspect.Enabled) Inspect.ApplySettings();
             else if (Benchmark.Enabled) Benchmark.ApplySettings();
 
-            var clientSize = Inspect.Enabled ? new Vector2i(Inspect.Width, Inspect.Height) : new Vector2i(1280, 720);
+            var size = Inspect.Enabled
+                ? new Vector2D<int>(Inspect.Width, Inspect.Height)
+                : new Vector2D<int>(1280, 720);
 
-            var nativeWindowSettings = new NativeWindowSettings
+            var options = WindowOptions.Default with
             {
-                ClientSize = clientSize,
+                Size = size,
                 Title = "MinecraftClone3",
-                Profile = ContextProfile.Core,
-                // macOS only exposes OpenGL up to 4.1 Core.
-                APIVersion = new Version(4, 1),
-                Vsync = (Benchmark.Enabled || Inspect.Enabled) ? VSyncMode.Off : GraphicsSettings.VSync,
-                WindowState = GraphicsSettings.Fullscreen ? WindowState.Fullscreen : WindowState.Normal
+                // WebGPU owns its own surface + swapchain, so Silk must NOT create an OpenGL context; present
+                // pacing (vsync) is the wgpu surface present mode, set via Renderer.SetVSync, not the window.
+                API = GraphicsAPI.None,
+                VSync = false,
+                WindowState = GraphicsSettings.Fullscreen ? WindowState.Fullscreen : WindowState.Normal,
             };
 
-            var gameWindowSettings = new GameWindowSettings
+            _window = Silk.NET.Windowing.Window.Create(options);
+            _window.Load += OnLoad;
+            _window.Update += OnUpdate;
+            _window.Render += OnRender;
+            _window.Closing += OnClosing;
+
+            _window.Run();
+            _window.Dispose();
+        }
+
+        private static void OnLoad()
+        {
+            // The device + surface can only be created once the native window exists, so the GPU bring-up and
+            // the first state (whose constructor runs ClientResources.Load → Renderer.Load) happen here.
+            Gpu.Init(new GpuContext(_window));
+
+            _input = new InputManager(_window.CreateInput());
+            ClientResources.Window = _window;
+            ClientResources.Input = _input;
+            StateEngine.AttachInput(_input);
+
+            // The loading + menu screens use the system cursor; a world grabs it (CursorMode.Raw) on open.
+            _input.CursorMode = CursorMode.Normal;
+
+            StateEngine.AddState(new GuiResourceLoading(false));
+
+            // The renderer's surface is configured now (the line above ran Renderer.Load); push the saved vsync
+            // preference onto it, unless an automated mode forced it off.
+            if (Benchmark.Enabled || Inspect.Enabled) Renderer.SetVSync(VSyncMode.Off);
+            else GraphicsSettings.ApplyVSync();
+        }
+
+        private static void OnUpdate(double dt)
+        {
+            _updateCalls++;
+            _workTimer.Restart();
+            StateEngine.Update();
+            _lastUpdateMs = _workTimer.Elapsed.TotalMilliseconds;
+        }
+
+        private static void OnRender(double dt)
+        {
+            // BeginFrame fails to acquire the swapchain during a resize/minimize — skip the frame rather than
+            // record into a dead encoder.
+            if (!Renderer.BeginFrame()) return;
+
+            var allocBefore = GC.GetAllocatedBytesForCurrentThread();
+            _workTimer.Restart();
+            StateEngine.Render();
+            var renderMs = _workTimer.Elapsed.TotalMilliseconds;
+            var renderAlloc = GC.GetAllocatedBytesForCurrentThread() - allocBefore;
+
+            _presentTimer.Restart();
+            Renderer.EndFrame();
+            var presentMs = _presentTimer.Elapsed.TotalMilliseconds;
+
+            // dt is the wall-clock interval since the last render frame (catches real fps drops); frame time is
+            // EMA-smoothed so the displayed FPS doesn't jitter. GPU time is filled in by GpuTimers (M7).
+            RenderDebug.FrameMs = RenderDebug.FrameMs <= 0 ? dt * 1000 : RenderDebug.FrameMs * 0.92 + dt * 1000 * 0.08;
+            RenderDebug.UpdateMs = _lastUpdateMs;
+            RenderDebug.GpuMs = 0;
+
+            Profiler.Record(dt, _lastUpdateMs, renderMs, presentMs, 0, RenderDebug.GpuMs,
+                _updateCalls, renderAlloc, ClientProfiling.SampleFrame());
+            _updateCalls = 0;
+
+            var fbW = _window.FramebufferSize.X;
+            var fbH = _window.FramebufferSize.Y;
+            if (Inspect.Active)
             {
-                // OpenTK 4.9 runs OnUpdateFrame and OnRenderFrame at one shared rate = UpdateFrequency.
-                // 0 = uncapped — frame pacing is left to VSync (SwapBuffers blocks at the refresh when VSync
-                // is on; with VSync off the loop runs as fast as the CPU/GPU allow). A hard UpdateFrequency
-                // cap was what pinned the game at 120 FPS regardless of how fast the engine actually was.
-                UpdateFrequency = 0
-            };
+                Inspect.Tick(fbW, fbH);
+            }
+            else
+            {
+                Benchmark.Tick(dt, _lastUpdateMs, renderMs, RenderDebug.GpuMs);
+                Benchmark.CaptureFrame(fbW, fbH);
+            }
 
-            Window = new GameClient(gameWindowSettings, nativeWindowSettings);
-            Window.Run();
+            // The benchmark/inspect modes close the window when their scripted run completes.
+            if (Benchmark.Finished || Inspect.Finished) _window.Close();
+        }
+
+        private static void OnClosing()
+        {
+            Profiler.Stop();
+            StateEngine.Exit();
+            Gpu.Shutdown();
         }
     }
 }

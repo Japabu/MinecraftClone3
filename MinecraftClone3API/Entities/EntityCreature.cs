@@ -1,6 +1,6 @@
 using System;
+using Silk.NET.Maths;
 using MinecraftClone3API.Blocks;
-using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Entities
 {
@@ -53,7 +53,7 @@ namespace MinecraftClone3API.Entities
             if (_walking)
             {
                 Yaw = _heading;
-                var dir = new Vector3(MathF.Sin(_heading), 0, MathF.Cos(_heading));
+                var dir = new Vector3D<float>(MathF.Sin(_heading), 0, MathF.Cos(_heading));
                 Velocity.X = dir.X * Type.MoveSpeed;
                 Velocity.Z = dir.Z * Type.MoveSpeed;
             }
@@ -115,7 +115,7 @@ namespace MinecraftClone3API.Entities
             // Re-roll the goal roughly every 1.5–4.5 s: usually stroll, sometimes stand still.
             _wanderTicks = 30 + _rng.Next(60);
             _walking = _rng.NextDouble() < 0.7;
-            if (_walking) _heading = (float) (_rng.NextDouble() * MathHelper.TwoPi);
+            if (_walking) _heading = (float) (_rng.NextDouble() * (MathF.PI * 2f));
         }
 
         private void SteerToward(EntityPlayer target)
@@ -133,19 +133,19 @@ namespace MinecraftClone3API.Entities
                 return _provoker;
 
             _provoker = null;
-            var head = Position + new Vector3(0, Type.Height * 0.9f, 0);
+            var head = Position + new Vector3D<float>(0, Type.Height * 0.9f, 0);
             lock (world.PlayerEntities)
             {
                 foreach (var player in world.PlayerEntities)
                 {
-                    var toHead = head - (player.Position + new Vector3(0, EntityPlayer.EyeHeight, 0));
+                    var toHead = head - (player.Position + new Vector3D<float>(0, EntityPlayer.EyeHeight, 0));
                     if (toHead.LengthSquared > StareRange * StareRange || toHead.LengthSquared < 1e-4f) continue;
 
-                    var look = new Vector3(
+                    var look = new Vector3D<float>(
                         MathF.Sin(player.Yaw) * MathF.Cos(player.Pitch),
                         MathF.Sin(player.Pitch),
                         MathF.Cos(player.Yaw) * MathF.Cos(player.Pitch));
-                    if (Vector3.Dot(look, toHead.Normalized()) > StareDot) { _provoker = player; break; }
+                    if (Vector3D.Dot(look, Vector3D.Normalize(toHead)) > StareDot) { _provoker = player; break; }
                 }
             }
 

@@ -1,7 +1,7 @@
 using System;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.WorldGen
 {
@@ -27,7 +27,7 @@ namespace MinecraftClone3API.WorldGen
             _b = new OpenSimplexNoise(seed ^ 0x1F123BB5C0FFEE42L);
         }
 
-        public override void Carve(CachedChunk chunk, Vector3i chunkPos, NoiseChunkGenerator generator,
+        public override void Carve(CachedChunk chunk, Vector3D<int> chunkPos, NoiseChunkGenerator generator,
             int[] surfaceHeights)
         {
             var min = chunkPos * Chunk.Size;

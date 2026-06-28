@@ -6,11 +6,8 @@ using MinecraftClone3API.Client.StateSystem;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.Util;
-using OpenTK.Graphics.OpenGL4;
-using OpenTK.Mathematics;
-using OpenTK.Windowing.Common;
-using OpenTK.Windowing.Desktop;
-using OpenTK.Windowing.GraphicsLibraryFramework;
+using Silk.NET.Maths;
+using Silk.NET.Input;
 
 namespace MinecraftClone3.States
 {
@@ -22,15 +19,13 @@ namespace MinecraftClone3.States
         private const int TitleScale = 3;
         private const string Title = "Game Menu";
 
-        private readonly GameWindow _window;
         private readonly WorldClient _world;
         private readonly GuiButton _gameModeButton;
 
-        public GuiPauseMenu(GameWindow window, WorldClient world)
+        public GuiPauseMenu(WorldClient world)
         {
-            _window = window;
             _world = world;
-            _window.CursorState = CursorState.Normal;
+            ClientResources.Input.CursorMode = CursorMode.Normal;
 
             var x = ((int) ScaledResolution.GuiResolution.X - ButtonWidth) / 2;
             var y = (int) ScaledResolution.GuiResolution.Y / 2 - (4 * ButtonHeight + 3 * ButtonGap) / 2;
@@ -41,9 +36,9 @@ namespace MinecraftClone3.States
                 GameModeLabel(), ToggleGameMode);
             Elements.Add(_gameModeButton);
             Elements.Add(new GuiButton(Rectangle.FromSize(x, y + 2 * step, ButtonWidth, ButtonHeight), "Options",
-                () => StateEngine.AddOverlay(new GuiOptions(_window))));
+                () => StateEngine.AddOverlay(new GuiOptions())));
             Elements.Add(new GuiButton(Rectangle.FromSize(x, y + 3 * step, ButtonWidth, ButtonHeight),
-                "Save and Quit to Title", () => StateEngine.ReplaceState(new GuiSavingWorld(_window))));
+                "Save and Quit to Title", () => StateEngine.ReplaceState(new GuiSavingWorld())));
         }
 
         public override bool PausesWorld => true;
@@ -61,33 +56,31 @@ namespace MinecraftClone3.States
             base.Update(focused);
             // The mode is server-authoritative; refresh the label once the change round-trips.
             _gameModeButton.Label = GameModeLabel();
-            if (focused && _window.KeyboardState.IsKeyPressed(Keys.Escape))
+        }
+
+        public override void OnKeyDown(Key key)
+        {
+            if (key == Key.Escape)
                 Close();
         }
 
         public override void Render()
         {
-            RenderState.Set(new GlState
-            {
-                Blend = true,
-                BlendFunc = (BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha)
-            });
-
-            var screen = _window.FramebufferSize;
+            var screen = new Vector2D<int>(ClientResources.Width, ClientResources.Height);
             GuiRenderer.DrawTexture(ClientResources.WhitePixel, new Rectangle(0, 0, screen.X, screen.Y), null,
-                new Color4(0f, 0f, 0f, 0.5f), false);
+                new Vector4D<float>(0f, 0f, 0f, 0.5f), false);
 
             var width = (int) ScaledResolution.GuiResolution.X;
             var height = (int) ScaledResolution.GuiResolution.Y;
             var titleX = (width - Font.MeasureWidth(Title, TitleScale)) / 2;
-            Font.DrawString(Title, titleX, height / 4, TitleScale, Color4.White);
+            Font.DrawString(Title, titleX, height / 4, TitleScale, new Vector4D<float>(1f,1f,1f,1f));
 
             base.Render();
         }
 
         private void Close()
         {
-            _window.CursorState = CursorState.Grabbed;
+            ClientResources.Input.CursorMode = CursorMode.Raw;
             PlayerController.ResetMouse();
             IsDead = true;
         }

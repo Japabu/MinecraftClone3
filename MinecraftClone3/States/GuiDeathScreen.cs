@@ -5,10 +5,8 @@ using MinecraftClone3API.Client.GUI;
 using MinecraftClone3API.Client.StateSystem;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.Util;
-using OpenTK.Graphics.OpenGL4;
-using OpenTK.Mathematics;
-using OpenTK.Windowing.Common;
-using OpenTK.Windowing.Desktop;
+using Silk.NET.Maths;
+using Silk.NET.Input;
 
 namespace MinecraftClone3.States
 {
@@ -25,12 +23,9 @@ namespace MinecraftClone3.States
         private const int TitleScale = 4;
         private const string Title = "You Died!";
 
-        private readonly GameWindow _window;
-
-        public GuiDeathScreen(GameWindow window, WorldClient world)
+        public GuiDeathScreen(WorldClient world)
         {
-            _window = window;
-            _window.CursorState = CursorState.Normal;
+            ClientResources.Input.CursorMode = CursorMode.Normal;
 
             var x = ((int) ScaledResolution.GuiResolution.X - ButtonWidth) / 2;
             var y = (int) ScaledResolution.GuiResolution.Y / 2;
@@ -39,25 +34,19 @@ namespace MinecraftClone3.States
             Elements.Add(new GuiButton(Rectangle.FromSize(x, y, ButtonWidth, ButtonHeight), "Respawn",
                 world.SendRespawn));
             Elements.Add(new GuiButton(Rectangle.FromSize(x, y + step, ButtonWidth, ButtonHeight),
-                "Title Screen", () => StateEngine.ReplaceState(new GuiMainMenu(_window))));
+                "Title Screen", () => StateEngine.ReplaceState(new GuiMainMenu())));
         }
 
         public override void Render()
         {
-            RenderState.Set(new GlState
-            {
-                Blend = true,
-                BlendFunc = (BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha)
-            });
-
-            var screen = _window.FramebufferSize;
+            var screen = new Vector2D<int>(ClientResources.Width, ClientResources.Height);
             GuiRenderer.DrawTexture(ClientResources.WhitePixel, new Rectangle(0, 0, screen.X, screen.Y), null,
-                new Color4(0.5f, 0f, 0f, 0.5f), false);
+                new Vector4D<float>(0.5f, 0f, 0f, 0.5f), false);
 
             var width = (int) ScaledResolution.GuiResolution.X;
             var height = (int) ScaledResolution.GuiResolution.Y;
             var titleX = (width - Font.MeasureWidth(Title, TitleScale)) / 2;
-            Font.DrawString(Title, titleX, height / 4, TitleScale, Color4.White);
+            Font.DrawString(Title, titleX, height / 4, TitleScale, new Vector4D<float>(1f,1f,1f,1f));
 
             base.Render();
         }

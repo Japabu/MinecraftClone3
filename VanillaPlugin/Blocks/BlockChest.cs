@@ -7,7 +7,7 @@ using MinecraftClone3API.Client.StateSystem;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 using VanillaPlugin.BlockDatas;
 
 namespace VanillaPlugin.Blocks
@@ -37,12 +37,12 @@ namespace VanillaPlugin.Blocks
 
         // Not a full opaque cube: neighbours must keep the faces they'd otherwise cull against it, and light
         // passes around the model.
-        public override bool IsFullBlock(WorldBase world, Vector3i blockPos) => false;
+        public override bool IsFullBlock(WorldBase world, Vector3D<int> blockPos) => false;
 
         public override float Hardness => 2.5f;
         public override ToolType PreferredTool => ToolType.Axe;
 
-        public override float GetBlockEntityRotation(WorldBase world, Vector3i blockPos)
+        public override float GetBlockEntityRotation(WorldBase world, Vector3D<int> blockPos)
             => FacingYaw[(Data(world, blockPos)?.Facing ?? 2) & 0x3];
 
         public override int GetPlacementMetadata(EntityPlayer player, BlockRaytraceResult ray)
@@ -56,26 +56,26 @@ namespace VanillaPlugin.Blocks
             return (look + 2) % 4;
         }
 
-        public override void OnPlaced(WorldBase world, Vector3i blockPos, EntityPlayer player, int metadata)
+        public override void OnPlaced(WorldBase world, Vector3D<int> blockPos, EntityPlayer player, int metadata)
             => world.SetBlockData(blockPos, new BlockDataChest((byte) (metadata & 0x3)));
 
-        public override bool OnActivated(WorldBase world, Vector3i blockPos, EntityPlayer player)
-        {
-            if (!(world is WorldClient client)) return false;
-            StateEngine.AddOverlay(new GuiChest(ClientResources.Window, client, blockPos));
-            return true;
-        }
-
-        public override void OnBroken(WorldServer world, Vector3i blockPos)
+        public override void OnBroken(WorldServer world, Vector3D<int> blockPos)
         {
             var data = Data(world, blockPos);
             if (data == null) return;
-            var centre = blockPos.ToVector3() + new Vector3(0.5f, 0.5f, 0.5f);
+            var centre = blockPos.ToVector3() + new Vector3D<float>(0.5f, 0.5f, 0.5f);
             foreach (var slot in data.Slots)
                 if (!slot.IsEmpty) world.DropItem(slot, centre);
         }
 
-        private static BlockDataChest Data(WorldBase world, Vector3i blockPos)
+        public override bool OnActivated(WorldBase world, Vector3D<int> blockPos, EntityPlayer player)
+        {
+            if (!(world is WorldClient client)) return false;
+            StateEngine.AddOverlay(new GuiChest(client, blockPos));
+            return true;
+        }
+
+        private static BlockDataChest Data(WorldBase world, Vector3D<int> blockPos)
             => world.GetBlockData(blockPos) as BlockDataChest;
     }
 }

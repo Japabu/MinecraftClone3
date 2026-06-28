@@ -1,4 +1,6 @@
-﻿using MinecraftClone3API.Util;
+﻿using MinecraftClone3API.Client.Graphics;
+using MinecraftClone3API.Client.Input;
+using MinecraftClone3API.Util;
 using System.Collections.Generic;
 
 namespace MinecraftClone3API.Client.StateSystem
@@ -9,6 +11,23 @@ namespace MinecraftClone3API.Client.StateSystem
         private static List<StateBase> _overlays = new List<StateBase>();
         private static readonly List<StateBase> _overlaysToRemove = new List<StateBase>();
         private static StateBase _pendingState;
+
+        /// <summary>The foreground layer that receives discrete input: the top open overlay, or the top state.</summary>
+        private static StateBase Foreground =>
+            _overlays.Count > 0 ? _overlays[_overlays.Count - 1]
+            : _states.Count > 0 ? _states[_states.Count - 1] : null;
+
+        /// <summary>Subscribe to the input source once at startup; discrete events route to the foreground
+        /// layer (event-driven Silk input). Continuous state (held keys, mouse-look) is read directly from
+        /// <see cref="ClientResources.Input"/> by the consumers that need it.</summary>
+        public static void AttachInput(InputManager input)
+        {
+            input.MouseDown += b => Foreground?.OnMouseDown(b, ScaledResolution.ToGuiCoords(input.MousePosition));
+            input.MouseUp += b => Foreground?.OnMouseUp(b, ScaledResolution.ToGuiCoords(input.MousePosition));
+            input.KeyDown += k => Foreground?.OnKeyDown(k);
+            input.CharTyped += c => Foreground?.OnCharTyped(c);
+            input.Scroll += d => Foreground?.OnScroll(d);
+        }
 
         /// <summary>True while an open overlay declares it pauses the world (the Esc menu). The active state
         /// reads this to freeze the singleplayer simulation; other overlays (inventory, furnace, …) leave it

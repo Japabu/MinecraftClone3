@@ -7,7 +7,7 @@ using MinecraftClone3API.Entities;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using MinecraftClone3API.WorldGen;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Blocks
 {
@@ -29,14 +29,14 @@ namespace MinecraftClone3API.Blocks
         // whole session (chunks otherwise persist only on unload/shutdown). Runs on the unload thread.
         public static readonly TimeSpan AutosaveInterval = TimeSpan.FromSeconds(30);
         private DateTime _lastAutosave = DateTime.Now;
-        private readonly Dictionary<Vector3i, CachedChunk> _chunksReadyToAdd = new Dictionary<Vector3i, CachedChunk>();
-        private readonly HashSet<Vector3i> _chunksReadyToRemove = new HashSet<Vector3i>();
+        private readonly Dictionary<Vector3D<int>, CachedChunk> _chunksReadyToAdd = new Dictionary<Vector3D<int>, CachedChunk>();
+        private readonly HashSet<Vector3D<int>> _chunksReadyToRemove = new HashSet<Vector3D<int>>();
 
         // Thread-safe set: read/written by both the main thread (Update) and the load thread.
         // ConcurrentDictionary used as a set (the value is ignored).
-        private readonly ConcurrentDictionary<Vector3i, byte> _populatedChunks = new ConcurrentDictionary<Vector3i, byte>();
+        private readonly ConcurrentDictionary<Vector3D<int>, byte> _populatedChunks = new ConcurrentDictionary<Vector3D<int>, byte>();
 
-        private readonly Queue<Vector3i> _queuedLightUpdates = new Queue<Vector3i>();
+        private readonly Queue<Vector3D<int>> _queuedLightUpdates = new Queue<Vector3D<int>>();
 
         // Reused scratch for the light-propagation BFS. UpdateThread is the sole caller of
         // UpdateLightValues, so these are cleared and refilled per call instead of allocating six
@@ -47,16 +47,16 @@ namespace MinecraftClone3API.Blocks
         // backing arrays (Dictionary.Resize was the entire light-thread cost in a trace).
         private readonly Queue<LightNode> _lightSpreadQueue = new Queue<LightNode>(1024);
         private readonly Queue<LightNode> _lightRemoveQueue = new Queue<LightNode>(1024);
-        private readonly Dictionary<Vector3i, LightLevel> _lightLevelCache = new Dictionary<Vector3i, LightLevel>(8192);
-        private readonly Dictionary<Vector3i, Block> _lightBlockCache = new Dictionary<Vector3i, Block>(8192);
-        private readonly HashSet<Vector3i> _lightChanged = new HashSet<Vector3i>(8192);
+        private readonly Dictionary<Vector3D<int>, LightLevel> _lightLevelCache = new Dictionary<Vector3D<int>, LightLevel>(8192);
+        private readonly Dictionary<Vector3D<int>, Block> _lightBlockCache = new Dictionary<Vector3D<int>, Block>(8192);
+        private readonly HashSet<Vector3D<int>> _lightChanged = new HashSet<Vector3D<int>>(8192);
 
         // Sky-light BFS scratch, parallel to the block-light caches above. UpdateSkyValues is the sole
         // user and runs sequentially after UpdateLightValues on the same UpdateThread, so it reuses the
         // _lightSpreadQueue/_lightRemoveQueue/_lightChunkCache and keeps only its own value cache + changed
         // set (sky is a single 0..15 scalar, not a packed LightLevel).
-        private readonly Dictionary<Vector3i, int> _skyLevelCache = new Dictionary<Vector3i, int>(8192);
-        private readonly HashSet<Vector3i> _skyChanged = new HashSet<Vector3i>(8192);
+        private readonly Dictionary<Vector3D<int>, int> _skyLevelCache = new Dictionary<Vector3D<int>, int>(8192);
+        private readonly HashSet<Vector3D<int>> _skyChanged = new HashSet<Vector3D<int>>(8192);
 
         // Highest a sky-exposure up-scan walks before assuming open sky, so a block placed far above
         // terrain can't scan unboundedly. Terrain is shallow and the loaded vertical band is thin, so the
@@ -66,7 +66,7 @@ namespace MinecraftClone3API.Blocks
         // Memoises chunk lookups (chunk pos -> Chunk, null when absent) for the duration of one
         // UpdateLightValues flood: a torch flood probes LoadedChunks tens of thousands of times for
         // the per-neighbour empty-chunk test, almost all hitting the same few chunks.
-        private readonly Dictionary<Vector3i, Chunk> _lightChunkCache = new Dictionary<Vector3i, Chunk>();
+        private readonly Dictionary<Vector3D<int>, Chunk> _lightChunkCache = new Dictionary<Vector3D<int>, Chunk>();
 
         // Signalled whenever a light update is queued so the UpdateThread sleeps instead of spinning
         // Thread.Sleep(1) (1000 idle wakeups/s); the timed wait still lets it observe _unloaded.
@@ -76,11 +76,11 @@ namespace MinecraftClone3API.Blocks
         // scan allocates nothing steady-state: a player snapshot, the per-player candidate lists, a
         // dedup set, the round-robin merge output, and a closure-free distance sort.
         private readonly List<EntityPlayer> _loadPlayersScratch = new List<EntityPlayer>();
-        private readonly List<List<Vector3i>> _loadPlayerChunkLists = new List<List<Vector3i>>();
-        private readonly HashSet<Vector3i> _loadDedup = new HashSet<Vector3i>();
-        private readonly List<Vector3i> _loadMerged = new List<Vector3i>();
-        private Vector3i _loadSortOrigin;
-        private readonly Comparison<Vector3i> _loadSort;
+        private readonly List<List<Vector3D<int>>> _loadPlayerChunkLists = new List<List<Vector3D<int>>>();
+        private readonly HashSet<Vector3D<int>> _loadDedup = new HashSet<Vector3D<int>>();
+        private readonly List<Vector3D<int>> _loadMerged = new List<Vector3D<int>>();
+        private Vector3D<int> _loadSortOrigin;
+        private readonly Comparison<Vector3D<int>> _loadSort;
 
         // Reused by the unload scan (sole user) so the per-second sweep allocates no result list.
         private readonly List<Chunk> _unloadScratch = new List<Chunk>();
@@ -120,18 +120,18 @@ namespace MinecraftClone3API.Blocks
         // would otherwise enqueue the same block over and over, so a plain queue grew O(floods × volume)
         // and trapped the flush thread; deduping bounds pending changes to O(distinct changed blocks) and
         // is correct because each BlockChange is a full (id, light) snapshot the client applies idempotently.
-        public readonly ConcurrentDictionary<(Vector3i Chunk, ushort Index), BlockChange> BlockChanges =
-            new ConcurrentDictionary<(Vector3i, ushort), BlockChange>();
+        public readonly ConcurrentDictionary<(Vector3D<int> Chunk, ushort Index), BlockChange> BlockChanges =
+            new ConcurrentDictionary<(Vector3D<int>, ushort), BlockChange>();
 
         // Chunks whose block *data* changed since the last network flush. Block data is not carried by
         // BlockChanges deltas (only id + light are), so a data change still triggers a whole-chunk
         // resend. The network layer reads and clears this each tick. ConcurrentDictionary used as a set.
-        public readonly ConcurrentDictionary<Vector3i, byte> DirtyChunks = new ConcurrentDictionary<Vector3i, byte>();
+        public readonly ConcurrentDictionary<Vector3D<int>, byte> DirtyChunks = new ConcurrentDictionary<Vector3D<int>, byte>();
 
         // Block positions whose block requests a per-tick server update (Block.NeedsServerTick — e.g. furnaces).
         // Maintained as a set on SetBlock, on chunk load (scanning loaded block data), and chunk unload; ticked
         // each Update on the tick thread. Far cheaper than scanning every loaded block every tick.
-        private readonly ConcurrentDictionary<Vector3i, byte> _tickingBlocks = new ConcurrentDictionary<Vector3i, byte>();
+        private readonly ConcurrentDictionary<Vector3D<int>, byte> _tickingBlocks = new ConcurrentDictionary<Vector3D<int>, byte>();
 
         private readonly Thread _unloadThread;
         private readonly Thread _loadThread;
@@ -149,7 +149,7 @@ namespace MinecraftClone3API.Blocks
         public LodColumnStore LodStore => _lodStore;
         public volatile int LodRadius = 10;
         private readonly List<EntityPlayer> _lodPlayersScratch = new List<EntityPlayer>();
-        private readonly List<Vector3i> _lodKeysScratch = new List<Vector3i>();
+        private readonly List<Vector3D<int>> _lodKeysScratch = new List<Vector3D<int>>();
         private const int MaxLodRegionsPerIter = 4;
         // How far the LOD fill overlaps INWARD past the real-chunk band. Sized so the LOD store covers the
         // client's cross-fade band [RD - FadeBandWidth, RD] with a full region of margin (a region is 128 wide,
@@ -176,8 +176,8 @@ namespace MinecraftClone3API.Blocks
         public readonly struct Teleport
         {
             public readonly int OwnerId;
-            public readonly Vector3 Position;
-            public Teleport(int ownerId, Vector3 position) { OwnerId = ownerId; Position = position; }
+            public readonly Vector3D<float> Position;
+            public Teleport(int ownerId, Vector3D<float> position) { OwnerId = ownerId; Position = position; }
         }
 
         public readonly Queue<Teleport> PendingTeleports = new Queue<Teleport>();
@@ -205,7 +205,7 @@ namespace MinecraftClone3API.Blocks
 
         // Spawn() returns the feet cell (the air above the surface); offset to the cell's horizontal centre so
         // the player stands centred in the column (corner-origin: block P fills [P, P+1]).
-        public Vector3 SpawnPosition => _generator.Spawn().ToVector3() + new Vector3(0.5f, 0f, 0.5f);
+        public Vector3D<float> SpawnPosition => _generator.Spawn().ToVector3() + new Vector3D<float>(0.5f, 0f, 0.5f);
 
         public readonly string WorldDir;
 
@@ -255,7 +255,7 @@ namespace MinecraftClone3API.Blocks
         /// <summary>True once the load thread has generated (or loaded) the chunk at <paramref name="chunkPos"/>,
         /// including all-air chunks that are never published to <see cref="WorldBase.LoadedChunks"/>. Used by the
         /// portal transfer to know the destination column is ready before building into it.</summary>
-        public bool IsChunkGenerated(Vector3i chunkPos) => _populatedChunks.ContainsKey(chunkPos);
+        public bool IsChunkGenerated(Vector3D<int> chunkPos) => _populatedChunks.ContainsKey(chunkPos);
 
         public override void SetBlock(int x, int y, int z, Block block, bool update, bool lowPriority)
         {
@@ -274,13 +274,13 @@ namespace MinecraftClone3API.Blocks
                 LoadedChunks[chunkInWorld] = chunk;
             }
 
-            var worldPos = new Vector3i(x, y, z);
+            var worldPos = new Vector3D<int>(x, y, z);
             if (block.NeedsServerTick) _tickingBlocks[worldPos] = 0;
             else _tickingBlocks.TryRemove(worldPos, out _);
 
             if (!update) return;
 
-            QueueLightUpdate(new Vector3i(x, y, z));
+            QueueLightUpdate(new Vector3D<int>(x, y, z));
 
             EnqueueBlockChange(chunkInWorld, blockInChunk, block.Id, chunk.GetLightLevel(blockInChunk).Binary,
                 (ushort) chunk.GetSkyLight(blockInChunk));
@@ -288,16 +288,16 @@ namespace MinecraftClone3API.Blocks
             NotifyNeighbors(worldPos);
         }
 
-        private static readonly Vector3i[] NeighborOffsets =
+        private static readonly Vector3D<int>[] NeighborOffsets =
         {
-            new Vector3i(-1, 0, 0), new Vector3i(1, 0, 0),
-            new Vector3i(0, -1, 0), new Vector3i(0, 1, 0),
-            new Vector3i(0, 0, -1), new Vector3i(0, 0, 1)
+            new Vector3D<int>(-1, 0, 0), new Vector3D<int>(1, 0, 0),
+            new Vector3D<int>(0, -1, 0), new Vector3D<int>(0, 1, 0),
+            new Vector3D<int>(0, 0, -1), new Vector3D<int>(0, 0, 1)
         };
 
         // Tells each face-adjacent block its neighbour at changedPos changed, so reactive blocks (falling
         // sand/gravel) can respond. Only the server propagates updates; the client world replays deltas.
-        private void NotifyNeighbors(Vector3i changedPos)
+        private void NotifyNeighbors(Vector3D<int> changedPos)
         {
             foreach (var offset in NeighborOffsets)
             {
@@ -308,10 +308,10 @@ namespace MinecraftClone3API.Blocks
 
         /// <summary>Schedules a position to receive <see cref="Block.OnServerTick"/> on the next tick and onward
         /// until it deregisters. Used by falling blocks to begin falling once their support is removed.</summary>
-        public void ScheduleBlockTick(Vector3i pos) => _tickingBlocks[pos] = 0;
+        public void ScheduleBlockTick(Vector3D<int> pos) => _tickingBlocks[pos] = 0;
 
         /// <summary>Stops a position from ticking. A falling block calls this once it has come to rest.</summary>
-        public void UnscheduleBlockTick(Vector3i pos) => _tickingBlocks.TryRemove(pos, out _);
+        public void UnscheduleBlockTick(Vector3D<int> pos) => _tickingBlocks.TryRemove(pos, out _);
 
         public override Block GetBlock(int x, int y, int z)
         {
@@ -331,7 +331,7 @@ namespace MinecraftClone3API.Blocks
             if (LoadedChunks.TryGetValue(chunkInWorld, out var chunk))
                 chunk.SetBlockData(blockInChunk, data);
 
-            QueueLightUpdate(new Vector3i(x, y, z));
+            QueueLightUpdate(new Vector3D<int>(x, y, z));
 
             MarkChunkAndBoundaryDirty(chunkInWorld, blockInChunk);
         }
@@ -383,7 +383,7 @@ namespace MinecraftClone3API.Blocks
         /// <summary>Flags the chunk owning a block as needing a save, without the resend/relight a full
         /// <see cref="SetBlockData"/> triggers. Used by ticking blocks (furnaces) that mutate their block data
         /// in place every tick: the change must persist, but it does not affect the mesh or light.</summary>
-        public void TouchBlockDataForSave(Vector3i pos)
+        public void TouchBlockDataForSave(Vector3D<int> pos)
         {
             if (LoadedChunks.TryGetValue(ChunkInWorld(pos), out var chunk)) chunk.NeedsSaving = true;
         }
@@ -396,13 +396,13 @@ namespace MinecraftClone3API.Blocks
             return LoadedChunks.TryGetValue(chunkInWorld, out Chunk chunk) ? chunk.GetBlockData(blockInChunk) : null;
         }
 
-        private void EnqueueBlockChange(Vector3i chunkInWorld, Vector3i blockInChunk, ushort blockId, ushort light, ushort sky)
+        private void EnqueueBlockChange(Vector3D<int> chunkInWorld, Vector3D<int> blockInChunk, ushort blockId, ushort light, ushort sky)
         {
             var localIndex = (ushort) Chunk.Index(blockInChunk.X, blockInChunk.Y, blockInChunk.Z);
             BlockChanges[(chunkInWorld, localIndex)] = new BlockChange(chunkInWorld, localIndex, blockId, light, sky);
         }
 
-        private void QueueLightUpdate(Vector3i pos)
+        private void QueueLightUpdate(Vector3D<int> pos)
         {
             lock (_queuedLightUpdates)
             {
@@ -417,25 +417,25 @@ namespace MinecraftClone3API.Blocks
         /// to clients, so cross-chunk face culling and light stay consistent on the client. Used only
         /// for block-data changes, which BlockChanges deltas do not carry.
         /// </summary>
-        private void MarkChunkAndBoundaryDirty(Vector3i chunkInWorld, Vector3i blockInChunk)
+        private void MarkChunkAndBoundaryDirty(Vector3D<int> chunkInWorld, Vector3D<int> blockInChunk)
         {
             DirtyChunks[chunkInWorld] = 0;
 
             if (blockInChunk.X == 0)
-                DirtyChunks[chunkInWorld + new Vector3i(-1, 0, 0)] = 0;
+                DirtyChunks[chunkInWorld + new Vector3D<int>(-1, 0, 0)] = 0;
             else if (blockInChunk.X == Chunk.Size - 1)
-                DirtyChunks[chunkInWorld + new Vector3i(+1, 0, 0)] = 0;
+                DirtyChunks[chunkInWorld + new Vector3D<int>(+1, 0, 0)] = 0;
             if (blockInChunk.Y == 0)
-                DirtyChunks[chunkInWorld + new Vector3i(0, -1, 0)] = 0;
+                DirtyChunks[chunkInWorld + new Vector3D<int>(0, -1, 0)] = 0;
             else if (blockInChunk.Y == Chunk.Size - 1)
-                DirtyChunks[chunkInWorld + new Vector3i(0, +1, 0)] = 0;
+                DirtyChunks[chunkInWorld + new Vector3D<int>(0, +1, 0)] = 0;
             if (blockInChunk.Z == 0)
-                DirtyChunks[chunkInWorld + new Vector3i(0, 0, -1)] = 0;
+                DirtyChunks[chunkInWorld + new Vector3D<int>(0, 0, -1)] = 0;
             else if (blockInChunk.Z == Chunk.Size - 1)
-                DirtyChunks[chunkInWorld + new Vector3i(0, 0, +1)] = 0;
+                DirtyChunks[chunkInWorld + new Vector3D<int>(0, 0, +1)] = 0;
         }
 
-        public override void PlaceBlock(EntityPlayer player, Vector3i blockPos, Block block, int metadata)
+        public override void PlaceBlock(EntityPlayer player, Vector3D<int> blockPos, Block block, int metadata)
         {
             SetBlock(blockPos, block);
             block.OnPlaced(this, blockPos, player, metadata);
@@ -458,7 +458,7 @@ namespace MinecraftClone3API.Blocks
 
         /// <summary>Spawns a world entity (mob/animal/dropped item) at <paramref name="position"/>, assigning its
         /// id and queueing it for the network layer to announce. Tick-thread only.</summary>
-        public Entity SpawnEntity(Entity entity, Vector3 position)
+        public Entity SpawnEntity(Entity entity, Vector3D<float> position)
         {
             entity.EntityId = NextEntityId();
             entity.ServerWorld = this;
@@ -469,7 +469,7 @@ namespace MinecraftClone3API.Blocks
         }
 
         /// <summary>Convenience: spawns one entity of the given registered type.</summary>
-        public Entity SpawnEntity(EntityType type, Vector3 position) => SpawnEntity(type.CreateEntity(), position);
+        public Entity SpawnEntity(EntityType type, Vector3D<float> position) => SpawnEntity(type.CreateEntity(), position);
 
         // Reused on the tick thread to collect a chunk's entities before saving + despawning them.
         private readonly List<Entity> _entitySaveScratch = new List<Entity>();
@@ -502,7 +502,7 @@ namespace MinecraftClone3API.Blocks
         /// <summary>Tick-thread: persist the entities currently in <paramref name="chunkPos"/> (so they reload
         /// with the chunk) and remove them from the live world. An entity belongs to the chunk containing its
         /// position.</summary>
-        private void SaveAndDespawnChunkEntities(Vector3i chunkPos)
+        private void SaveAndDespawnChunkEntities(Vector3D<int> chunkPos)
         {
             _entitySaveScratch.Clear();
             foreach (var entity in Entities)
@@ -518,7 +518,7 @@ namespace MinecraftClone3API.Blocks
             }
         }
 
-        private static Vector3i FloorToInt(Vector3 v) => new Vector3i(
+        private static Vector3D<int> FloorToInt(Vector3D<float> v) => new Vector3D<int>(
             (int) MathF.Floor(v.X), (int) MathF.Floor(v.Y), (int) MathF.Floor(v.Z));
 
         /// <summary>Finds a live world entity by id (used to resolve an entity-targeted item use), or null.
@@ -532,7 +532,7 @@ namespace MinecraftClone3API.Blocks
 
         /// <summary>Spawns a dropped-item entity carrying <paramref name="stack"/>, given a registered item
         /// entity type (the first <see cref="EntityKind.Item"/> type). No-op if none is registered.</summary>
-        public EntityItem DropItem(ItemStack stack, Vector3 position)
+        public EntityItem DropItem(ItemStack stack, Vector3D<float> position)
         {
             if (stack.IsEmpty) return null;
             EntityType itemType = null;
@@ -543,7 +543,7 @@ namespace MinecraftClone3API.Blocks
             var item = (EntityItem) SpawnEntity(itemType, position);
             item.Stack = stack;
             // A little upward + sideways pop so drops scatter instead of stacking on one pixel.
-            item.Velocity = new Vector3(
+            item.Velocity = new Vector3D<float>(
                 (float) (_spawnRng.NextDouble() - 0.5) * 0.2f, 0.2f,
                 (float) (_spawnRng.NextDouble() - 0.5) * 0.2f);
             return item;
@@ -552,7 +552,7 @@ namespace MinecraftClone3API.Blocks
         /// <summary>Spawns a falling-block entity for the block id at <paramref name="blockPos"/> (whose cell the
         /// caller has just cleared to air), positioned so it begins exactly where the block was. No-op if no
         /// <see cref="EntityKind.FallingBlock"/> type is registered.</summary>
-        public EntityFallingBlock SpawnFallingBlock(ushort blockId, Vector3i blockPos)
+        public EntityFallingBlock SpawnFallingBlock(ushort blockId, Vector3D<int> blockPos)
         {
             EntityType type = null;
             foreach (var t in GameRegistry.EntityTypes)
@@ -561,7 +561,7 @@ namespace MinecraftClone3API.Blocks
 
             // Position is the block's bottom-centre: a block at by spans by..by+1 (corner-origin), so its floor
             // is by and its horizontal centre is (bx+0.5, bz+0.5).
-            var spawnPos = new Vector3(blockPos.X + 0.5f, blockPos.Y, blockPos.Z + 0.5f);
+            var spawnPos = new Vector3D<float>(blockPos.X + 0.5f, blockPos.Y, blockPos.Z + 0.5f);
             var falling = (EntityFallingBlock) SpawnEntity(type, spawnPos);
             falling.BlockId = blockId;
             falling.Data = new FallingBlockData {BlockId = blockId};
@@ -636,7 +636,7 @@ namespace MinecraftClone3API.Blocks
 
         // Register the freshly-loaded chunk's ticking blocks (those whose persisted block data marks a
         // Block.NeedsServerTick block, e.g. a furnace), so the server resumes ticking them after a load.
-        private void RegisterTickingBlocks(Vector3i chunkInWorld, Chunk chunk)
+        private void RegisterTickingBlocks(Vector3D<int> chunkInWorld, Chunk chunk)
         {
             foreach (var blockInChunk in chunk.BlockDataPositions)
             {
@@ -645,7 +645,7 @@ namespace MinecraftClone3API.Blocks
             }
         }
 
-        private void UnregisterTickingBlocks(Vector3i chunkInWorld)
+        private void UnregisterTickingBlocks(Vector3D<int> chunkInWorld)
         {
             foreach (var pos in _tickingBlocks.Keys)
                 if (ChunkInWorld(pos) == chunkInWorld) _tickingBlocks.TryRemove(pos, out _);
@@ -709,7 +709,7 @@ namespace MinecraftClone3API.Blocks
                 var baseX = (int) MathF.Floor(anchor.Position.X) + ox;
                 var baseZ = (int) MathF.Floor(anchor.Position.Z) + oz;
                 if (!TryFindGround(baseX, (int) MathF.Floor(anchor.Position.Y), baseZ, out var groundY)) continue;
-                SpawnEntity(chosen, new Vector3(baseX + 0.5f, groundY, baseZ + 0.5f));
+                SpawnEntity(chosen, new Vector3D<float>(baseX + 0.5f, groundY, baseZ + 0.5f));
             }
         }
 
@@ -720,7 +720,7 @@ namespace MinecraftClone3API.Blocks
             feetY = 0;
             for (var y = aroundY + 16; y >= aroundY - 16; y--)
             {
-                if (!IsOpaqueFullBlock(new Vector3i(x, y, z))) continue;
+                if (!IsOpaqueFullBlock(new Vector3D<int>(x, y, z))) continue;
                 if (GetBlock(x, y + 1, z) != BlockRegistry.BlockAir) continue;
                 if (GetBlock(x, y + 2, z) != BlockRegistry.BlockAir) continue;
                 feetY = y + 1;
@@ -744,7 +744,7 @@ namespace MinecraftClone3API.Blocks
 
             // Threads are stopped, so Entities is quiescent: bucket every live entity by its owning chunk and
             // persist each chunk's set (chunks that lost all their entities get an empty save to clear them).
-            var byChunk = new Dictionary<Vector3i, List<Entity>>();
+            var byChunk = new Dictionary<Vector3D<int>, List<Entity>>();
             foreach (var entity in Entities)
             {
                 var chunkPos = ChunkInWorld(FloorToInt(entity.Position));
@@ -769,7 +769,7 @@ namespace MinecraftClone3API.Blocks
                 var didWork = false;
                 while (true)
                 {
-                    Vector3i blockPos;
+                    Vector3D<int> blockPos;
                     lock (_queuedLightUpdates)
                     {
                         if (_queuedLightUpdates.Count == 0) break;
@@ -833,7 +833,7 @@ namespace MinecraftClone3API.Blocks
 
                 for (var i = 0; i < _loadPlayersScratch.Count; i++)
                 {
-                    if (i >= _loadPlayerChunkLists.Count) _loadPlayerChunkLists.Add(new List<Vector3i>());
+                    if (i >= _loadPlayerChunkLists.Count) _loadPlayerChunkLists.Add(new List<Vector3D<int>>());
                     var playerChunksToLoad = _loadPlayerChunkLists[i];
                     var playerChunk = ChunkInWorld(_loadPlayersScratch[i].Position.ToVector3i());
 
@@ -844,7 +844,7 @@ namespace MinecraftClone3API.Blocks
                         for (var z = -TerrainRadius; z <= TerrainRadius; z++)
                             for (var y = _generator.MinChunkY; y <= _generator.MaxChunkY; y++)
                             {
-                                var chunkPos = new Vector3i(playerChunk.X + x, y, playerChunk.Z + z);
+                                var chunkPos = new Vector3D<int>(playerChunk.X + x, y, playerChunk.Z + z);
                                 if (!_loadDedup.Add(chunkPos)) continue;
 
                                 var known = _populatedChunks.ContainsKey(chunkPos);
@@ -948,7 +948,7 @@ namespace MinecraftClone3API.Blocks
                     for (var rx = -regionReach; rx <= regionReach && filled < MaxLodRegionsPerIter; rx++)
                     for (var rz = -regionReach; rz <= regionReach && filled < MaxLodRegionsPerIter; rz++)
                     {
-                        var key = new Vector3i(prX + rx, 0, prZ + rz);
+                        var key = new Vector3D<int>(prX + rx, 0, prZ + rz);
                         if (_lodStore.HasRegion(key)) continue;
                         if (!RegionInRing(key, pb, innerBlocksSq, lodBlocksSq)) continue;
 
@@ -963,7 +963,7 @@ namespace MinecraftClone3API.Blocks
             }
         }
 
-        private static bool RegionInRing(Vector3i key, Vector3i playerBlock, float innerSq, float outerSq)
+        private static bool RegionInRing(Vector3D<int> key, Vector3D<int> playerBlock, float innerSq, float outerSq)
         {
             var cx = (key.X << 7) + LodColumn.RegionBlocks / 2;
             var cz = (key.Z << 7) + LodColumn.RegionBlocks / 2;
@@ -973,7 +973,7 @@ namespace MinecraftClone3API.Blocks
             return distSq >= innerSq && distSq <= outerSq;
         }
 
-        private void FillLodRegion(Vector3i key)
+        private void FillLodRegion(Vector3D<int> key)
         {
             var columns = new long[LodColumn.ColumnCount];
             var baseX = key.X << 7;
@@ -1009,17 +1009,17 @@ namespace MinecraftClone3API.Blocks
 
         private struct LightNode
         {
-            public readonly Vector3i Position;
+            public readonly Vector3D<int> Position;
             public readonly int Value;
 
-            public LightNode(Vector3i position, int value)
+            public LightNode(Vector3D<int> position, int value)
             {
                 Position = position;
                 Value = value;
             }
         }
 
-        private void UpdateLightValues(Vector3i blockPos)
+        private void UpdateLightValues(Vector3D<int> blockPos)
         {
             var block = GetBlock(blockPos);
             var blockEmittingLightLevel = block.GetLightLevel(this, blockPos);
@@ -1174,7 +1174,7 @@ namespace MinecraftClone3API.Blocks
         /// direction (including down — deep open shafts dim with depth; see CLAUDE.md), and values are a
         /// single 0..15 scalar so it keeps its own int cache. Reuses the block-light queues + chunk cache.
         /// </summary>
-        private void UpdateSkyValues(Vector3i blockPos)
+        private void UpdateSkyValues(Vector3D<int> blockPos)
         {
             _lightChunkCache.Clear();
 
@@ -1279,7 +1279,7 @@ namespace MinecraftClone3API.Blocks
         /// <summary>True if a straight upward scan from <paramref name="blockPos"/> reaches open sky (an
         /// unloaded chunk above the loaded column) without hitting an opaque full block. Bounded by
         /// <see cref="SkyScanMaxHeight"/>. Reuses the flood's <see cref="_lightChunkCache"/>.</summary>
-        private bool SkyExposed(Vector3i blockPos)
+        private bool SkyExposed(Vector3D<int> blockPos)
         {
             var pos = blockPos;
             for (var i = 0; i < SkyScanMaxHeight; i++)
@@ -1292,7 +1292,7 @@ namespace MinecraftClone3API.Blocks
             return true;
         }
 
-        private bool LightChunkEmpty(Vector3i blockPos)
+        private bool LightChunkEmpty(Vector3D<int> blockPos)
         {
             var chunkPos = ChunkInWorld(blockPos);
             if (!_lightChunkCache.TryGetValue(chunkPos, out var chunk))
@@ -1304,7 +1304,7 @@ namespace MinecraftClone3API.Blocks
             return chunk == null;
         }
 
-        private CachedChunk LoadChunk(Vector3i position)
+        private CachedChunk LoadChunk(Vector3D<int> position)
         {
             var diskStart = Stopwatch.GetTimestamp();
             var chunk = _serializer.LoadChunk(this, position);

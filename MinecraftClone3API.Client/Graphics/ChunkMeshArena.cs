@@ -1,14 +1,15 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
-using OpenTK.Graphics.OpenGL4;
-using OpenTK.Mathematics;
+using MinecraftClone3API.Graphics.Rhi;
+using Silk.NET.Maths;
+using Silk.NET.WebGPU;
 
 namespace MinecraftClone3API.Graphics
 {
     /// <summary>
     /// A coalescing first-fit suballocator over a 1-D element range. Pure CPU bookkeeping; the owner
-    /// (<see cref="ChunkMeshArena"/>) keeps the backing GL buffer in sync. Touched main-thread only.
+    /// (<see cref="ChunkMeshArena"/>) keeps the backing GPU buffer in sync. Touched main-thread only.
     /// </summary>
     internal sealed class RangeAllocator
     {
@@ -67,113 +68,116 @@ namespace MinecraftClone3API.Graphics
     }
 
     /// <summary>
-    /// Shared vertex/index "arena" for all OPAQUE chunk meshes. Every chunk's opaque mesh occupies a
-    /// sub-range of one big set of GL buffers, so the whole visible opaque set is drawn with ONE
-    /// <c>glMultiDrawElementsBaseVertex</c> per pass (geometry + shadow) instead of ~one bind+draw per chunk.
-    /// That per-chunk draw-call overhead — not fill — was the steady-state GPU/CPU bottleneck (see CLAUDE.md
-    /// rendering notes). Positions are baked world-space at mesh time, so no per-chunk model matrix is needed
-    /// (a single shared draw can't carry one). All access is main-thread (upload in the client's upload loop,
-    /// free in its dispose drain), so no locking — GL stays on the main thread (Invariant 1).
+    /// Per-chunk draw metadata published to the GPU (one element per resident slot). The <c>Cull</c> compute
+    /// shader frustum-tests the chunk's 16³ AABB (<see cref="MinCorner"/> + 16) and, if visible, appends a
+    /// <c>DrawIndexedIndirect</c> command. <see cref="IndexCount"/> == 0 marks an empty / freed slot the cull
+    /// skips. Layout (and the 32-byte stride) must match <c>ChunkMeta</c> in <c>Cull.compute.wgsl</c>.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential, Size = 32)]
+    internal struct ChunkMeta
+    {
+        public Vector3 MinCorner;
+        public uint IndexCount;
+        public uint FirstIndex;
+        public int BaseVertex;
+        public uint Flags;
+        public uint Pad;
+    }
+
+    /// <summary>
+    /// Shared vertex/index "arena" for OPAQUE chunk (or LOD) meshes. Every chunk's opaque mesh occupies a
+    /// sub-range of one big set of GPU buffers, and the arena publishes a <see cref="ChunkMeta"/> storage
+    /// buffer — one entry per resident chunk — that the <c>Cull</c> compute shader reads to build the indirect
+    /// draw list. The whole visible opaque set then draws with ONE <c>MultiDrawIndexedIndirectCount</c> per
+    /// pass (geometry + shadow), and the CPU never builds a visible set (GPU-driven culling). Positions are
+    /// baked world-space at mesh time, so no per-chunk model matrix is needed.
+    ///
+    /// <para>Buffer creation + <see cref="GpuBuffer.QueueWrite{T}"/> are thread-safe in wgpu-native, so uploads
+    /// can run off the main thread (see <c>docs/threading.md</c>); growth runs on a transient command encoder
+    /// submitted immediately, independent of the frame encoder. The shared <see cref="RangeAllocator"/> is the
+    /// allocation source of truth.</para>
     /// </summary>
     public sealed class ChunkMeshArena : IDisposable
     {
-        /// <summary>A chunk's reserved sub-range. IndexCount == 0 means "no opaque geometry / unallocated".</summary>
+        /// <summary>A chunk's reserved sub-range. IndexCount == 0 means "no opaque geometry / unallocated".
+        /// <see cref="MetaSlot"/> is the chunk's index in the published <see cref="ChunkMeta"/> array.</summary>
         public struct Allocation
         {
             public int VertexOffset;
             public int VertexCount;
             public int IndexOffset;
             public int IndexCount;
+            public int MetaSlot;
         }
 
-        // 5 parallel vertex streams (must mirror MeshBuffer's packed layout) + 1 index stream:
-        // 0 pos float3 (12), 1 uv float2 (8), 2 packed uint (4), 3 tint RGBA8 (4), 4 light RGBA8 (4).
+        // 5 parallel vertex streams (must mirror MeshBuffer's packed layout + WorldGeometry.wgsl vertex slots) +
+        // 1 index stream: 0 pos float3 (12), 1 uv float2 (8), 2 packed uint (4), 3 tint RGBA8 (4), 4 light RGBA8 (4).
         private static readonly int[] AttribBytes = {12, 8, 4, 4, 4};
 
-        private readonly int[] _vbo = new int[5];
-        private int _ibo;
-        private int _geometryVao; // all 5 attributes — the G-buffer geometry pass
-        private int _shadowVao;   // position only — the depth-only shadow pass (skips fetching 60 unused bytes/vertex)
+        // Matches the 32-byte ChunkMeta WGSL element stride (see the struct above).
+        private const int MetaBytes = 32;
+
+        /// <summary>The five vertex-buffer layouts a geometry pipeline drawing from this arena declares (one
+        /// attribute per slot, matching <c>WorldGeometry.wgsl</c>). The shadow pipeline uses only slot 0.</summary>
+        public static readonly VertexBufferDesc[] GeometryVertexLayout =
+        {
+            new VertexBufferDesc(12, new[] { new VertexAttr(0, VertexFormat.Float32x3, 0) }),
+            new VertexBufferDesc(8, new[] { new VertexAttr(1, VertexFormat.Float32x2, 0) }),
+            new VertexBufferDesc(4, new[] { new VertexAttr(2, VertexFormat.Uint32, 0) }),
+            new VertexBufferDesc(4, new[] { new VertexAttr(3, VertexFormat.Unorm8x4, 0) }),
+            new VertexBufferDesc(4, new[] { new VertexAttr(4, VertexFormat.Unorm8x4, 0) }),
+        };
+
+        public static readonly VertexBufferDesc[] ShadowVertexLayout =
+        {
+            new VertexBufferDesc(12, new[] { new VertexAttr(0, VertexFormat.Float32x3, 0) }),
+        };
+
+        private readonly GpuBuffer[] _vbo = new GpuBuffer[5];
+        private GpuBuffer _ibo;
 
         private readonly RangeAllocator _vertexAlloc;
         private readonly RangeAllocator _indexAlloc;
 
-        // Reused multidraw scratch (grown as needed) so the per-frame draw allocates nothing.
-        private int[] _counts = new int[1024];
-        private IntPtr[] _offsets = new IntPtr[1024];
-        private int[] _baseVertices = new int[1024];
+        // CPU mirror of the published metadata. Freed slots are reused via _freeSlots; the GPU buffer covers
+        // [0, _metas.Count), and the cull dispatch skips any slot with IndexCount == 0.
+        private readonly List<ChunkMeta> _metas = new List<ChunkMeta>();
+        private readonly Stack<int> _freeSlots = new Stack<int>();
+        private GpuBuffer _metaBuffer;
+        private int _metaCapacity;
+        private bool _metaDirty;
 
-        public ChunkMeshArena(int initialVertices = 256 * 1024, int initialIndices = 384 * 1024)
+        private readonly string _label;
+
+        /// <summary>The storage buffer the cull compute reads (<c>array&lt;ChunkMeta&gt;</c>). The reference
+        /// changes when the buffer grows, so a cached cull bind group must be rebuilt — compare against this.</summary>
+        public GpuBuffer MetaBuffer => _metaBuffer;
+
+        /// <summary>Number of published slots (the cull dispatch covers all of them; empty slots are skipped).</summary>
+        public int MetaCount => _metas.Count;
+
+        public ChunkMeshArena(string label = "chunkArena", int initialVertices = 256 * 1024,
+            int initialIndices = 384 * 1024, int initialChunks = 4096)
         {
-            GL.GenBuffers(5, _vbo);
-            _ibo = GL.GenBuffer();
+            _label = label;
             for (var i = 0; i < 5; i++)
-            {
-                GL.BindBuffer(BufferTarget.ArrayBuffer, _vbo[i]);
-                GL.BufferData(BufferTarget.ArrayBuffer, (IntPtr) ((long) initialVertices * AttribBytes[i]), IntPtr.Zero,
-                    BufferUsageHint.DynamicDraw);
-            }
-            GL.BindBuffer(BufferTarget.ElementArrayBuffer, _ibo);
-            GL.BufferData(BufferTarget.ElementArrayBuffer, (IntPtr) ((long) initialIndices * sizeof(uint)), IntPtr.Zero,
-                BufferUsageHint.DynamicDraw);
+                _vbo[i] = new GpuBuffer((ulong)((long)initialVertices * AttribBytes[i]),
+                    BufferUsage.Vertex | BufferUsage.CopyDst | BufferUsage.CopySrc, $"{label}.vbo{i}");
+            _ibo = new GpuBuffer((ulong)((long)initialIndices * sizeof(uint)),
+                BufferUsage.Index | BufferUsage.CopyDst | BufferUsage.CopySrc, $"{label}.ibo");
 
-            _geometryVao = GL.GenVertexArray();
-            _shadowVao = GL.GenVertexArray();
-            SetupVaos();
+            _metaCapacity = initialChunks;
+            _metaBuffer = new GpuBuffer((ulong)(_metaCapacity * MetaBytes),
+                BufferUsage.Storage | BufferUsage.CopyDst, $"{label}.meta");
 
             _vertexAlloc = new RangeAllocator(initialVertices);
             _indexAlloc = new RangeAllocator(initialIndices);
-
-            GraphicsDebug.Label(ObjectLabelIdentifier.VertexArray, _geometryVao, "ChunkArenaGeometryVAO");
-            GraphicsDebug.Label(ObjectLabelIdentifier.VertexArray, _shadowVao, "ChunkArenaShadowVAO");
         }
-
-        private void SetupVaos()
-        {
-            GL.BindVertexArray(_geometryVao);
-            BindVertexFormat();
-            GL.BindBuffer(BufferTarget.ElementArrayBuffer, _ibo);
-
-            GL.BindVertexArray(_shadowVao);
-            GL.BindBuffer(BufferTarget.ArrayBuffer, _vbo[0]);
-            GL.EnableVertexAttribArray(0);
-            GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 0, 0);
-            GL.BindBuffer(BufferTarget.ElementArrayBuffer, _ibo);
-
-            GL.BindVertexArray(0);
-        }
-
-        /// <summary>Wires the 5 packed attribute streams to the currently-bound VAO (shared by
-        /// <see cref="VertexArrayObject"/> for the transparent path — keep the two in sync).</summary>
-        internal static void BindVertexFormat(int posVbo, int uvVbo, int packedVbo, int colorVbo, int lightVbo)
-        {
-            GL.BindBuffer(BufferTarget.ArrayBuffer, posVbo);
-            GL.EnableVertexAttribArray(0);
-            GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 0, 0);
-
-            GL.BindBuffer(BufferTarget.ArrayBuffer, uvVbo);
-            GL.EnableVertexAttribArray(1);
-            GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, 0, 0);
-
-            GL.BindBuffer(BufferTarget.ArrayBuffer, packedVbo);
-            GL.EnableVertexAttribArray(2);
-            GL.VertexAttribIPointer(2, 1, VertexAttribIntegerType.UnsignedInt, 0, 0);
-
-            GL.BindBuffer(BufferTarget.ArrayBuffer, colorVbo);
-            GL.EnableVertexAttribArray(3);
-            GL.VertexAttribPointer(3, 4, VertexAttribPointerType.UnsignedByte, true, 0, 0);
-
-            GL.BindBuffer(BufferTarget.ArrayBuffer, lightVbo);
-            GL.EnableVertexAttribArray(4);
-            GL.VertexAttribPointer(4, 4, VertexAttribPointerType.UnsignedByte, true, 0, 0);
-        }
-
-        private void BindVertexFormat() =>
-            BindVertexFormat(_vbo[0], _vbo[1], _vbo[2], _vbo[3], _vbo[4]);
 
         /// <summary>Uploads a chunk's freshly-meshed opaque CPU buffers into the arena, (re)allocating its
-        /// sub-range as needed, and returns the updated allocation handle. Main-thread GL.</summary>
-        public Allocation Upload(Allocation existing, MeshBuffer mesh)
+        /// sub-range as needed, and publishes its <see cref="ChunkMeta"/>. <paramref name="minCorner"/> is the
+        /// chunk's world-space minimum corner (its 16³ AABB origin) for GPU culling.</summary>
+        public Allocation Upload(Allocation existing, MeshBuffer mesh, Vector3 minCorner)
         {
             var vCount = mesh.VertexCount;
             var iCount = mesh.IndicesCount;
@@ -184,16 +188,19 @@ namespace MinecraftClone3API.Graphics
                 return default;
             }
 
-            // Reuse the existing range when it fits exactly; otherwise free and allocate fresh.
+            // Reuse the existing range when it fits exactly; otherwise free and allocate fresh. A chunk with no
+            // prior geometry has IndexCount == 0 (its MetaSlot is meaningless), so don't reuse slot 0 by mistake.
             if (!(existing.IndexCount == iCount && existing.VertexCount == vCount))
             {
-                Free(existing);
+                var slot = existing.IndexCount > 0 ? existing.MetaSlot : -1;
+                Free(existing, releaseSlot: false);
                 var vOff = AllocVertices(vCount);
                 var iOff = AllocIndices(iCount);
                 existing = new Allocation
                 {
                     VertexOffset = (int) vOff, VertexCount = vCount,
-                    IndexOffset = (int) iOff, IndexCount = iCount
+                    IndexOffset = (int) iOff, IndexCount = iCount,
+                    MetaSlot = slot >= 0 ? slot : AllocSlot(),
                 };
             }
 
@@ -203,19 +210,77 @@ namespace MinecraftClone3API.Graphics
             UploadList(_vbo[3], existing.VertexOffset, AttribBytes[3], mesh.Colors);
             UploadList(_vbo[4], existing.VertexOffset, AttribBytes[4], mesh.Lights);
 
-            GL.BindBuffer(BufferTarget.ElementArrayBuffer, _ibo);
-            GL.BufferSubData(BufferTarget.ElementArrayBuffer, (IntPtr) ((long) existing.IndexOffset * sizeof(uint)),
-                (IntPtr) ((long) iCount * sizeof(uint)),
-                ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(mesh.Indices)));
+            _ibo.QueueWrite<uint>(CollectionsMarshal.AsSpan(mesh.Indices), (ulong)((long)existing.IndexOffset * sizeof(uint)));
+
+            _metas[existing.MetaSlot] = new ChunkMeta
+            {
+                MinCorner = minCorner,
+                IndexCount = (uint) iCount,
+                FirstIndex = (uint) existing.IndexOffset,
+                BaseVertex = existing.VertexOffset,
+                Flags = 0,
+                Pad = 0,
+            };
+            _metaDirty = true;
 
             return existing;
         }
 
-        public void Free(Allocation a)
+        public void Free(Allocation a) => Free(a, releaseSlot: true);
+
+        private void Free(Allocation a, bool releaseSlot)
         {
             if (a.IndexCount == 0) return;
             _vertexAlloc.Free(a.VertexOffset, a.VertexCount);
             _indexAlloc.Free(a.IndexOffset, a.IndexCount);
+            if (a.MetaSlot >= 0)
+            {
+                // Zero the slot so the cull skips it; only return it to the free list when the chunk is gone
+                // for good (a reupload keeps its slot so the meta index in its Allocation stays valid).
+                _metas[a.MetaSlot] = default;
+                _metaDirty = true;
+                if (releaseSlot) _freeSlots.Push(a.MetaSlot);
+            }
+        }
+
+        private int AllocSlot()
+        {
+            if (_freeSlots.Count > 0) return _freeSlots.Pop();
+            _metas.Add(default);
+            return _metas.Count - 1;
+        }
+
+        /// <summary>Re-upload the published metadata to the GPU if it changed since the last frame, growing the
+        /// storage buffer (and signalling a bind-group rebuild via a new <see cref="MetaBuffer"/>) when needed.
+        /// Called once per frame before the cull dispatch.</summary>
+        public void FlushMeta()
+        {
+            if (!_metaDirty) return;
+            _metaDirty = false;
+
+            if (_metas.Count > _metaCapacity)
+            {
+                while (_metas.Count > _metaCapacity) _metaCapacity *= 2;
+                _metaBuffer.Dispose();
+                _metaBuffer = new GpuBuffer((ulong)(_metaCapacity * MetaBytes),
+                    BufferUsage.Storage | BufferUsage.CopyDst, $"{_label}.meta");
+            }
+            if (_metas.Count > 0)
+                _metaBuffer.QueueWrite<ChunkMeta>(CollectionsMarshal.AsSpan(_metas));
+        }
+
+        /// <summary>Bind the five vertex streams + index buffer for the G-buffer geometry pass.</summary>
+        public void BindGeometry(RenderPass pass)
+        {
+            for (uint i = 0; i < 5; i++) pass.SetVertexBuffer(i, _vbo[i]);
+            pass.SetIndexBuffer(_ibo, IndexFormat.Uint32);
+        }
+
+        /// <summary>Bind position-only (slot 0) + index for the depth-only shadow pass.</summary>
+        public void BindShadow(RenderPass pass)
+        {
+            pass.SetVertexBuffer(0, _vbo[0]);
+            pass.SetIndexBuffer(_ibo, IndexFormat.Uint32);
         }
 
         private long AllocVertices(int count)
@@ -223,8 +288,9 @@ namespace MinecraftClone3API.Graphics
             var off = _vertexAlloc.Allocate(count);
             if (off >= 0) return off;
 
-            var newCap = _vertexAlloc.Capacity;
-            while (newCap - HighWater(_vertexAlloc) < count) newCap *= 2; // ensure the grown tail can hold it
+            var oldCap = _vertexAlloc.Capacity;
+            var newCap = oldCap;
+            while (newCap - oldCap < count) newCap *= 2;
             GrowVertexBuffers(newCap);
             _vertexAlloc.Grow(newCap);
             return _vertexAlloc.Allocate(count);
@@ -235,127 +301,38 @@ namespace MinecraftClone3API.Graphics
             var off = _indexAlloc.Allocate(count);
             if (off >= 0) return off;
 
-            var newCap = _indexAlloc.Capacity;
-            while (newCap - HighWater(_indexAlloc) < count) newCap *= 2;
+            var oldCap = _indexAlloc.Capacity;
+            var newCap = oldCap;
+            while (newCap - oldCap < count) newCap *= 2;
             GrowIndexBuffer(newCap);
             _indexAlloc.Grow(newCap);
             return _indexAlloc.Allocate(count);
         }
 
-        // Worst-case "could the doubled tail hold it" guard: a coalesced free list might already have a big
-        // tail, but doubling capacity always gives at least the old capacity of fresh contiguous tail, which
-        // is >= any single chunk mesh in practice; the loop just guarantees termination for huge meshes.
-        private static long HighWater(RangeAllocator a) => a.Capacity;
-
         private void GrowVertexBuffers(long newCap)
         {
+            var enc = GpuCommandEncoder.Create($"{_label}.growVertex");
             for (var i = 0; i < 5; i++)
-            {
-                var newId = GL.GenBuffer();
-                GL.BindBuffer(BufferTarget.CopyWriteBuffer, newId);
-                GL.BufferData(BufferTarget.CopyWriteBuffer, (IntPtr) (newCap * AttribBytes[i]), IntPtr.Zero,
-                    BufferUsageHint.DynamicDraw);
-                GL.BindBuffer(BufferTarget.CopyReadBuffer, _vbo[i]);
-                GL.CopyBufferSubData(BufferTarget.CopyReadBuffer, BufferTarget.CopyWriteBuffer, IntPtr.Zero, IntPtr.Zero,
-                    (IntPtr) (_vertexAlloc.Capacity * AttribBytes[i]));
-                GL.DeleteBuffer(_vbo[i]);
-                _vbo[i] = newId;
-            }
-            SetupVaos();
+                _vbo[i].Grow(enc, (ulong)(newCap * AttribBytes[i]), (ulong)(_vertexAlloc.Capacity * AttribBytes[i]));
+            enc.SubmitImmediate($"{_label}.growVertex");
         }
 
         private void GrowIndexBuffer(long newCap)
         {
-            var newId = GL.GenBuffer();
-            GL.BindBuffer(BufferTarget.CopyWriteBuffer, newId);
-            GL.BufferData(BufferTarget.CopyWriteBuffer, (IntPtr) (newCap * sizeof(uint)), IntPtr.Zero,
-                BufferUsageHint.DynamicDraw);
-            GL.BindBuffer(BufferTarget.CopyReadBuffer, _ibo);
-            GL.CopyBufferSubData(BufferTarget.CopyReadBuffer, BufferTarget.CopyWriteBuffer, IntPtr.Zero, IntPtr.Zero,
-                (IntPtr) (_indexAlloc.Capacity * sizeof(uint)));
-            GL.DeleteBuffer(_ibo);
-            _ibo = newId;
-            SetupVaos();
+            var enc = GpuCommandEncoder.Create($"{_label}.growIndex");
+            _ibo.Grow(enc, (ulong)(newCap * sizeof(uint)), (ulong)(_indexAlloc.Capacity * sizeof(uint)));
+            enc.SubmitImmediate($"{_label}.growIndex");
         }
 
-        private static void UploadList<T>(int buffer, int vertexOffset, int elemBytes, List<T> data) where T : struct
-        {
-            GL.BindBuffer(BufferTarget.ArrayBuffer, buffer);
-            GL.BufferSubData(BufferTarget.ArrayBuffer, (IntPtr) ((long) vertexOffset * elemBytes),
-                (IntPtr) ((long) data.Count * elemBytes),
-                ref MemoryMarshal.GetReference(CollectionsMarshal.AsSpan(data)));
-        }
-
-        /// <summary>Draws the given chunks' opaque sub-ranges with one multidraw. <paramref name="shadow"/>
-        /// selects the position-only VAO (depth pass). Returns the number of sub-draws issued.</summary>
-        public int Draw(List<ChunkRenderData> chunks, bool shadow)
-        {
-            var n = chunks.Count;
-            if (n > _counts.Length)
-            {
-                var cap = _counts.Length;
-                while (cap < n) cap *= 2;
-                _counts = new int[cap];
-                _offsets = new IntPtr[cap];
-                _baseVertices = new int[cap];
-            }
-
-            var draws = 0;
-            for (var i = 0; i < n; i++)
-            {
-                var a = chunks[i].OpaqueAlloc;
-                if (a.IndexCount == 0) continue;
-                _counts[draws] = a.IndexCount;
-                _offsets[draws] = (IntPtr) ((long) a.IndexOffset * sizeof(uint));
-                _baseVertices[draws] = a.VertexOffset;
-                draws++;
-            }
-            if (draws == 0) return 0;
-
-            GL.BindVertexArray(shadow ? _shadowVao : _geometryVao);
-            GL.MultiDrawElementsBaseVertex(PrimitiveType.Triangles, _counts, DrawElementsType.UnsignedInt,
-                _offsets, draws, _baseVertices);
-            return draws;
-        }
-
-        /// <summary>Same as <see cref="Draw(List{ChunkRenderData},bool)"/> for Phase-2 LOD regions (separate
-        /// list type, identical multidraw). Used by a dedicated LOD arena.</summary>
-        public int Draw(List<LodRenderData> lods, bool shadow)
-        {
-            var n = lods.Count;
-            if (n > _counts.Length)
-            {
-                var cap = _counts.Length;
-                while (cap < n) cap *= 2;
-                _counts = new int[cap];
-                _offsets = new IntPtr[cap];
-                _baseVertices = new int[cap];
-            }
-
-            var draws = 0;
-            for (var i = 0; i < n; i++)
-            {
-                var a = lods[i].OpaqueAlloc;
-                if (a.IndexCount == 0) continue;
-                _counts[draws] = a.IndexCount;
-                _offsets[draws] = (IntPtr) ((long) a.IndexOffset * sizeof(uint));
-                _baseVertices[draws] = a.VertexOffset;
-                draws++;
-            }
-            if (draws == 0) return 0;
-
-            GL.BindVertexArray(shadow ? _shadowVao : _geometryVao);
-            GL.MultiDrawElementsBaseVertex(PrimitiveType.Triangles, _counts, DrawElementsType.UnsignedInt,
-                _offsets, draws, _baseVertices);
-            return draws;
-        }
+        private static void UploadList<T>(GpuBuffer buffer, int vertexOffset, int elemBytes, List<T> data)
+            where T : unmanaged
+            => buffer.QueueWrite<T>(CollectionsMarshal.AsSpan(data), (ulong)((long)vertexOffset * elemBytes));
 
         public void Dispose()
         {
-            GL.DeleteVertexArray(_geometryVao);
-            GL.DeleteVertexArray(_shadowVao);
-            GL.DeleteBuffers(5, _vbo);
-            GL.DeleteBuffer(_ibo);
+            for (var i = 0; i < 5; i++) _vbo[i]?.Dispose();
+            _ibo?.Dispose();
+            _metaBuffer?.Dispose();
         }
     }
 }

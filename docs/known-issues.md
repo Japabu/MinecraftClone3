@@ -3,25 +3,63 @@
 This list is for *open* work only — when an item is resolved, delete it or move its rationale into the
 relevant permanent doc. Not a changelog.
 
-- **Held-item rendering & chest — accepted simplifications.** Held items render two ways: the **first-person
-  viewmodel** (`HeldItemRenderer`, lower-right, empty hand draws nothing — no first-person arm) and, on the
-  **player body's right arm**, in third person and for remote players (`EntityRenderer.DrawHeldItem`). The
-  first-person pose is sourced from the resource pack exactly like Minecraft (`ItemDisplay` — the model's
-  `display.firstperson_righthand` × MC's arm/swing constants), but the **body-attached** pose
-  (`EntityRenderer`'s `HeldBlockArm`/`HeldFlatArm`) is still **hand-tuned** and wants a visual pass against MC's
-  `thirdperson_righthand` display. **Flat held items can read as faintly doubled** at off-perpendicular angles:
-  the extruded mesh draws a full front *and* back sprite face and the viewmodel draws with culling off, so the
-  two faces can separate slightly on screen — a true fix would cull the back face or thin/merge the faces. The
-  body-attached item follows only the **walk** animation, not the local attack-swing (`SwingPhase` is
-  first-person only), and remote players' swing isn't networked. `BlockChest`'s facing→yaw table is tunable
-  against a runtime check (the latch may point the wrong way until then), and because the box-model loader
-  **mirrors z** (`BedrockModelLoader`), confirm the front/back-facing textures aren't flipped front-to-back at
-  runtime. The chest is **single only** (no double chest). Its lid open/close animation is driven by **this
-  client's** open screen only — a chest a *remote* player opens won't animate here (no viewer-count sync). It's
-  treated as a non-full, light-transmitting block for neighbour face-culling. `BlockEntityRenderer` re-scans the
-  sparse per-chunk block-data of nearby chunks each frame (bounded to a chunk radius) rather than maintaining an
-  event-driven set of block-entity positions — fine for the few chests in view, revisit if block entities
-  become common.
+- **WebGPU renderer — matches the GL renderer's image closely; a few overlay features aren't ported yet.**
+  The GL→WebGPU (Silk.NET.WebGPU) migration runs on Metal and was diffed against the OpenGL `master` build
+  with a seeded benchmark fly-through (10 frames/scene, same camera path): **the sky is pixel-identical** and
+  terrain/water/shadows are within a few percent. The world is composited in display (gamma) space and the
+  present pass just clamps to [0,1] — no tonemap curve and no gamma re-encode — to match the GL output exactly.
+  Reverse-Z reconstruction (`PositionFromDepth` in Composition/ShadowResolve) negates ndc.y vs the uv basis and
+  addresses the depth texel from uv (not the fragment's framebuffer position — wrong in the half-res shadow
+  pass); the sky ray is rebuilt from two inverse-projection points (not a camera-relative single point). Open:
+  - **`Frustum.Set` uses the GL `[-1,1]` near-plane formula** (`col3 + col2`) while WebGPU clip-z is `[0,1]`.
+    The 4 side planes — which do the real chunk culling — are correct; near/far are approximate and, under the
+    infinite-far projection, the far plane is a no-op (distance is bounded by the cull compute's `maxDistance`).
+    Harmless for chunk culling; tighten if a near-camera clip artifact ever shows.
+  - **Off-thread chunk upload is NOT done (migration level-up 3, deferred).** `ChunkRenderData` creation +
+    `GpuBuffer` upload still run on the main thread; the WebGPU queue is thread-safe, so moving meshing→upload
+    onto the mesh pool is the remaining performance level-up. `docs/threading.md` Invariants 1 & 2 still
+    describe the main-thread model.
+  - **GPU pass timing + GPU-culled draw counts read 0 (dev tooling, migration level-up M7 deferred).**
+    `GpuTimers` is a no-op, so the F3 `gpu … ms` field and the profiler/benchmark `gpuMs`/`shadowMs`/`geomMs`/
+    `compMs` columns are 0 (needs WebGPU timestamp-query `timestampWrites`, feature-gated). The F3 `chunks drawn`
+    / `lod drawn` numerators are 0 because the GPU cull compute owns the post-cull count with no CPU readback
+    (the CPU visible set is intentionally gone under GPU-driven culling — would need a count buffer map-back).
+    The profiler CSV `gapMs` column is also 0 (the inter-frame gap timer wasn't carried onto the Silk loop).
+    Gameplay/visuals are unaffected; `docs/profiling.md` documents the current 0 state.
+  - **16× anisotropic block-atlas filtering is dropped** — WebGPU forbids combining nearest-magnification (the
+    crisp pixel-art look) with hardware anisotropy, so the block sampler keeps trilinear mips but no aniso;
+    grazing-angle distant terrain is slightly blurrier than the GL build. Intrinsic platform trade-off.
+  - **Deliberate, not defects** (don't "fix"): the `Gpu` static facade (global device access, single-threaded
+    init) and the split where Core uses literal Silk types while Client/exe keep readability aliases
+    (`Vector3`, `Matrix4`, …) — both documented in-code.
+
+- **Alpha-tested foliage seams into "shells" at distance (deferred — needs a real AA pass).** Cutout blocks
+  (`BlockLeaves`/`BlockGlass`, `TransparencyType.Cutoff`) are alpha-tested cubes sampled through the trilinear
+  block-atlas mip chain. Leaf textures are high-frequency cutouts, so every mip level looks meaningfully
+  different (in both alpha *and* colour); at distance perspective compresses each mip-transition blend into
+  ~1 screen pixel, so the chain reads as hard concentric rings ("cubes") centred on the camera that slide as
+  you move. **This is not a migration regression** — GL `master` shows it too (its 16× anisotropy reduces but
+  doesn't remove it), and disabling mips entirely (sampling mip 0) is the only thing that fully kills it.
+  - Ruled out by testing: the `fwidth` median-preserving alpha test (already in `WorldGeometry.wgsl`) only
+    sharpens the *edge*, not the per-level drift. Coverage-preserving mips (Castaño / DirectXTex
+    `ScaleMipMapsAlphaForCoverage`) can't hold coverage on a 16px texture — after one box-downsample it has
+    only ~5 distinct alpha values, so coverage lands in coarse ±0.1 steps and the seam persists. Anisotropy
+    is both forbidden by WebGPU under nearest-magnification *and* insufficient (master has it and still seams).
+    Freezing only the alpha *test* to mip 0 (mipped colour) still seams — so the colour mip chain contributes,
+    not just the alpha.
+  - The known-good workaround (built, verified, then reverted pending a proper fix): tag cutout faces with a
+    per-vertex bit and sample them at **mip 0** for colour *and* alpha, leaving solid terrain on the full mip
+    chain. That removes the seams (it's effectively "mipmapped leaves off", à la Minecraft) at the cost of no
+    minification AA on leaves — faint edge shimmer on distant canopy in motion.
+  - The elegant fixes all need an AA pass the deferred renderer doesn't have yet: **hashed alpha testing**
+    (Wyman/McGuire) denoised by **TAA**, or **MSAA alpha-to-coverage** (needs a multisampled target — costly
+    in deferred), or brute-force **SSAA** (supersample + downsample, which also preserves the crisp pixel-art
+    look). Revisit when an AA/temporal pass lands (see the dropped-anisotropy note above); until then leaves
+    keep the plain trilinear+`fwidth` path and the seam is accepted.
+- **Benchmark screenshots omit the HUD.** `Screenshot` reads the HDR scene target, which is captured *before*
+  `Renderer.EndFrame` tonemaps it to the surface and flushes the GUI (`GuiBatch`) over it — so the hotbar,
+  crosshair, REC indicator and other overlays are on screen but not in the PNG. Capturing them needs the
+  present pass to render into a readable LDR offscreen that the screenshot reads (a present-path change).
 - **Nether is the "core, one-biome" slice.** Implemented: the dimension + generator (netherrack/lava/soul-sand/
   glowstone/quartz-ore), obsidian portals lit with flint & steel (`VanillaPortals`), 8:1 Overworld↔Nether
   travel with find-or-build destination portals, the multi-dimension server, and the sunless red-fog render
@@ -122,10 +160,10 @@ relevant permanent doc. Not a changelog.
   (soft shadows, `ShadowMapSize` 1024). Raising `ShadowMapSize` (sharper) or `ShadowDistance` (more coverage,
   coarser texels) trades one for the other; a much larger distance would want a warped map or cascades to keep
   near detail, but CSM was deliberately removed and isn't coming back. Bias is a scene/driver-dependent
-  tradeoff (`NormalBias`/`DepthBias` in `ShadowResolve.fs`,
-  `ShadowStrength`/`ShadowSoftness`/`ShadowCasterExtent`/`GL.PolygonOffset` in `WorldRenderer`) — may need a
-  pass on Mesa. **`ShadowMapSize` (C#) and the `ShadowTexel` constant (`ShadowResolve.fs`) must change
-  together.**
+  tradeoff (`NormalBias`/`DepthBias` in `ShadowResolve.wgsl`,
+  `ShadowStrength`/`ShadowSoftness`/`ShadowCasterExtent` and the shadow-pipeline `depthBias`/`slopeScale` in
+  `WorldRenderer`) — may need a pass per backend. **`ShadowMapSize` (C#) and the `ShadowTexel` constant
+  (`ShadowResolve.wgsl`) must change together.**
 - **The shadow depth pass is a fixed per-frame cost, except it's now skipped in caves.** It redraws all
   in-range opaque geometry from the sun's POV every frame regardless of window size, so it hits hardest at
   *low* framerate headroom, not specifically at fullscreen. **Gated on `_anyShadowReceiver`** (a visible

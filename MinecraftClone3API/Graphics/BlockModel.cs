@@ -6,7 +6,7 @@ using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 // ReSharper disable InconsistentNaming
 
 namespace MinecraftClone3API.Graphics
@@ -192,21 +192,21 @@ namespace MinecraftClone3API.Graphics
 
         public class DisplayEntry
         {
-            public Vector3 Rotation;
-            public Vector3 Translation;
-            public Vector3 Scale;
+            public Vector3D<float> Rotation;
+            public Vector3D<float> Translation;
+            public Vector3D<float> Scale;
         }
 
         public class Element
         {
-            public Vector3 From;
-            public Vector3 To;
+            public Vector3D<float> From;
+            public Vector3D<float> To;
             public Dictionary<BlockFace, FaceData> Faces;
         }
 
         public class FaceData
         {
-            public Vector4 UV = new Vector4(0, 0, 16, 16);
+            public Vector4D<float> UV = new Vector4D<float>(0, 0, 16, 16);
             public string Texture;
             public BlockFace Cullface;
             public int TintIndex = -1;
@@ -215,16 +215,16 @@ namespace MinecraftClone3API.Graphics
             public BlockTexture LoadedTexture = CommonResources.MissingTexture;
 
             [JsonIgnore]
-            private Vector2[] _texCoords;
+            private Vector2D<float>[] _texCoords;
 
             /// <summary>The four corner UVs, built once and reused: UV is fixed after model parsing,
             /// so re-deriving the array per face was pure per-remesh allocation on the mesh thread.</summary>
-            public Vector2[] GetTexCoords()
+            public Vector2D<float>[] GetTexCoords()
             {
                 return _texCoords ??= new[]
                 {
-                    new Vector2(UV[0], UV[1])*OneOverSixteen, new Vector2(UV[2], UV[1])*OneOverSixteen,
-                    new Vector2(UV[0], UV[3])*OneOverSixteen, new Vector2(UV[2], UV[3])*OneOverSixteen
+                    new Vector2D<float>(UV[0], UV[1])*OneOverSixteen, new Vector2D<float>(UV[2], UV[1])*OneOverSixteen,
+                    new Vector2D<float>(UV[0], UV[3])*OneOverSixteen, new Vector2D<float>(UV[2], UV[3])*OneOverSixteen
                 };
             }
         }

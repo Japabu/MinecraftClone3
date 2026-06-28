@@ -3,7 +3,7 @@ using System.IO;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.IO
 {
@@ -54,7 +54,7 @@ namespace MinecraftClone3API.IO
                     player.GameMode = (GameMode) reader.ReadByte();
 
                     var savedDimension = reader.ReadString();
-                    var position = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+                    var position = new Vector3D<float>(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
                     var pitch = reader.ReadSingle();
                     var yaw = reader.ReadSingle();
                     if (savedDimension == currentDimensionKey)

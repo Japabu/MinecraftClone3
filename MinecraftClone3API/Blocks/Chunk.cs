@@ -3,7 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Blocks
 {
@@ -13,10 +13,10 @@ namespace MinecraftClone3API.Blocks
         public const float Radius = Size * 0.8660254F;      //a*sqrt(3)/2
 
         public readonly WorldBase World;
-        public readonly Vector3i Position;
+        public readonly Vector3D<int> Position;
 
-        public Vector3i Min => _min;
-        public Vector3i Max => _max;
+        public Vector3D<int> Min => _min;
+        public Vector3D<int> Max => _max;
 
         public bool IsEmpty => _min.X == Size;
 
@@ -43,13 +43,13 @@ namespace MinecraftClone3API.Blocks
         internal static int Index(int x, int y, int z) => (x * Size + y) * Size + z;
 
         /// <summary>Inverse of <see cref="Index"/>: unpacks a storage index back to its block coordinate.</summary>
-        internal static Vector3i FromIndex(int index) => new Vector3i(index / (Size * Size), index / Size % Size, index % Size);
+        internal static Vector3D<int> FromIndex(int index) => new Vector3D<int>(index / (Size * Size), index / Size % Size, index % Size);
 
-        private Vector3i _min = new Vector3i(Size);
-        private Vector3i _max = new Vector3i(-1);
+        private Vector3D<int> _min = new Vector3D<int>(Size);
+        private Vector3D<int> _max = new Vector3D<int>(-1);
 
 
-        public Chunk(WorldBase world, Vector3i position)
+        public Chunk(WorldBase world, Vector3D<int> position)
         {
             World = world;
             Position = position;
@@ -98,7 +98,7 @@ namespace MinecraftClone3API.Blocks
             _max = source._max;
         }
 
-        public void SetBlock(Vector3i blockPos, ushort id)
+        public void SetBlock(Vector3D<int> blockPos, ushort id)
         {
             var index = Index(blockPos.X, blockPos.Y, blockPos.Z);
             var storage = _blockStorage;
@@ -117,7 +117,7 @@ namespace MinecraftClone3API.Blocks
             if (blockPos.Z > _max.Z) _max.Z = blockPos.Z;
         }
 
-        public ushort GetBlock(Vector3i blockPos)
+        public ushort GetBlock(Vector3D<int> blockPos)
         {
             if (blockPos.X < 0 || blockPos.X >= Size || blockPos.Y < 0 || blockPos.Y >= Size || blockPos.Z < 0 || blockPos.Z >= Size)
                 return 0;
@@ -125,29 +125,29 @@ namespace MinecraftClone3API.Blocks
             return _blockStorage.Get(Index(blockPos.X, blockPos.Y, blockPos.Z));
         }
 
-        public void SetBlockData(Vector3i blockPos, BlockData data)
+        public void SetBlockData(Vector3D<int> blockPos, BlockData data)
         {
             NeedsSaving = true;
             _blockDatas[blockPos] = data;
         }
 
-        public BlockData GetBlockData(Vector3i blockPos)
+        public BlockData GetBlockData(Vector3D<int> blockPos)
         {
             return _blockDatas.TryGetValue(blockPos, out var data) ? data : null;
         }
 
         /// <summary>The in-chunk positions (0..Size-1) that carry block data, for the server to find the blocks
         /// it must tick (e.g. furnaces) when a chunk loads.</summary>
-        public IEnumerable<Vector3i> BlockDataPositions
+        public IEnumerable<Vector3D<int>> BlockDataPositions
         {
             get
             {
                 foreach (var key in _blockDatas.Keys)
-                    yield return new Vector3i(key.X, key.Y, key.Z);
+                    yield return new Vector3D<int>(key.X, key.Y, key.Z);
             }
         }
 
-        public void SetLightLevel(Vector3i blockPos, LightLevel lightLevel)
+        public void SetLightLevel(Vector3D<int> blockPos, LightLevel lightLevel)
         {
             var index = Index(blockPos.X, blockPos.Y, blockPos.Z);
             var storage = _lightStorage;
@@ -164,12 +164,12 @@ namespace MinecraftClone3API.Blocks
             if (blockPos.Z > _max.Z) _max.Z = blockPos.Z;
         }
 
-        public LightLevel GetLightLevel(Vector3i blockPos) => LightLevel.FromBinary(_lightStorage.Get(Index(blockPos.X, blockPos.Y, blockPos.Z)));
+        public LightLevel GetLightLevel(Vector3D<int> blockPos) => LightLevel.FromBinary(_lightStorage.Get(Index(blockPos.X, blockPos.Y, blockPos.Z)));
 
         // Unlike SetLightLevel, sky writes never expand _min/_max: sky fills air everywhere, so growing
         // the bounding box would defeat the uniform-air fast path, blow up the mesher's min..max loop, and
         // break IsEmpty. The mesher only ever samples sky at faces of existing blocks (already in bounds).
-        public void SetSkyLight(Vector3i blockPos, int level)
+        public void SetSkyLight(Vector3D<int> blockPos, int level)
         {
             var index = Index(blockPos.X, blockPos.Y, blockPos.Z);
             var storage = _skyStorage;
@@ -179,7 +179,7 @@ namespace MinecraftClone3API.Blocks
             _skyStorage = storage.Set(index, (ushort) level);
         }
 
-        public int GetSkyLight(Vector3i blockPos) => _skyStorage.Get(Index(blockPos.X, blockPos.Y, blockPos.Z));
+        public int GetSkyLight(Vector3D<int> blockPos) => _skyStorage.Get(Index(blockPos.X, blockPos.Y, blockPos.Z));
 
         /// <summary>True iff any cell in the chunk carries sky light. Drives <see cref="Graphics.ChunkRenderData.SkyExposed"/>,
         /// which gates the sun shadow passes (skipped when no visible chunk is sky-exposed).</summary>

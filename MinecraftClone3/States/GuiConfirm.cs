@@ -4,17 +4,14 @@ using MinecraftClone3API.Client.Graphics;
 using MinecraftClone3API.Client.GUI;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.Util;
-using OpenTK.Graphics.OpenGL4;
-using OpenTK.Mathematics;
-using OpenTK.Windowing.Common;
-using OpenTK.Windowing.Desktop;
-using OpenTK.Windowing.GraphicsLibraryFramework;
+using Silk.NET.Maths;
+using Silk.NET.Input;
 
 namespace MinecraftClone3.States
 {
     /// <summary>
     /// Yes/No confirmation overlay over the screen that opened it (used for destructive actions like
-    /// deleting a world). Owns no TextInput subscriptions, so an overlay is safe here.
+    /// deleting a world). As the top overlay it is the foreground input layer while open.
     /// </summary>
     internal class GuiConfirm : GuiBase
     {
@@ -23,12 +20,10 @@ namespace MinecraftClone3.States
         private const int ButtonGap = 20;
         private const int MessageScale = 2;
 
-        private readonly GameWindow _window;
         private readonly string _message;
 
-        public GuiConfirm(GameWindow window, string message, Action onConfirm)
+        public GuiConfirm(string message, Action onConfirm)
         {
-            _window = window;
             _message = message;
 
             var width = (int) ScaledResolution.GuiResolution.X;
@@ -43,29 +38,21 @@ namespace MinecraftClone3.States
                 "No", () => IsDead = true));
         }
 
-        public override void Update(bool focused)
+        public override void OnKeyDown(Key key)
         {
-            base.Update(focused);
-            if (focused && _window.KeyboardState.IsKeyPressed(Keys.Escape))
-                IsDead = true;
+            if (key == Key.Escape) IsDead = true;
         }
 
         public override void Render()
         {
-            RenderState.Set(new GlState
-            {
-                Blend = true,
-                BlendFunc = (BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha)
-            });
-
-            var screen = _window.FramebufferSize;
+            var screen = new Vector2D<int>(ClientResources.Width, ClientResources.Height);
             GuiRenderer.DrawTexture(ClientResources.WhitePixel, new Rectangle(0, 0, screen.X, screen.Y), null,
-                new Color4(0f, 0f, 0f, 0.7f), false);
+                new Vector4D<float>(0f, 0f, 0f, 0.7f), false);
 
             var width = (int) ScaledResolution.GuiResolution.X;
             var height = (int) ScaledResolution.GuiResolution.Y;
             var messageX = (width - Font.MeasureWidth(_message, MessageScale)) / 2;
-            Font.DrawString(_message, messageX, height / 2 - 40, MessageScale, Color4.White);
+            Font.DrawString(_message, messageX, height / 2 - 40, MessageScale, new Vector4D<float>(1f,1f,1f,1f));
 
             base.Render();
         }

@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Entities
 {
@@ -33,7 +33,7 @@ namespace MinecraftClone3API.Entities
 
         /// <summary>One walk/swim physics step. Returns true if a horizontal axis was blocked by terrain this
         /// tick (the player ran into a wall) — the caller uses it to drop sprint, as Minecraft does.</summary>
-        public static bool Tick(WorldBase world, EntityPlayer p, Vector2 wishDir, bool jump, bool sprint)
+        public static bool Tick(WorldBase world, EntityPlayer p, Vector2D<float> wishDir, bool jump, bool sprint)
         {
             if (IsInLiquid(world, p))
                 return TickInWater(world, p, wishDir, jump, sprint);
@@ -60,7 +60,7 @@ namespace MinecraftClone3API.Entities
         /// <summary>The "80%" swim model: gentle water accel (faster while sprint-swimming), Space buoys up,
         /// otherwise sink slowly; all velocity damped by <see cref="WaterDrag"/>. Liquid never collides (it's
         /// pass-through), so the swept-collision and ground probe still run via <see cref="MoveWithCollision"/>.</summary>
-        private static bool TickInWater(WorldBase world, EntityPlayer p, Vector2 wishDir, bool jump, bool sprint)
+        private static bool TickInWater(WorldBase world, EntityPlayer p, Vector2D<float> wishDir, bool jump, bool sprint)
         {
             var accel = sprint ? WaterSprintAccel : WaterAccel;
             p.Velocity.X += wishDir.X * accel;
@@ -103,11 +103,11 @@ namespace MinecraftClone3API.Entities
             // Horizontal collide (X then Z) from the post-vertical position.
             var afterY = feet;
             var cdx = ClipXFrom(world, afterY, velX);
-            var cdz = ClipZFrom(world, new Vector3(afterY.X + cdx, afterY.Y, afterY.Z), velZ);
+            var cdz = ClipZFrom(world, new Vector3D<float>(afterY.X + cdx, afterY.Y, afterY.Z), velZ);
             var blockedX = cdx != velX;
             var blockedZ = cdz != velZ;
 
-            feet = new Vector3(afterY.X + cdx, afterY.Y, afterY.Z + cdz);
+            feet = new Vector3D<float>(afterY.X + cdx, afterY.Y, afterY.Z + cdz);
             var resVelX = blockedX ? 0f : velX;
             var resVelZ = blockedZ ? 0f : velZ;
 
@@ -120,10 +120,10 @@ namespace MinecraftClone3API.Entities
             if (grounded && velY <= 0f && (blockedX || blockedZ))
             {
                 var up = ClipYFrom(world, afterY, StepHeight);
-                var stepped = new Vector3(afterY.X, afterY.Y + up, afterY.Z);
+                var stepped = new Vector3D<float>(afterY.X, afterY.Y + up, afterY.Z);
                 var sdx = ClipXFrom(world, stepped, velX);
-                var sdz = ClipZFrom(world, new Vector3(stepped.X + sdx, stepped.Y, stepped.Z), velZ);
-                stepped = new Vector3(stepped.X + sdx, stepped.Y, stepped.Z + sdz);
+                var sdz = ClipZFrom(world, new Vector3D<float>(stepped.X + sdx, stepped.Y, stepped.Z), velZ);
+                stepped = new Vector3D<float>(stepped.X + sdx, stepped.Y, stepped.Z + sdz);
                 stepped.Y += ClipYFrom(world, stepped, -up);
 
                 if (sdx * sdx + sdz * sdz > cdx * cdx + cdz * cdz)
@@ -147,28 +147,28 @@ namespace MinecraftClone3API.Entities
             return (resVelX == 0f && velX != 0f) || (resVelZ == 0f && velZ != 0f);
         }
 
-        private static float ClipYFrom(WorldBase world, Vector3 feet, float dy)
+        private static float ClipYFrom(WorldBase world, Vector3D<float> feet, float dy)
         {
-            var min = new Vector3(feet.X - HalfWidth, feet.Y, feet.Z - HalfWidth);
-            var max = new Vector3(feet.X + HalfWidth, feet.Y + Height, feet.Z + HalfWidth);
+            var min = new Vector3D<float>(feet.X - HalfWidth, feet.Y, feet.Z - HalfWidth);
+            var max = new Vector3D<float>(feet.X + HalfWidth, feet.Y + Height, feet.Z + HalfWidth);
             return ClipY(world, min, max, dy);
         }
 
-        private static float ClipXFrom(WorldBase world, Vector3 feet, float dx)
+        private static float ClipXFrom(WorldBase world, Vector3D<float> feet, float dx)
         {
-            var min = new Vector3(feet.X - HalfWidth, feet.Y, feet.Z - HalfWidth);
-            var max = new Vector3(feet.X + HalfWidth, feet.Y + Height, feet.Z + HalfWidth);
+            var min = new Vector3D<float>(feet.X - HalfWidth, feet.Y, feet.Z - HalfWidth);
+            var max = new Vector3D<float>(feet.X + HalfWidth, feet.Y + Height, feet.Z + HalfWidth);
             return ClipX(world, min, max, dx);
         }
 
-        private static float ClipZFrom(WorldBase world, Vector3 feet, float dz)
+        private static float ClipZFrom(WorldBase world, Vector3D<float> feet, float dz)
         {
-            var min = new Vector3(feet.X - HalfWidth, feet.Y, feet.Z - HalfWidth);
-            var max = new Vector3(feet.X + HalfWidth, feet.Y + Height, feet.Z + HalfWidth);
+            var min = new Vector3D<float>(feet.X - HalfWidth, feet.Y, feet.Z - HalfWidth);
+            var max = new Vector3D<float>(feet.X + HalfWidth, feet.Y + Height, feet.Z + HalfWidth);
             return ClipZ(world, min, max, dz);
         }
 
-        private static float ClipY(WorldBase world, Vector3 min, Vector3 max, float dy)
+        private static float ClipY(WorldBase world, Vector3D<float> min, Vector3D<float> max, float dy)
         {
             if (dy == 0) return 0;
 
@@ -188,8 +188,8 @@ namespace MinecraftClone3API.Entities
                 for (var bi = 0; bi < n; bi++)
                 {
                     var box = _solidBoxes[bi];
-                    var bmin = new Vector3(x + box.Min.X, y + box.Min.Y, z + box.Min.Z);
-                    var bmax = new Vector3(x + box.Max.X, y + box.Max.Y, z + box.Max.Z);
+                    var bmin = new Vector3D<float>(x + box.Min.X, y + box.Min.Y, z + box.Min.Z);
+                    var bmax = new Vector3D<float>(x + box.Max.X, y + box.Max.Y, z + box.Max.Z);
                     if (max.X <= bmin.X + Epsilon || min.X >= bmax.X - Epsilon) continue;
                     if (max.Z <= bmin.Z + Epsilon || min.Z >= bmax.Z - Epsilon) continue;
 
@@ -209,7 +209,7 @@ namespace MinecraftClone3API.Entities
             return dy;
         }
 
-        private static float ClipX(WorldBase world, Vector3 min, Vector3 max, float dx)
+        private static float ClipX(WorldBase world, Vector3D<float> min, Vector3D<float> max, float dx)
         {
             if (dx == 0) return 0;
 
@@ -229,8 +229,8 @@ namespace MinecraftClone3API.Entities
                 for (var bi = 0; bi < n; bi++)
                 {
                     var box = _solidBoxes[bi];
-                    var bmin = new Vector3(x + box.Min.X, y + box.Min.Y, z + box.Min.Z);
-                    var bmax = new Vector3(x + box.Max.X, y + box.Max.Y, z + box.Max.Z);
+                    var bmin = new Vector3D<float>(x + box.Min.X, y + box.Min.Y, z + box.Min.Z);
+                    var bmax = new Vector3D<float>(x + box.Max.X, y + box.Max.Y, z + box.Max.Z);
                     if (max.Y <= bmin.Y + Epsilon || min.Y >= bmax.Y - Epsilon) continue;
                     if (max.Z <= bmin.Z + Epsilon || min.Z >= bmax.Z - Epsilon) continue;
 
@@ -250,7 +250,7 @@ namespace MinecraftClone3API.Entities
             return dx;
         }
 
-        private static float ClipZ(WorldBase world, Vector3 min, Vector3 max, float dz)
+        private static float ClipZ(WorldBase world, Vector3D<float> min, Vector3D<float> max, float dz)
         {
             if (dz == 0) return 0;
 
@@ -270,8 +270,8 @@ namespace MinecraftClone3API.Entities
                 for (var bi = 0; bi < n; bi++)
                 {
                     var box = _solidBoxes[bi];
-                    var bmin = new Vector3(x + box.Min.X, y + box.Min.Y, z + box.Min.Z);
-                    var bmax = new Vector3(x + box.Max.X, y + box.Max.Y, z + box.Max.Z);
+                    var bmin = new Vector3D<float>(x + box.Min.X, y + box.Min.Y, z + box.Min.Z);
+                    var bmax = new Vector3D<float>(x + box.Max.X, y + box.Max.Y, z + box.Max.Z);
                     if (max.X <= bmin.X + Epsilon || min.X >= bmax.X - Epsilon) continue;
                     if (max.Y <= bmin.Y + Epsilon || min.Y >= bmax.Y - Epsilon) continue;
 
@@ -299,7 +299,7 @@ namespace MinecraftClone3API.Entities
         private static int GetSolidBoxes(WorldBase world, int x, int y, int z)
         {
             _solidBoxes.Clear();
-            world.GetBlock(x, y, z).GetCollisionBoxes(world, new Vector3i(x, y, z), _solidBoxes);
+            world.GetBlock(x, y, z).GetCollisionBoxes(world, new Vector3D<int>(x, y, z), _solidBoxes);
             return _solidBoxes.Count;
         }
 

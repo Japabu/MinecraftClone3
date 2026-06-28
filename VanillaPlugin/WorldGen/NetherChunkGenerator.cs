@@ -1,7 +1,7 @@
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Util;
 using MinecraftClone3API.WorldGen;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace VanillaPlugin.WorldGen
 {
@@ -81,7 +81,7 @@ namespace VanillaPlugin.WorldGen
             return wy <= LavaLevel ? _lava : null;
         }
 
-        public void Generate(CachedChunk chunk, Vector3i chunkPos)
+        public void Generate(CachedChunk chunk, Vector3D<int> chunkPos)
         {
             var min = chunkPos * Chunk.Size;
             if (min.Y > CeilingY || min.Y + Chunk.Size <= FloorY) return;   // outside the slab → empty, no sky seed
@@ -113,8 +113,8 @@ namespace VanillaPlugin.WorldGen
 
         public long GetLodColumn(int wx, int wz) => 0;
 
-        public void DecorateLodRegion(Vector3i regionKey, long[] columns) { }
+        public void DecorateLodRegion(Vector3D<int> regionKey, long[] columns) { }
 
-        public Vector3i Spawn() => new Vector3i(0, LavaLevel + 16, 0);
+        public Vector3D<int> Spawn() => new Vector3D<int>(0, LavaLevel + 16, 0);
     }
 }

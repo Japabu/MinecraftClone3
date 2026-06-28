@@ -2,7 +2,7 @@ using System;
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Items;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace VanillaPlugin.Items
 {
@@ -28,17 +28,17 @@ namespace VanillaPlugin.Items
         public override bool RequiresBlockTarget => false;
         public override bool ConsumesOnUse => true;
 
-        public override void OnUseServer(WorldServer world, EntityPlayer player, Vector3 position)
+        public override void OnUseServer(WorldServer world, EntityPlayer player, Vector3D<float> position)
         {
-            var forward = new Vector3(
+            var forward = new Vector3D<float>(
                 (float) (Math.Sin(player.Yaw) * Math.Cos(player.Pitch)),
                 (float) Math.Sin(player.Pitch),
                 (float) (Math.Cos(player.Yaw) * Math.Cos(player.Pitch)));
 
-            var spawn = player.Position + new Vector3(0f, EntityPlayer.EyeHeight, 0f) + forward * 0.3f;
+            var spawn = player.Position + new Vector3D<float>(0f, EntityPlayer.EyeHeight, 0f) + forward * 0.3f;
             var pearl = (EntityProjectile) world.SpawnEntity(_projectileType, spawn);
             pearl.OwnerId = player.EntityId;
-            pearl.Velocity = forward * ThrowSpeed + new Vector3(0f, 0.1f, 0f);
+            pearl.Velocity = forward * ThrowSpeed + new Vector3D<float>(0f, 0.1f, 0f);
         }
     }
 }

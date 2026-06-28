@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using MinecraftClone3API.Blocks;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Util
 {
@@ -38,7 +39,7 @@ namespace MinecraftClone3API.Util
         private const long CompactMinBytes = 1 << 20;
         private const double CompactDeadRatio = 2.0;
 
-        private readonly List<Tuple<Vector3i, byte[]>> _cachedIndexDatas = new List<Tuple<Vector3i, byte[]>>();
+        private readonly List<Tuple<Vector3D<int>, byte[]>> _cachedIndexDatas = new List<Tuple<Vector3D<int>, byte[]>>();
         private readonly object _indexLock = new object();
         private readonly object _dataLock = new object();
 
@@ -57,7 +58,7 @@ namespace MinecraftClone3API.Util
             _version = version;
         }
 
-        private (FileInfo index, FileInfo data) FilesFor(Vector3i region)
+        private (FileInfo index, FileInfo data) FilesFor(Vector3D<int> region)
         {
             var path = Path.Combine(_dir, GetRegionFilename(region));
             return (new FileInfo(path + _indexExt), new FileInfo(path + _dataExt));
@@ -65,7 +66,7 @@ namespace MinecraftClone3API.Util
 
         /// <summary>Appends a blob for <paramref name="chunkPos"/> (its old copy, if any, is orphaned) and
         /// commits the index atomically. <paramref name="write"/> streams the uncompressed blob.</summary>
-        public void Save(Vector3i chunkPos, Action<BinaryWriter> write)
+        public void Save(Vector3D<int> chunkPos, Action<BinaryWriter> write)
         {
             var region = ChunkToRegion(chunkPos);
             var (indexFile, dataFile) = FilesFor(region);
@@ -101,7 +102,7 @@ namespace MinecraftClone3API.Util
 
         /// <summary>Drops the blob for <paramref name="chunkPos"/> (no-op if there is none). Used when a chunk
         /// that previously had a blob now needs an empty one (e.g. its entities all left).</summary>
-        public void Clear(Vector3i chunkPos)
+        public void Clear(Vector3D<int> chunkPos)
         {
             var region = ChunkToRegion(chunkPos);
             var (indexFile, _) = FilesFor(region);
@@ -123,7 +124,7 @@ namespace MinecraftClone3API.Util
 
         /// <summary>The decompressed blob for <paramref name="chunkPos"/>, or null when absent, corrupt, or
         /// written in an older format/version.</summary>
-        public byte[] Load(Vector3i chunkPos)
+        public byte[] Load(Vector3D<int> chunkPos)
         {
             var region = ChunkToRegion(chunkPos);
             var (indexFile, dataFile) = FilesFor(region);
@@ -151,11 +152,11 @@ namespace MinecraftClone3API.Util
             }
         }
 
-        private static string GetRegionFilename(Vector3i region) => $"{region.X} {region.Y} {region.Z}";
+        private static string GetRegionFilename(Vector3D<int> region) => $"{region.X} {region.Y} {region.Z}";
 
         /// <summary>The region's pos/length table (length <see cref="IndexFileLength"/>), or null when the
         /// region is missing, corrupt, or written in an older format. Caller holds <see cref="_indexLock"/>.</summary>
-        private byte[] GetIndexData(Vector3i region, FileInfo indexFile)
+        private byte[] GetIndexData(Vector3D<int> region, FileInfo indexFile)
         {
             for (var i = 0; i < _cachedIndexDatas.Count; i++)
             {
@@ -189,7 +190,7 @@ namespace MinecraftClone3API.Util
             return table;
         }
 
-        private void WriteIndexData(Vector3i region, FileInfo indexFile, byte[] table)
+        private void WriteIndexData(Vector3D<int> region, FileInfo indexFile, byte[] table)
         {
             var tmp = new FileInfo(indexFile.FullName + TempExt);
             using (var stream = new GZipStream(tmp.Create(), CompressionMode.Compress))
@@ -202,7 +203,7 @@ namespace MinecraftClone3API.Util
             CacheIndexData(region, table);
         }
 
-        private void CacheIndexData(Vector3i region, byte[] table)
+        private void CacheIndexData(Vector3D<int> region, byte[] table)
         {
             for (var i = 0; i < _cachedIndexDatas.Count; i++)
                 if (_cachedIndexDatas[i].Item1 == region)
@@ -211,7 +212,7 @@ namespace MinecraftClone3API.Util
                     break;
                 }
 
-            _cachedIndexDatas.Add(new Tuple<Vector3i, byte[]>(region, table));
+            _cachedIndexDatas.Add(new Tuple<Vector3D<int>, byte[]>(region, table));
             if (_cachedIndexDatas.Count > MaxCachedIndexDatas)
                 _cachedIndexDatas.RemoveAt(0);
         }
@@ -245,7 +246,7 @@ namespace MinecraftClone3API.Util
         /// re-saved blobs. Each blob is an independent GZip member, copied verbatim (no decompress/recompress).
         /// Takes Data→Index — the only place both locks are held; the strictly sequential single-lock use
         /// elsewhere means this can't deadlock.</summary>
-        private void Compact(Vector3i region, FileInfo indexFile, FileInfo dataFile)
+        private void Compact(Vector3D<int> region, FileInfo indexFile, FileInfo dataFile)
         {
             lock (_dataLock)
             lock (_indexLock)
@@ -287,19 +288,19 @@ namespace MinecraftClone3API.Util
             }
         }
 
-        private static int GetChunkIndexPosition(Vector3i chunkPos)
+        private static int GetChunkIndexPosition(Vector3D<int> chunkPos)
         {
             var chunkInRegion = ChunkInRegion(chunkPos);
             return (ChunksInRegionSquared * chunkInRegion.X + ChunksInRegion * chunkInRegion.Y + chunkInRegion.Z) *
                    sizeof(int) * 2;
         }
 
-        private static Vector3i ChunkToRegion(Vector3i v) => new Vector3i(
+        private static Vector3D<int> ChunkToRegion(Vector3D<int> v) => new Vector3D<int>(
             v.X * Chunk.Size < 0 ? (v.X * Chunk.Size + 1) / RegionSize - 1 : v.X / ChunksInRegion,
             v.Y * Chunk.Size < 0 ? (v.Y * Chunk.Size + 1) / RegionSize - 1 : v.Y / ChunksInRegion,
             v.Z * Chunk.Size < 0 ? (v.Z * Chunk.Size + 1) / RegionSize - 1 : v.Z / ChunksInRegion);
 
-        private static Vector3i ChunkInRegion(Vector3i v) => new Vector3i(
+        private static Vector3D<int> ChunkInRegion(Vector3D<int> v) => new Vector3D<int>(
             v.X < 0 ? (v.X + 1) % ChunksInRegion + ChunksInRegion - 1 : v.X % ChunksInRegion,
             v.Y < 0 ? (v.Y + 1) % ChunksInRegion + ChunksInRegion - 1 : v.Y % ChunksInRegion,
             v.Z < 0 ? (v.Z + 1) % ChunksInRegion + ChunksInRegion - 1 : v.Z % ChunksInRegion);

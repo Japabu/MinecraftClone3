@@ -1,9 +1,9 @@
 ﻿using MinecraftClone3API.Entities;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Blocks
 {
@@ -11,44 +11,44 @@ namespace MinecraftClone3API.Blocks
     {
         // Concurrent: the main thread mutates it (Update/SetBlock) and renders from it while the
         // load/unload threads read it. A plain Dictionary corrupts under that concurrent access.
-        public readonly ConcurrentDictionary<Vector3i, Chunk> LoadedChunks = new ConcurrentDictionary<Vector3i, Chunk>();
+        public readonly ConcurrentDictionary<Vector3D<int>, Chunk> LoadedChunks = new ConcurrentDictionary<Vector3D<int>, Chunk>();
 
-        public static Vector3i ChunkInWorld(Vector3i v) => ChunkInWorld(v.X, v.Y, v.Z);
+        public static Vector3D<int> ChunkInWorld(Vector3D<int> v) => ChunkInWorld(v.X, v.Y, v.Z);
 
-        public static Vector3i ChunkInWorld(int x, int y, int z) => new Vector3i(
+        public static Vector3D<int> ChunkInWorld(int x, int y, int z) => new Vector3D<int>(
             x < 0 ? (x + 1) / Chunk.Size - 1 : x / Chunk.Size,
             y < 0 ? (y + 1) / Chunk.Size - 1 : y / Chunk.Size,
             z < 0 ? (z + 1) / Chunk.Size - 1 : z / Chunk.Size);
 
-        public static Vector3i BlockInChunk(int x, int y, int z) => new Vector3i(
+        public static Vector3D<int> BlockInChunk(int x, int y, int z) => new Vector3D<int>(
             x < 0 ? (x + 1) % Chunk.Size + Chunk.Size - 1 : x % Chunk.Size,
             y < 0 ? (y + 1) % Chunk.Size + Chunk.Size - 1 : y % Chunk.Size,
             z < 0 ? (z + 1) % Chunk.Size + Chunk.Size - 1 : z % Chunk.Size);
 
-        public void SetBlock(Vector3i blockPos, Block block) => SetBlock(blockPos.X, blockPos.Y, blockPos.Z, block);
+        public void SetBlock(Vector3D<int> blockPos, Block block) => SetBlock(blockPos.X, blockPos.Y, blockPos.Z, block);
         public void SetBlock(int x, int y, int z, Block block) => SetBlock(x, y, z, block, true, false);
-        public Block GetBlock(Vector3i blockPos) => GetBlock(blockPos.X, blockPos.Y, blockPos.Z);
-        public void SetBlockData(Vector3i blockPos, BlockData data) => SetBlockData(blockPos.X, blockPos.Y, blockPos.Z, data);
-        public BlockData GetBlockData(Vector3i blockPos) => GetBlockData(blockPos.X, blockPos.Y, blockPos.Z);
-        public void SetBlockLightLevel(Vector3i blockPos, LightLevel lightLevel)
+        public Block GetBlock(Vector3D<int> blockPos) => GetBlock(blockPos.X, blockPos.Y, blockPos.Z);
+        public void SetBlockData(Vector3D<int> blockPos, BlockData data) => SetBlockData(blockPos.X, blockPos.Y, blockPos.Z, data);
+        public BlockData GetBlockData(Vector3D<int> blockPos) => GetBlockData(blockPos.X, blockPos.Y, blockPos.Z);
+        public void SetBlockLightLevel(Vector3D<int> blockPos, LightLevel lightLevel)
             => SetBlockLightLevel(blockPos.X, blockPos.Y, blockPos.Z, lightLevel);
-        public LightLevel GetBlockLightLevel(Vector3i blockPos) => GetBlockLightLevel(blockPos.X, blockPos.Y, blockPos.Z);
-        public void SetSkyLight(Vector3i blockPos, int level) => SetSkyLight(blockPos.X, blockPos.Y, blockPos.Z, level);
-        public int GetSkyLight(Vector3i blockPos) => GetSkyLight(blockPos.X, blockPos.Y, blockPos.Z);
+        public LightLevel GetBlockLightLevel(Vector3D<int> blockPos) => GetBlockLightLevel(blockPos.X, blockPos.Y, blockPos.Z);
+        public void SetSkyLight(Vector3D<int> blockPos, int level) => SetSkyLight(blockPos.X, blockPos.Y, blockPos.Z, level);
+        public int GetSkyLight(Vector3D<int> blockPos) => GetSkyLight(blockPos.X, blockPos.Y, blockPos.Z);
 
-        public void SetBlockLightLevelColor(Vector3i blockPos, int value, int color)
+        public void SetBlockLightLevelColor(Vector3D<int> blockPos, int value, int color)
         {
             var lightLevel = GetBlockLightLevel(blockPos);
             lightLevel[color] = value;
             SetBlockLightLevel(blockPos, lightLevel);
         }
-        public int GetBlockLightLevelColor(Vector3i blockPos, int color) => GetBlockLightLevel(blockPos)[color];
+        public int GetBlockLightLevelColor(Vector3D<int> blockPos, int color) => GetBlockLightLevel(blockPos)[color];
 
-        public BlockRaytraceResult BlockRaytrace(Vector3 position, Vector3 direction, float range)
+        public BlockRaytraceResult BlockRaytrace(Vector3D<float> position, Vector3D<float> direction, float range)
         {
             const float epsilon = -1e-6f;
 
-            direction.Normalize();
+            direction = Vector3D.Normalize(direction);
             var start = (position - direction * 0.5f).ToVector3i();
             var end = (position + direction * (range + 0.5f)).ToVector3i();
 
@@ -66,7 +66,7 @@ namespace MinecraftClone3API.Blocks
                     for (var z = minZ; z <= maxZ; z++)
                     {
                         var block = GetBlock(x, y, z);
-                        var blockPosi = new Vector3i(x, y, z);
+                        var blockPosi = new Vector3D<int>(x, y, z);
                         var bb = block.GetBoundingBox(this, blockPosi);
                         if (bb == null || !block.CanTarget(this, blockPosi)) continue;
 
@@ -76,16 +76,16 @@ namespace MinecraftClone3API.Blocks
                         foreach (var face in BlockFaceHelper.Faces)
                         {
                             var normal = face.GetNormal();
-                            var divisor = Vector3.Dot(normal, direction);
+                            var divisor = Vector3D.Dot(normal, direction);
 
                             //ignore back faces
                             if (divisor >= epsilon) continue;
 
                             var planeNormal = normal * normal;
-                            var blockPos = new Vector3(x, y, z) + translation;
-                            var blockSize = new Vector3(0.5f) * scale;
-                            var d = -(Vector3.Dot(blockPos, planeNormal) + Vector3.Dot(blockSize, normal));
-                            var numerator = Vector3.Dot(planeNormal, position) + d;
+                            var blockPos = new Vector3D<float>(x, y, z) + translation;
+                            var blockSize = new Vector3D<float>(0.5f) * scale;
+                            var d = -(Vector3D.Dot(blockPos, planeNormal) + Vector3D.Dot(blockSize, normal));
+                            var numerator = Vector3D.Dot(planeNormal, position) + d;
                             var distance = Math.Abs(-numerator / divisor);
 
                             var point = position + distance * direction;
@@ -97,7 +97,7 @@ namespace MinecraftClone3API.Blocks
                                 point.Z > z + translation.Z + blockSize.Z - epsilon) continue;
 
                             if (distance <= range && (result == null || result.Distance > distance))
-                                result = new BlockRaytraceResult(block, face, new Vector3i(x, y, z), distance,
+                                result = new BlockRaytraceResult(block, face, new Vector3D<int>(x, y, z), distance,
                                     point, bb);
                         }
                     }
@@ -105,9 +105,9 @@ namespace MinecraftClone3API.Blocks
             return result;
         }
 
-        public bool IsBlockInEmptyChunk(Vector3i blockPos) => !LoadedChunks.ContainsKey(ChunkInWorld(blockPos));
-        public bool IsOpaqueFullBlock(Vector3i blockPos) => GetBlock(blockPos).IsOpaqueFullBlock(this, blockPos);
-        public bool IsFullBlock(Vector3i blockPos) => GetBlock(blockPos).IsFullBlock(this, blockPos);
+        public bool IsBlockInEmptyChunk(Vector3D<int> blockPos) => !LoadedChunks.ContainsKey(ChunkInWorld(blockPos));
+        public bool IsOpaqueFullBlock(Vector3D<int> blockPos) => GetBlock(blockPos).IsOpaqueFullBlock(this, blockPos);
+        public bool IsFullBlock(Vector3D<int> blockPos) => GetBlock(blockPos).IsFullBlock(this, blockPos);
 
         public abstract void SetBlock(int x, int y, int z, Block block, bool update, bool lowPriority);
         public abstract Block GetBlock(int x, int y, int z);
@@ -117,7 +117,7 @@ namespace MinecraftClone3API.Blocks
         public abstract LightLevel GetBlockLightLevel(int x, int y, int z);
         public abstract void SetSkyLight(int x, int y, int z, int level);
         public abstract int GetSkyLight(int x, int y, int z);
-        public abstract void PlaceBlock(EntityPlayer player, Vector3i blockPos, Block block, int metadata);
+        public abstract void PlaceBlock(EntityPlayer player, Vector3D<int> blockPos, Block block, int metadata);
         public abstract void Update();
 
     }

@@ -4,7 +4,7 @@ using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Entities;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Networking
 {
@@ -22,7 +22,7 @@ namespace MinecraftClone3API.Networking
     public class LoginAcceptPacket : Packet
     {
         public int EntityId;
-        public Vector3 Spawn;
+        public Vector3D<float> Spawn;
 
         public override PacketId Id => PacketId.LoginAccept;
 
@@ -58,7 +58,7 @@ namespace MinecraftClone3API.Networking
     /// The wire format is unchanged.</summary>
     public class ChunkDataPacket : Packet
     {
-        public Vector3i Position;
+        public Vector3D<int> Position;
 
         /// <summary>The live server chunk, set on the loopback path; null after a TCP <see cref="Read"/>.</summary>
         public Chunk Chunk;
@@ -99,7 +99,7 @@ namespace MinecraftClone3API.Networking
     /// is client-owned; the server never decides a client unload.</summary>
     public class ChunkReleasePacket : Packet
     {
-        public Vector3i Position;
+        public Vector3D<int> Position;
 
         public override PacketId Id => PacketId.ChunkRelease;
         public override void Write(BinaryWriter writer) => WriteVector3i(writer, Position);
@@ -113,7 +113,7 @@ namespace MinecraftClone3API.Networking
     /// decompressing + deserializing a whole resent chunk on the main thread.</summary>
     public class BlockChangesPacket : Packet
     {
-        public Vector3i ChunkPos;
+        public Vector3D<int> ChunkPos;
         public List<BlockChange> Changes;
 
         public override PacketId Id => PacketId.BlockChanges;
@@ -145,7 +145,7 @@ namespace MinecraftClone3API.Networking
     /// <summary>Client asks the server to place a block (id 0 = break).</summary>
     public class PlaceBlockRequestPacket : Packet
     {
-        public Vector3i Position;
+        public Vector3D<int> Position;
         public ushort BlockId;
         public int Metadata;
 
@@ -170,7 +170,7 @@ namespace MinecraftClone3API.Networking
     /// The server reads its own authoritative copy of the held item, so the request can't spoof which item.</summary>
     public class UseItemRequestPacket : Packet
     {
-        public Vector3i Position;
+        public Vector3D<int> Position;
 
         public override PacketId Id => PacketId.UseItemRequest;
         public override void Write(BinaryWriter writer) => WriteVector3i(writer, Position);
@@ -282,7 +282,7 @@ namespace MinecraftClone3API.Networking
     public class EntityMovePacket : Packet
     {
         public int EntityId;
-        public Vector3 Position;
+        public Vector3D<float> Position;
         public float Pitch;
         public float Yaw;
 
@@ -326,7 +326,7 @@ namespace MinecraftClone3API.Networking
         public int EntityId;
         public ushort TypeId = EntityType.PlayerTypeId;
         public ItemStack Stack = ItemStack.Empty;
-        public Vector3 Position;
+        public Vector3D<float> Position;
         public float Pitch;
         public float Yaw;
         public EntityData Data;
@@ -385,7 +385,7 @@ namespace MinecraftClone3API.Networking
     /// apply thread to decompress off the render thread.</summary>
     public class LodColumnDataPacket : Packet
     {
-        public Vector3i Position;
+        public Vector3D<int> Position;
         public LodColumn LodColumn;
         public byte[] CompressedData;
 
@@ -425,8 +425,8 @@ namespace MinecraftClone3API.Networking
     public class DimensionChangePacket : Packet
     {
         public bool HasSky = true;
-        public Vector3 FogColor;
-        public Vector3 AmbientLight;
+        public Vector3D<float> FogColor;
+        public Vector3D<float> AmbientLight;
 
         public override PacketId Id => PacketId.DimensionChange;
 
@@ -449,7 +449,7 @@ namespace MinecraftClone3API.Networking
     /// streams that block's <see cref="ContainerStatePacket"/> to this client while it stays open.</summary>
     public class OpenContainerPacket : Packet
     {
-        public Vector3i Position;
+        public Vector3D<int> Position;
         public override PacketId Id => PacketId.OpenContainer;
         public override void Write(BinaryWriter writer) => WriteVector3i(writer, Position);
         public override void Read(BinaryReader reader) => Position = ReadVector3i(reader);
@@ -468,7 +468,7 @@ namespace MinecraftClone3API.Networking
     /// client copies these into its view by value (the loopback transport carries the live arrays by reference).</summary>
     public class ContainerStatePacket : Packet
     {
-        public Vector3i Position;
+        public Vector3D<int> Position;
         public ItemStack[] Slots;
         public int[] Fields;
 
@@ -497,7 +497,7 @@ namespace MinecraftClone3API.Networking
     /// are). The server applies it to the block's <see cref="MinecraftClone3API.Blocks.ContainerBlockData"/>.</summary>
     public class ContainerSlotPacket : Packet
     {
-        public Vector3i Position;
+        public Vector3D<int> Position;
         public int Slot;
         public ItemStack Stack;
 
@@ -589,7 +589,7 @@ namespace MinecraftClone3API.Networking
     /// snapping its local player there and clearing its fall accumulator.</summary>
     public class PlayerTeleportPacket : Packet
     {
-        public Vector3 Position;
+        public Vector3D<float> Position;
 
         public override PacketId Id => PacketId.PlayerTeleport;
         public override void Write(BinaryWriter writer) => WriteVector3(writer, Position);

@@ -1,8 +1,8 @@
 using System;
 using System.Threading;
 using MinecraftClone3API.Blocks;
+using MinecraftClone3API.Graphics.Rhi;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Graphics
 {
@@ -11,7 +11,7 @@ namespace MinecraftClone3API.Graphics
     /// <see cref="MeshBuffer"/> (mesh thread) and uploaded into the shared <see cref="ChunkMeshArena"/> so the
     /// whole visible opaque set draws with one batched multidraw; the TRANSPARENT mesh keeps a per-chunk
     /// <see cref="SortedVertexArrayObject"/> (it needs an independent per-frame back-to-front sort). Chunk
-    /// storage stays GL-free so a headless server can build chunks without a GL context.
+    /// storage stays GPU-free so a headless server can build chunks without a GPU context.
     /// </summary>
     public class ChunkRenderData : IDisposable
     {
@@ -39,13 +39,17 @@ namespace MinecraftClone3API.Graphics
         /// replaced by another at the same position), so it's computed once instead of every access.</summary>
         public readonly Vector3 Middle;
 
+        /// <summary>World-space minimum corner (the chunk's 16³ AABB origin), published to the arena's
+        /// <see cref="ChunkMeta"/> for GPU frustum culling.</summary>
+        public readonly Vector3 MinCorner;
+
         public bool HasOpaque => OpaqueAlloc.IndexCount > 0;
         public bool HasTransparency => _transparentVao.UploadedCount > 0;
 
         /// <summary>Total uploaded index count (opaque + transparent) — for the profiler's GPU upload volume.</summary>
         public int UploadedIndexCount => OpaqueAlloc.IndexCount + _transparentVao.UploadedCount;
 
-        // Opaque CPU mesh (no GL) uploaded into the arena; transparent keeps its own GL VAO.
+        // Opaque CPU mesh (no GPU) uploaded into the arena; transparent keeps its own GPU vertex buffers.
         private readonly MeshBuffer _opaque = new MeshBuffer();
         private readonly SortedVertexArrayObject _transparentVao = new SortedVertexArrayObject();
 
@@ -53,6 +57,7 @@ namespace MinecraftClone3API.Graphics
         {
             Chunk = chunk;
             Middle = (chunk.Position * Chunk.Size + new Vector3i(Chunk.Size / 2)).ToVector3();
+            MinCorner = (chunk.Position * Chunk.Size).ToVector3();
         }
 
         public void Update()
@@ -90,7 +95,7 @@ namespace MinecraftClone3API.Graphics
                     // an empty range and blank the chunk until the next remesh.
                     if (!Updated) return true;
 
-                    OpaqueAlloc = arena.Upload(OpaqueAlloc, _opaque);
+                    OpaqueAlloc = arena.Upload(OpaqueAlloc, _opaque, MinCorner);
                     _opaque.Clear();
 
                     _transparentVao.Upload();
@@ -112,7 +117,7 @@ namespace MinecraftClone3API.Graphics
             return true;
         }
 
-        public void DrawTransparent() => _transparentVao.Draw();
+        public void DrawTransparent(RenderPass pass) => _transparentVao.Draw(pass);
         public void SortTransparentFaces() => _transparentVao.Sort();
 
         /// <summary>Frees the arena sub-range. Main-thread only; call before <see cref="Dispose"/>.</summary>

@@ -5,10 +5,8 @@ using MinecraftClone3API.Client.StateSystem;
 using MinecraftClone3API.Graphics;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
-using OpenTK.Graphics.OpenGL4;
-using OpenTK.Mathematics;
-using OpenTK.Windowing.Common;
-using OpenTK.Windowing.Desktop;
+using Silk.NET.Maths;
+using Silk.NET.Input;
 
 namespace MinecraftClone3.States
 {
@@ -22,12 +20,9 @@ namespace MinecraftClone3.States
 
         private static Texture _background;
 
-        private readonly GameWindow _window;
-
-        public GuiMainMenu(GameWindow window)
+        public GuiMainMenu()
         {
-            _window = window;
-            _window.CursorState = CursorState.Normal;
+            ClientResources.Input.CursorMode = CursorMode.Normal;
 
             if (_background == null)
                 _background = GlResources.ReadTexture("System/Textures/Gui/ResourceLoadingBackground.png");
@@ -37,79 +32,27 @@ namespace MinecraftClone3.States
             var step = ButtonHeight + ButtonGap;
 
             Elements.Add(new GuiButton(Rectangle.FromSize(x, y, ButtonWidth, ButtonHeight), "Singleplayer",
-                () => StateEngine.ReplaceState(new GuiWorldSelection(_window))));
+                () => StateEngine.ReplaceState(new GuiWorldSelection())));
             Elements.Add(new GuiButton(Rectangle.FromSize(x, y + step, ButtonWidth, ButtonHeight), "Multiplayer",
-                () => StateEngine.ReplaceState(new StateWorld(_window, multiplayer: true))));
+                () => StateEngine.ReplaceState(new StateWorld(multiplayer: true))));
             Elements.Add(new GuiButton(Rectangle.FromSize(x, y + 2 * step, ButtonWidth, ButtonHeight), "Options",
-                () => StateEngine.AddOverlay(new GuiOptions(_window))));
+                () => StateEngine.AddOverlay(new GuiOptions())));
             Elements.Add(new GuiButton(Rectangle.FromSize(x, y + 3 * step, ButtonWidth, ButtonHeight), "Quit Game",
-                () => _window.Close()));
+                () => ClientResources.Window.Close()));
         }
 
         public override void Update(bool focused) => base.Update(focused);
 
-        private int _diagFrames;
-
         public override void Render()
         {
-            // TEMP FREEZE DIAG: dump the real GL state for the first handful of menu frames so a frozen/black
-            // window after quitting a world reveals what state the world renderer left behind (bound FBO,
-            // color/depth masks, enabled caps, viewport vs framebuffer size, pending GL error).
-            if (_diagFrames < 5)
-            {
-                _diagFrames++;
-                var err = GL.GetError();
-                GL.GetInteger(GetPName.DrawFramebufferBinding, out int drawFbo);
-                GL.GetInteger(GetPName.ReadFramebufferBinding, out int readFbo);
-                var vp = new int[4];
-                GL.GetInteger(GetPName.Viewport, vp);
-                var colorMask = new bool[4];
-                GL.GetBoolean(GetPName.ColorWritemask, colorMask);
-                GL.GetBoolean(GetPName.DepthWritemask, out bool depthMask);
-                var fb = _window.FramebufferSize;
-                Logger.Info($"FREEZE-DIAG menu frame {_diagFrames}: glError={err} drawFbo={drawFbo} readFbo={readFbo} " +
-                            $"viewport=[{vp[0]},{vp[1]},{vp[2]},{vp[3]}] fbSize={fb.X}x{fb.Y} " +
-                            $"colorMask=[{colorMask[0]},{colorMask[1]},{colorMask[2]},{colorMask[3]}] depthMask={depthMask} " +
-                            $"depthTest={GL.IsEnabled(EnableCap.DepthTest)} blend={GL.IsEnabled(EnableCap.Blend)} " +
-                            $"cull={GL.IsEnabled(EnableCap.CullFace)} scissor={GL.IsEnabled(EnableCap.ScissorTest)}");
-            }
-
-            RenderState.Set(new GlState
-            {
-                Blend = true,
-                BlendFunc = (BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha)
-            });
-
-            var screen = _window.FramebufferSize;
-            GuiRenderer.DrawTexture(_background, new Rectangle(0, 0, screen.X, screen.Y), CoverSource(_background, screen),
-                false);
+            GuiRenderer.DrawCover(_background);
 
             var width = (int) ScaledResolution.GuiResolution.X;
             var height = (int) ScaledResolution.GuiResolution.Y;
             var titleX = (width - Font.MeasureWidth(Title, TitleScale)) / 2;
-            Font.DrawString(Title, titleX, height / 6, TitleScale, Color4.White);
+            Font.DrawString(Title, titleX, height / 6, TitleScale, new Vector4D<float>(1f,1f,1f,1f));
 
             base.Render();
-        }
-
-        /// <summary>
-        /// A centered source rectangle that crops <paramref name="texture"/> to <paramref name="screen"/>'s
-        /// aspect ratio, so drawing it across the whole framebuffer fills the screen without distorting
-        /// the image (cover scaling).
-        /// </summary>
-        private static Rectangle CoverSource(Texture texture, Vector2i screen)
-        {
-            var textureAspect = (float) texture.Width / texture.Height;
-            var screenAspect = (float) screen.X / screen.Y;
-
-            var width = texture.Width;
-            var height = texture.Height;
-            if (screenAspect > textureAspect)
-                height = (int) (texture.Width / screenAspect);
-            else
-                width = (int) (texture.Height * screenAspect);
-
-            return Rectangle.FromSize((texture.Width - width) / 2, (texture.Height - height) / 2, width, height);
         }
     }
 }

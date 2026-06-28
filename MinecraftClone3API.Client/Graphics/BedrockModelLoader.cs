@@ -1,10 +1,9 @@
 using Newtonsoft.Json.Linq;
-using OpenTK.Mathematics;
 
 namespace MinecraftClone3API.Graphics
 {
     /// <summary>
-    /// Parses a Bedrock-edition geometry JSON file (the Blockbench-native mob format) into a GL-free
+    /// Parses a Bedrock-edition geometry JSON file (the Blockbench-native mob format) into a GPU-free
     /// <see cref="EntityModel"/>. Bedrock authors y-up with the feet at y=0 and the model facing −Z, while our
     /// convention faces +Z, so every position is reflected through z (<c>z → −z</c>). A Bedrock cube
     /// <c>origin</c> is an absolute model-space corner; our renderer rotates each box about its part pivot, so
@@ -29,9 +28,9 @@ namespace MinecraftClone3API.Graphics
                 var ourPivot = new Vector3(pivot.X, pivot.Y, -pivot.Z) / 16f;
                 var rotation = bone["rotation"] != null ? ReadVector(bone["rotation"]) : Vector3.Zero;
                 var part = new ModelPart(bone["name"].Value<string>(), ourPivot, new Vector3(
-                    MathHelper.DegreesToRadians(rotation.X),
-                    MathHelper.DegreesToRadians(rotation.Y),
-                    MathHelper.DegreesToRadians(rotation.Z)));
+                    Scalar.DegreesToRadians(rotation.X),
+                    Scalar.DegreesToRadians(rotation.Y),
+                    Scalar.DegreesToRadians(rotation.Z)));
                 model.AddPart(part);
 
                 if (bone["cubes"] == null) continue;

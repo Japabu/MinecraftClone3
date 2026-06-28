@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 using System.Threading;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Blocks
 {
@@ -15,18 +15,18 @@ namespace MinecraftClone3API.Blocks
     /// </summary>
     public class LodColumnStore
     {
-        private readonly Dictionary<Vector3i, LodColumn> _regions = new Dictionary<Vector3i, LodColumn>();
+        private readonly Dictionary<Vector3D<int>, LodColumn> _regions = new Dictionary<Vector3D<int>, LodColumn>();
         private readonly object _lock = new object();
         private int _regionCount;
 
         public int RegionCount => _regionCount;
 
-        public bool TryGetRegion(Vector3i regionKey, out LodColumn region)
+        public bool TryGetRegion(Vector3D<int> regionKey, out LodColumn region)
         {
             lock (_lock) return _regions.TryGetValue(regionKey, out region);
         }
 
-        public bool HasRegion(Vector3i regionKey)
+        public bool HasRegion(Vector3D<int> regionKey)
         {
             lock (_lock) return _regions.ContainsKey(regionKey);
         }
@@ -41,7 +41,7 @@ namespace MinecraftClone3API.Blocks
             }
         }
 
-        public void RemoveRegion(Vector3i regionKey)
+        public void RemoveRegion(Vector3D<int> regionKey)
         {
             lock (_lock)
                 if (_regions.Remove(regionKey)) Interlocked.Decrement(ref _regionCount);
@@ -49,7 +49,7 @@ namespace MinecraftClone3API.Blocks
 
         /// <summary>Snapshots the current region keys into <paramref name="into"/> (reused scratch) for a
         /// streaming/eviction scan without holding the lock across the scan.</summary>
-        public void SnapshotKeys(List<Vector3i> into)
+        public void SnapshotKeys(List<Vector3D<int>> into)
         {
             into.Clear();
             lock (_lock)

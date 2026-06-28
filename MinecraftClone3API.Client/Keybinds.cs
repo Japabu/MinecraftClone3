@@ -4,7 +4,7 @@ using System.IO;
 using Newtonsoft.Json;
 using MinecraftClone3API.IO;
 using MinecraftClone3API.Util;
-using OpenTK.Windowing.GraphicsLibraryFramework;
+using Silk.NET.Input;
 
 namespace MinecraftClone3API.Client
 {
@@ -30,27 +30,27 @@ namespace MinecraftClone3API.Client
     /// </summary>
     public static class Keybinds
     {
-        private static readonly Dictionary<GameAction, Keys> _binds = Defaults();
+        private static readonly Dictionary<GameAction, Key> _binds = Defaults();
 
-        private static Dictionary<GameAction, Keys> Defaults() => new Dictionary<GameAction, Keys>
+        private static Dictionary<GameAction, Key> Defaults() => new Dictionary<GameAction, Key>
         {
-            {GameAction.Forward, Keys.W},
-            {GameAction.Back, Keys.S},
-            {GameAction.Left, Keys.A},
-            {GameAction.Right, Keys.D},
-            {GameAction.Jump, Keys.Space},
-            {GameAction.Sneak, Keys.LeftShift},
-            {GameAction.Sprint, Keys.LeftControl},
-            {GameAction.Drop, Keys.Q},
-            {GameAction.Inventory, Keys.E}
+            {GameAction.Forward, Key.W},
+            {GameAction.Back, Key.S},
+            {GameAction.Left, Key.A},
+            {GameAction.Right, Key.D},
+            {GameAction.Jump, Key.Space},
+            {GameAction.Sneak, Key.ShiftLeft},
+            {GameAction.Sprint, Key.ControlLeft},
+            {GameAction.Drop, Key.Q},
+            {GameAction.Inventory, Key.E}
         };
 
         public static IReadOnlyList<GameAction> All { get; } =
             (GameAction[]) Enum.GetValues(typeof(GameAction));
 
-        public static Keys Get(GameAction action) => _binds.TryGetValue(action, out var k) ? k : Keys.Unknown;
+        public static Key Get(GameAction action) => _binds.TryGetValue(action, out var k) ? k : Key.Unknown;
 
-        public static void Set(GameAction action, Keys key)
+        public static void Set(GameAction action, Key key)
         {
             _binds[action] = key;
             Save();
@@ -62,8 +62,11 @@ namespace MinecraftClone3API.Client
             Save();
         }
 
-        public static bool IsDown(KeyboardState ks, GameAction action) => ks.IsKeyDown(Get(action));
-        public static bool IsPressed(KeyboardState ks, GameAction action) => ks.IsKeyPressed(Get(action));
+        /// <summary>Whether the action's bound key is currently held (continuous input — movement).</summary>
+        public static bool IsDown(GameAction action) => ClientResources.Input.IsKeyDown(Get(action));
+
+        /// <summary>Whether a just-pressed key (from a <c>KeyDown</c> event) is the binding for this action.</summary>
+        public static bool Matches(GameAction action, Key key) => Get(action) == key;
 
         /// <summary>Human-readable label for the action (e.g. "Open Inventory").</summary>
         public static string DisplayName(GameAction action)
@@ -92,7 +95,7 @@ namespace MinecraftClone3API.Client
                     File.ReadAllText(GamePaths.KeybindsFile));
                 if (saved == null) return;
                 foreach (var pair in saved)
-                    if (Enum.TryParse(pair.Key, out GameAction action) && Enum.TryParse(pair.Value, out Keys key))
+                    if (Enum.TryParse(pair.Key, out GameAction action) && Enum.TryParse(pair.Value, out Key key))
                         _binds[action] = key;
             }
             catch (Exception)

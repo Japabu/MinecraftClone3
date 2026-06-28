@@ -1,4 +1,5 @@
 using MinecraftClone3API.Util;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.WorldGen
 {
@@ -20,6 +21,6 @@ namespace MinecraftClone3API.WorldGen
         public int Salt => WorldGenRandom.StableHash(RegistryKey);
 
         /// <param name="originColumn">World coordinate of the origin chunk's (x,0,z) min corner.</param>
-        public abstract void Place(IChunkGenRegion region, Vector3i originColumn, ref WorldGenRandom rng);
+        public abstract void Place(IChunkGenRegion region, Vector3D<int> originColumn, ref WorldGenRandom rng);
     }
 }

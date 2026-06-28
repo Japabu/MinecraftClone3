@@ -1,6 +1,6 @@
 using MinecraftClone3API.Blocks;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace VanillaPlugin.Blocks
 {
@@ -14,7 +14,7 @@ namespace VanillaPlugin.Blocks
     /// </summary>
     internal class BlockWater : Block
     {
-        private static readonly Color4 WaterBlue = new Color4(0.247f, 0.463f, 0.894f, 1f);
+        private static readonly Vector4D<float> WaterBlue = new Vector4D<float>(0.247f, 0.463f, 0.894f, 1f);
 
         public BlockWater() : base("Water")
         {
@@ -22,20 +22,20 @@ namespace VanillaPlugin.Blocks
             ModelPath = "Vanilla/Models/Water.json";
         }
 
-        public override Color4 GetTintColor(WorldBase world, Vector3i blockPos, int tintId)
-            => tintId == 0 ? WaterBlue : Color4.White;
+        public override Vector4D<float> GetTintColor(WorldBase world, Vector3D<int> blockPos, int tintId)
+            => tintId == 0 ? WaterBlue : new Vector4D<float>(1f,1f,1f,1f);
 
-        public override bool IsFullBlock(WorldBase world, Vector3i blockPos) => false;
-        public override TransparencyType IsTransparent(WorldBase world, Vector3i blockPos) => TransparencyType.Transparent;
-        public override RenderMaterial GetRenderMaterial(WorldBase world, Vector3i blockPos) => RenderMaterial.Water;
-        public override bool CanPassThrough(WorldBase world, Vector3i blockPos) => true;
-        public override bool CanTarget(WorldBase world, Vector3i blockPos) => false;
+        public override bool IsFullBlock(WorldBase world, Vector3D<int> blockPos) => false;
+        public override TransparencyType IsTransparent(WorldBase world, Vector3D<int> blockPos) => TransparencyType.Transparent;
+        public override RenderMaterial GetRenderMaterial(WorldBase world, Vector3D<int> blockPos) => RenderMaterial.Water;
+        public override bool CanPassThrough(WorldBase world, Vector3D<int> blockPos) => true;
+        public override bool CanTarget(WorldBase world, Vector3D<int> blockPos) => false;
         public override bool IsLiquid => true;
 
-        public override ConnectionType ConnectsToBlock(WorldBase world, Vector3i blockPos, Vector3i otherBlockPos,
+        public override ConnectionType ConnectsToBlock(WorldBase world, Vector3D<int> blockPos, Vector3D<int> otherBlockPos,
             Block otherBlock) => otherBlock == this ? ConnectionType.Connected : ConnectionType.Undefined;
 
-        public override int OnLightPassThrough(WorldBase world, Vector3i blockPos, int lightLevel, int color)
+        public override int OnLightPassThrough(WorldBase world, Vector3D<int> blockPos, int lightLevel, int color)
             => lightLevel - 1;
     }
 }

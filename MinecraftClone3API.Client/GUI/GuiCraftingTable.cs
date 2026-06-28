@@ -4,8 +4,7 @@ using MinecraftClone3API.Client.Blocks;
 using MinecraftClone3API.Client.Graphics;
 using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
-using OpenTK.Windowing.Desktop;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Client.GUI
 {
@@ -42,7 +41,7 @@ namespace MinecraftClone3API.Client.GUI
         private readonly int _bgX;
         private readonly int _bgY;
 
-        public GuiCraftingTable(GameWindow window, WorldClient world) : base(window)
+        public GuiCraftingTable(WorldClient world) : base()
         {
             _world = world;
             _crafting = new CraftingState(world, 3);
@@ -125,9 +124,9 @@ namespace MinecraftClone3API.Client.GUI
             }
 
             GuiRenderer.DrawTexture(ClientResources.WhitePixel, Rectangle.FromSize(_bgX, _bgY, GuiW * Scale, GuiH * Scale),
-                null, new Color4(0.16f, 0.16f, 0.16f, 0.96f));
+                null, new Vector4D<float>(0.16f, 0.16f, 0.16f, 0.96f));
             foreach (var slot in _slots)
-                GuiRenderer.DrawTexture(ClientResources.WhitePixel, slot.Bounds, null, new Color4(0.36f, 0.36f, 0.36f, 1f));
+                GuiRenderer.DrawTexture(ClientResources.WhitePixel, slot.Bounds, null, new Vector4D<float>(0.36f, 0.36f, 0.36f, 1f));
         }
 
         protected override void OnClosed()

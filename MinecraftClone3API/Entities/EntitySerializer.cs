@@ -1,7 +1,7 @@
 using System;
 using System.IO;
 using MinecraftClone3API.Util;
-using OpenTK.Mathematics;
+using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Entities
 {
@@ -69,14 +69,14 @@ namespace MinecraftClone3API.Entities
             }
         }
 
-        private static void WriteVector(BinaryWriter writer, Vector3 v)
+        private static void WriteVector(BinaryWriter writer, Vector3D<float> v)
         {
             writer.Write(v.X);
             writer.Write(v.Y);
             writer.Write(v.Z);
         }
 
-        private static Vector3 ReadVector(BinaryReader reader)
-            => new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+        private static Vector3D<float> ReadVector(BinaryReader reader)
+            => new Vector3D<float>(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
     }
 }
