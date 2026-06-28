@@ -912,8 +912,10 @@ namespace MinecraftClone3API.Graphics
                     var rot = name == "head" ? part.Rotation + headLook : part.Rotation;
                     var m = Matrix4X4.CreateRotationX(rot.X) * Matrix4X4.CreateRotationY(rot.Y) *
                             Matrix4X4.CreateRotationZ(rot.Z) * Matrix4X4.CreateTranslation(part.Pivot) * centre;
+                    // flipUv: true — the worn-armor sheets use the living-entity up/down unwrap (as in the world
+                    // model), so the helmet crown samples the painted head-top region, not the transparent underside.
                     foreach (var box in part.Boxes)
-                        AddBox(mesh, box, texture, layerSize, false, m);
+                        AddBox(mesh, box, texture, layerSize, true, m);
                 }
             }
         }

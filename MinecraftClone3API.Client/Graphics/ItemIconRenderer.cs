@@ -34,9 +34,10 @@ namespace MinecraftClone3API.Graphics
         // The creative inventory paperdoll: a full-body front view from slightly above, framed feet-to-head with
         // headroom above the crown so a worn helmet (the body model's outermost layer, inflated ~1px past the
         // head) isn't clipped by the frustum top. The target is taller than wide to match the player's silhouette;
-        // the ortho box keeps the same aspect so the model isn't stretched.
-        public const int PlayerWidth = 80;
-        public const int PlayerHeight = 112;
+        // the ortho box keeps the same aspect so the model isn't stretched. Rendered at ~2.5× the on-screen box so
+        // the nearest-sampled GUI blit stays crisp instead of upscaling a small target into blocky pixels.
+        public const int PlayerWidth = 200;
+        public const int PlayerHeight = 280;
         private static readonly Matrix4 PlayerView =
             Matrix4X4.CreateLookAt(new Vector3(0f, 1.2f, 3.0f), new Vector3(0f, 1.0f, 0f), Vector3.UnitY);
         private static readonly Matrix4 PlayerProjection =
