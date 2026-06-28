@@ -228,11 +228,13 @@ relevant permanent doc. Not a changelog.
 - `ClientSession.SentChunks` shrinks only on `ChunkRelease`/dirty resend, so a misbehaving or crashed client
   could leave stale entries until it disconnects. Bounded in practice by client `CacheDistance` eviction;
   would need a server-side cap/timeout for hardening.
-- **No real player identity, so inventories aren't per-player in MP.** The client sends an empty name in the
-  `Login` packet, so every player's inventory saves to `Players/player.dat` (see [inventory.md](inventory.md)).
-  Singleplayer is fine; distinct MP inventories need actual player names plumbed through login. Inventory edits
-  are also **unvalidated** (creative sandbox) — the server stores whatever `InventoryAction`/`HeldSlot` sends
-  beyond a slot-range clamp, same trust model as placement.
+- **Player identity has no in-game name UI, and inventory edits are unvalidated.** The login name is now plumbed
+  end-to-end (`PlayerSettings.Name` → `Login` packet → per-name `Players/<name>.dat`), so distinct MP inventories
+  work — but the name defaults to `"Player"` and is only changeable by editing `PlayerSettings.json` (no
+  name-entry screen yet), so two unconfigured clients still collide. A connect-screen name field (or an
+  OS-username default) is the follow-up. Inventory edits are also **unvalidated** (creative sandbox) — the
+  server stores whatever `InventoryAction`/`HeldSlot` sends beyond a slot-range clamp, same trust model as
+  placement.
 - **Inventory is creative-only; crafting is client-trusted.** Items are first-class (`Item`/`ItemBlock`
   registry, standalone items), recipes are loaded from the pack's `data/` tree with tag resolution, and the
   3×3 crafting table has full vanilla slot interaction (pick/place/split/drag) — see [inventory.md](inventory.md).

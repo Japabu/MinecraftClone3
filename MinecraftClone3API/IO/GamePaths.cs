@@ -46,6 +46,9 @@ namespace MinecraftClone3API.IO
         /// <summary>Per-user graphics options file (vsync, shadows, fullscreen).</summary>
         public static string GraphicsSettingsFile => Path.Combine(UserDataDir, "GraphicsSettings.json");
 
+        /// <summary>Per-user player identity file (the multiplayer login name).</summary>
+        public static string PlayerSettingsFile => Path.Combine(UserDataDir, "PlayerSettings.json");
+
         /// <summary>Per-user keybind file (action → key, rebindable in the Controls screen).</summary>
         public static string KeybindsFile => Path.Combine(UserDataDir, "Keybinds.json");
 

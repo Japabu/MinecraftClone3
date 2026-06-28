@@ -127,7 +127,9 @@ namespace MinecraftClone3.States
             }
 
             _world = new WorldClient(connection);
-            _world.Login();
+            // Multiplayer logs in under the configured player name (distinct per-player saves on the server);
+            // singleplayer uses a fixed key since its integrated server owns one world dir.
+            _world.Login(_multiplayer ? PlayerSettings.Name : "Player");
 
             ClientProfiling.World = _world;
             Profiler.Network = _network;

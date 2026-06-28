@@ -44,6 +44,7 @@ namespace MinecraftClone3
             // wgpu surface present mode, pushed onto the renderer once the surface exists (see OnLoad).
             GraphicsSettings.Load();
             Keybinds.Load();
+            PlayerSettings.Load();
 
             // Automated modes: --benchmark boots into the FPS flythrough; --inspect boots into the LOD A/B
             // capture tool (its own large window so artifacts are visible). Both force VSync off and apply

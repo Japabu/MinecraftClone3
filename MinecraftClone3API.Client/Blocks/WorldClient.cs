@@ -553,7 +553,7 @@ namespace MinecraftClone3API.Client.Blocks
             });
         }
 
-        public void Login() => _connection.Send(new LoginPacket());
+        public void Login(string name) => _connection.Send(new LoginPacket {Name = name});
 
         /// <summary>Reports a single slot's new contents to the server (creative set-slot). The caller has
         /// already updated the local replica; this keeps the authoritative copy in step for persistence.</summary>
