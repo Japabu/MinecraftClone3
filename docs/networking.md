@@ -70,9 +70,11 @@ parks its apply thread, drops every cached chunk/LOD/entity, switches render mod
 screen. `ProcessPendingTransfers` waits until the destination column has **generated** (`IsChunkGenerated` —
 covers all-air chunks the open sky produces), then `EnsureDestinationPortal` builds/links the portal and the
 server **replays the join handshake** (`LoginAccept` with the new spawn, `WorldTime`, entity sync,
-`PlayerReady`) so the client finishes loading at the portal. A post-transfer immunity (cleared when the player
-steps off a portal) stops an arrival from bouncing straight back, and stepping off then arms a short re-entry
-cooldown so immediately walking back in can't ping-pong the player between the two linked portals.
+`PlayerReady`) so the client finishes loading at the portal. After a transfer the destination portal is **fully
+inert for a few seconds** (`PortalCooldown`, counted only once the player is back in control so the loading
+screen doesn't burn it); once that expires a **post-transfer immunity** keeps it inert until the player steps
+off the portal once. Together they stop an arrival bouncing straight back or ping-ponging between the two
+linked portals.
 
 **Inventory is server-authoritative** (see [inventory.md](inventory.md)). The server owns each
 `ClientSession.Inventory`, persists it per player, and pushes the whole thing once via `InventoryState` on
