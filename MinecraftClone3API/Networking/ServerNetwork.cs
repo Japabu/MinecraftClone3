@@ -79,6 +79,11 @@ namespace MinecraftClone3API.Networking
         private const int SurvivalPortalSoakTicks = 80;
         private const int CreativePortalSoakTicks = 10;
 
+        // A move arriving more than this many blocks from where a transfer just placed the player is treated as
+        // a stale update from the old dimension and dropped (see ClientSession.AwaitingArrivalSync). Far larger
+        // than any one-tick movement, far smaller than the cross-dimension coordinate jump.
+        private const float ArrivalSyncRadius = 8f;
+
         private TcpListener _listener;
         private Thread _acceptThread;
         private volatile bool _running = true;
@@ -400,6 +405,16 @@ namespace MinecraftClone3API.Networking
                         Math.Clamp(held.SelectedHotbar, 0, Inventory.HotbarSize - 1);
                     break;
                 case EntityMovePacket move when session.LoggedIn && session.PendingPortalWorld == null:
+                    // Right after a transfer the client keeps streaming a few moves from the dimension it just
+                    // left. Those stale coords would yank the freshly-arrived player off the destination portal
+                    // (clearing PortalImmune and bouncing them back); drop any that land far from where we placed
+                    // them until the client's first real move syncs to the new spawn.
+                    if (session.AwaitingArrivalSync)
+                    {
+                        var drift = move.Position - session.Player.Position;
+                        if (drift.LengthSquared > ArrivalSyncRadius * ArrivalSyncRadius) break;
+                        session.AwaitingArrivalSync = false;
+                    }
                     session.Player.Position = move.Position;
                     session.Player.Pitch = move.Pitch;
                     session.Player.Yaw = move.Yaw;
@@ -997,11 +1012,6 @@ namespace MinecraftClone3API.Networking
             {
                 if (!session.LoggedIn || session.PendingPortalWorld != null) continue;
 
-                // Not yet back in control after a transfer: the client is still draining stale position updates
-                // from the dimension it just left, which floor to coords that aren't a portal in the new world —
-                // reading them here would wrongly clear PortalImmune and bounce the arrival straight back.
-                if (!session.ReadySent) continue;
-
                 if (!TryFindPortalCell(portals, session, out var cell))
                 {
                     // Clear of every portal: drop the post-arrival immunity and reset the soak. An arrival starts
@@ -1148,6 +1158,7 @@ namespace MinecraftClone3API.Networking
                 session.Player.Position = stand;
                 session.Player.Velocity = Vector3D<float>.Zero;
                 session.PendingPortalWorld = null;
+                session.AwaitingArrivalSync = true;
 
                 session.ReadyGate = stand;
                 session.ReadySent = false;

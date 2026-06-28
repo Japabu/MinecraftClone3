@@ -36,6 +36,13 @@ namespace MinecraftClone3API.Networking
         /// the player there when not (a respawn back to the Overworld spawn).</summary>
         public int PortalTimer;
         public bool PortalImmune;
+
+        /// <summary>Set when a transfer finalizes: for a few frames afterwards the client is still draining
+        /// position updates from the dimension it just left, so the move handler drops any that land
+        /// implausibly far from the arrival spot until the client's first real move syncs to the new spawn.
+        /// Without it those stale coords teleport the arrival away from the portal and bounce it straight back.</summary>
+        public bool AwaitingArrivalSync;
+
         public WorldServer PendingPortalWorld;
         public Vector3D<int> PendingPortalApprox;
         public bool PendingBuildPortal;
