@@ -18,7 +18,9 @@ namespace VanillaPlugin.WorldGen
     {
         private const int MaxSize = 21;        // max interior width/height of a portal
         private const int CoordScale = 8;      // Overworld:Nether horizontal block ratio
-        private const int SearchRadius = 16;   // how far to look for an existing destination portal
+        private const int SearchRadius = 16;   // horizontal reach when looking for an existing destination portal
+        private const int SearchHeight = 48;   // vertical reach: the return Y is clamped/floor-adjusted, so the
+                                               // original portal can sit well above/below the scaled Y
 
         private static readonly Vector3D<int> Up = new Vector3D<int>(0, 1, 0);
 
@@ -92,6 +94,8 @@ namespace VanillaPlugin.WorldGen
 
         public bool IsPortalBlock(Block block) => block == Portal;
 
+        public Vector3D<int> SearchExtent => new Vector3D<int>(SearchRadius, SearchHeight, SearchRadius);
+
         public string TargetDimension(string fromDimensionKey)
         {
             if (fromDimensionKey == OverworldDimension.Key) return NetherDimension.Key;
@@ -150,11 +154,13 @@ namespace VanillaPlugin.WorldGen
             var hit = new Vector3D<int>();
             for (var dx = -SearchRadius; dx <= SearchRadius; dx++)
             for (var dz = -SearchRadius; dz <= SearchRadius; dz++)
-            for (var dy = -SearchRadius; dy <= SearchRadius; dy++)
+            for (var dy = -SearchHeight; dy <= SearchHeight; dy++)
             {
                 var p = new Vector3D<int>(approx.X + dx, approx.Y + dy, approx.Z + dz);
                 if (world.GetBlock(p.X, p.Y, p.Z) != Portal) continue;
-                var d = dx * dx + dy * dy + dz * dz;
+                // Nearest by horizontal distance — the scaled X/Z is the real anchor, so the closest column wins
+                // even when its portal sits well above/below the clamped approx.Y.
+                var d = dx * dx + dz * dz;
                 if (d >= best) continue;
                 best = d;
                 hit = p;

@@ -67,8 +67,10 @@ relevant permanent doc. Not a changelog.
   and no nether-specific mobs — ambient spawning is dimension-gated, so the Nether simply has no ambient spawns
   until nether mobs exist); the portal renders the pack's real axis-oriented thin pane but is **not animated** (a
   static texture frame); lava now deals contact damage but is still a **pass-through fluid** (no flow, no fire
-  aftereffect). An Overworld return portal builds at the floor under the scaled coords, which may be far from
-  where you left (no surface-match beyond a local floor scan / portal search radius of 16).
+  aftereffect). A round trip reconnects to the original portal when one exists within the search box
+  (`SearchExtent`, 16 horizontal × 48 vertical) — the transfer now waits for that whole region to generate before
+  searching, so it no longer builds a duplicate against not-yet-loaded chunks; beyond the search box (a far first
+  trip) it builds a fresh portal at the scaled floor, which may be far from where you left.
 - **Dimension transfer briefly stalls the client.** `WorldClient.ResetForDimensionChange` parks the apply
   thread and tears the whole cached world down on the main thread (reusing the eviction paths), so the
   transfer frame can hitch by up to the apply-thread park latency (~50 ms) plus the teardown. One-time per

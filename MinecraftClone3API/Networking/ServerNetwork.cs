@@ -363,7 +363,13 @@ namespace MinecraftClone3API.Networking
 
                 var spawnChunk = WorldBase.ChunkInWorld(session.ReadyGate.Value.ToVector3i());
                 var belowChunk = spawnChunk - new Vector3D<int>(0, 1, 0);
-                if (!session.SentChunks.Contains(spawnChunk) || !session.SentChunks.Contains(belowChunk)) continue;
+                if (!session.SentChunks.Contains(spawnChunk)) continue;
+                // The chunk under the feet can be all-air (never published to LoadedChunks, so never streamed);
+                // accept it as ready once it's generated-but-empty so the signal can't hang on a chunk that will
+                // never arrive — otherwise the player waits the full loading timeout.
+                var belowReady = session.SentChunks.Contains(belowChunk)
+                    || (session.World.IsChunkGenerated(belowChunk) && !session.World.LoadedChunks.ContainsKey(belowChunk));
+                if (!belowReady) continue;
 
                 session.Connection.Send(new PlayerReadyPacket());
                 session.ReadySent = true;
@@ -1099,16 +1105,24 @@ namespace MinecraftClone3API.Networking
                 var world = session.PendingPortalWorld;
                 if (world == null) continue;
 
-                // Wait until the destination column has generated (IsChunkGenerated covers all-air chunks the
-                // open Overworld sky produces, which never reach LoadedChunks); the portal build's SetBlock
-                // creates any cells it spills into.
-                var chunk = WorldBase.ChunkInWorld(session.PendingPortalApprox);
-                if (!world.IsChunkGenerated(chunk)) continue;
+                var portals = GameRegistry.Portals;
+                var buildPortal = session.PendingBuildPortal && portals != null;
+
+                // A portal build searches a region around the destination for an existing portal, so wait for that
+                // whole region to generate — otherwise the search reads air for the not-yet-loaded chunk holding
+                // the original portal and builds a disconnected duplicate. A plain drop (respawn/relog) only needs
+                // its own chunk; IsChunkGenerated covers all-air chunks that never reach LoadedChunks.
+                if (buildPortal)
+                {
+                    var ext = portals.SearchExtent;
+                    if (!world.IsRegionGenerated(session.PendingPortalApprox, ext.X, ext.Y)) continue;
+                }
+                else if (!world.IsChunkGenerated(WorldBase.ChunkInWorld(session.PendingPortalApprox)))
+                    continue;
 
                 // A portal transfer finds-or-builds the destination portal; a respawn just drops the player at
                 // the (known-safe) spawn block.
-                var portals = GameRegistry.Portals;
-                var stand = session.PendingBuildPortal && portals != null
+                var stand = buildPortal
                     ? portals.EnsureDestinationPortal(world, session.PendingPortalApprox)
                     : session.PendingPortalApprox.ToVector3() + new Vector3D<float>(0.5f, 0f, 0.5f);
                 session.Player.Position = stand;

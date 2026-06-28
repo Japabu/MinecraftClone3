@@ -260,6 +260,23 @@ namespace MinecraftClone3API.Blocks
         /// portal transfer to know the destination column is ready before building into it.</summary>
         public bool IsChunkGenerated(Vector3D<int> chunkPos) => _populatedChunks.ContainsKey(chunkPos);
 
+        /// <summary>True once every chunk within <paramref name="horizontalBlocks"/> / <paramref name="verticalBlocks"/>
+        /// of <paramref name="center"/> (clamped to the generator's vertical band) has generated, so a scan over that
+        /// box reads real blocks instead of air-for-unloaded (a portal search before its area is resident builds a
+        /// duplicate instead of finding the existing portal).</summary>
+        public bool IsRegionGenerated(Vector3D<int> center, int horizontalBlocks, int verticalBlocks)
+        {
+            var lo = ChunkInWorld(center.X - horizontalBlocks, center.Y - verticalBlocks, center.Z - horizontalBlocks);
+            var hi = ChunkInWorld(center.X + horizontalBlocks, center.Y + verticalBlocks, center.Z + horizontalBlocks);
+            var yLo = Math.Max(lo.Y, _generator.MinChunkY);
+            var yHi = Math.Min(hi.Y, _generator.MaxChunkY);
+            for (var x = lo.X; x <= hi.X; x++)
+            for (var z = lo.Z; z <= hi.Z; z++)
+            for (var y = yLo; y <= yHi; y++)
+                if (!_populatedChunks.ContainsKey(new Vector3D<int>(x, y, z))) return false;
+            return true;
+        }
+
         public override void SetBlock(int x, int y, int z, Block block, bool update, bool lowPriority)
         {
             var chunkInWorld = ChunkInWorld(x, y, z);

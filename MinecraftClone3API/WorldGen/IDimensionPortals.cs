@@ -23,10 +23,15 @@ namespace MinecraftClone3API.WorldGen
         /// the target dimension (the per-dimension coordinate scale, e.g. 8:1 for Overworld↔Nether).</summary>
         Vector3D<int> ScaleToTarget(string fromKey, string toKey, Vector3D<int> fromBlock);
 
+        /// <summary>Half-extents in blocks of the region <see cref="EnsureDestinationPortal"/> scans for an
+        /// existing portal (X/Z horizontal, Y vertical). The engine waits for this region to generate before
+        /// calling it, so the search reads real blocks instead of air for not-yet-loaded chunks.</summary>
+        Vector3D<int> SearchExtent { get; }
+
         /// <summary>Server-side: ensure a usable portal exists in <paramref name="world"/> near
         /// <paramref name="approx"/> — reusing a nearby existing one or building a fresh obsidian frame — and
-        /// return the feet position where the arriving player should stand. Called once the destination column
-        /// has streamed in, so it may read and write blocks freely.</summary>
+        /// return the feet position where the arriving player should stand. Called once the destination region
+        /// (<see cref="SearchExtent"/>) has streamed in, so it may read and write blocks freely.</summary>
         Vector3D<float> EnsureDestinationPortal(WorldServer world, Vector3D<int> approx);
     }
 }
