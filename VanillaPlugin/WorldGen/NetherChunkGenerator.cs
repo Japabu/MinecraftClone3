@@ -38,6 +38,13 @@ namespace VanillaPlugin.WorldGen
         private readonly OpenSimplexNoise _rough;
         private readonly OpenSimplexNoise _deco;
 
+        // Per-thread prefilled IsOpen field (a chunk's cells plus a 1-cell Y margin) so the cave noise is sampled
+        // once per cell instead of up to 3x (the center plus the vertical-neighbour tests).
+        private readonly System.Threading.ThreadLocal<bool[]> _openScratch =
+            new System.Threading.ThreadLocal<bool[]>(() => new bool[Chunk.Size * (Chunk.Size + 2) * Chunk.Size]);
+
+        private static int OpenIdx(int x, int yy, int z) => (x * (Chunk.Size + 2) + (yy + 1)) * Chunk.Size + z;
+
         public NetherChunkGenerator(long seed, Block netherrack, Block lava, Block bedrock, Block soulSand,
             Block glowstone)
         {
@@ -64,8 +71,9 @@ namespace VanillaPlugin.WorldGen
             return d > CaveThreshold;
         }
 
-        /// <summary>The base block (no decoration) at a world cell, or null for air. Pure.</summary>
-        private Block BaseAt(int wx, int wy, int wz)
+        /// <summary>The base block (no decoration) at a world cell, or null for air. <paramref name="open"/> is
+        /// the precomputed <see cref="IsOpen"/> value for the cell (only consulted for interior cells). Pure.</summary>
+        private Block BaseAt(int wx, int wy, int wz, bool open)
         {
             if (wy < FloorY || wy > CeilingY) return null;
             if (wy == FloorY || wy == CeilingY) return _bedrock;
@@ -77,7 +85,7 @@ namespace VanillaPlugin.WorldGen
                 return r > 0.55f - bias * 0.25f ? _bedrock : _netherrack;
             }
 
-            if (!IsOpen(wx, wy, wz)) return _netherrack;
+            if (!open) return _netherrack;
             return wy <= LavaLevel ? _lava : null;
         }
 
@@ -85,6 +93,17 @@ namespace VanillaPlugin.WorldGen
         {
             var min = chunkPos * Chunk.Size;
             if (min.Y > CeilingY || min.Y + Chunk.Size <= FloorY) return;   // outside the slab → empty, no sky seed
+
+            // Prefill the carved-open field for every cell BaseAt may consult (this chunk plus a 1-cell Y margin
+            // for the vertical-neighbour tests); only interior cells reach IsOpen, the rest stay false (unused).
+            var open = _openScratch.Value;
+            for (var x = 0; x < Chunk.Size; x++)
+            for (var z = 0; z < Chunk.Size; z++)
+            for (var yy = -1; yy <= Chunk.Size; yy++)
+            {
+                var wy = min.Y + yy;
+                open[OpenIdx(x, yy, z)] = wy > FloorRough && wy < CeilRough && IsOpen(min.X + x, wy, min.Z + z);
+            }
 
             for (var x = 0; x < Chunk.Size; x++)
             for (var z = 0; z < Chunk.Size; z++)
@@ -94,14 +113,14 @@ namespace VanillaPlugin.WorldGen
                 for (var y = 0; y < Chunk.Size; y++)
                 {
                     var wy = min.Y + y;
-                    var block = BaseAt(wx, wy, wz);
+                    var block = BaseAt(wx, wy, wz, open[OpenIdx(x, y, z)]);
                     if (block == _netherrack)
                     {
                         // Soul-sand skin on cavern floors; glowstone clusters on cavern ceilings.
-                        if (BaseAt(wx, wy + 1, wz) == null && wy > LavaLevel &&
+                        if (BaseAt(wx, wy + 1, wz, open[OpenIdx(x, y + 1, z)]) == null && wy > LavaLevel &&
                             _deco.Generate(wx * DecoScale, 9.0f, wz * DecoScale) > 0.55f)
                             block = _soulSand;
-                        else if (BaseAt(wx, wy - 1, wz) == null && wy > LavaLevel + 6 &&
+                        else if (BaseAt(wx, wy - 1, wz, open[OpenIdx(x, y - 1, z)]) == null && wy > LavaLevel + 6 &&
                                  _deco.Generate(wx * DecoScale, -4.0f, wz * DecoScale) > 0.72f)
                             block = _glowstone;
                     }
