@@ -94,6 +94,7 @@ namespace MinecraftClone3.States
             public bool AlignedRight;
             public string TitleKey;
             public ushort IconId;
+            public string IconTexture;
         }
 
         private readonly WorldClient _world;
@@ -165,10 +166,12 @@ namespace MinecraftClone3.States
             AddCategory(CreativeTab.Ingredients, false, 3, "itemGroup.ingredients", "minecraft:iron_ingot");
             AddCategory(CreativeTab.SpawnEggs, false, 4, "itemGroup.spawnEggs", "minecraft:pig_spawn_egg");
 
+            // The search tab's icon is a compass; we have no compass item, so draw frame 16 of its texture
+            // (the red-needle-up resting frame) directly.
             _tabs.Add(new TabDef
             {
                 Kind = TabKind.Search, Top = true, Column = 6, AlignedRight = true,
-                TitleKey = "itemGroup.search", IconId = IconByMinecraftId("minecraft:book", null)
+                TitleKey = "itemGroup.search", IconTexture = "minecraft/textures/item/compass_16.png"
             });
             _tabs.Add(new TabDef
             {
@@ -501,13 +504,16 @@ namespace MinecraftClone3.States
                     null, new Vector4D<float>(shade, shade, shade, 1f));
             }
 
-            if (tab.IconId != 0)
+            var iconX = x + TabIconX * Scale;
+            var iconY = y + (TabIconY + (tab.Top ? 1 : -1)) * Scale;
+            var iconRect = Rectangle.FromSize(iconX, iconY, SlotSize * Scale, SlotSize * Scale);
+            if (tab.IconTexture != null)
             {
-                var iconX = x + TabIconX * Scale;
-                var iconY = y + (TabIconY + (tab.Top ? 1 : -1)) * Scale;
-                ItemStackRenderer.Draw(new ItemStack(tab.IconId, 1),
-                    Rectangle.FromSize(iconX, iconY, SlotSize * Scale, SlotSize * Scale));
+                var tex = GuiAssets.Get(tab.IconTexture);
+                if (tex != null) GuiRenderer.DrawTexture(tex, iconRect, null);
             }
+            else if (tab.IconId != 0)
+                ItemStackRenderer.Draw(new ItemStack(tab.IconId, 1), iconRect);
         }
 
         private void DrawTitle()
