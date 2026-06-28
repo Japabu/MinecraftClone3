@@ -61,6 +61,10 @@ namespace MinecraftClone3API.Graphics
         private static GpuBindGroup _playerFrameBind;
         private static GpuBindGroup _atlasBind;
 
+        // The paperdoll re-renders every frame (it follows the cursor), so it reuses one persistent colour+depth
+        // target rather than allocating per frame.
+        private static GpuTexture _playerColorTex;
+        private static GpuTexture _playerDepthTex;
         private static Texture _playerIcon;
 
         /// <summary>The icon texture for a block id (rendered and cached on first request).</summary>
@@ -129,15 +133,51 @@ namespace MinecraftClone3API.Graphics
             }, "itemIcon.atlas");
         }
 
-        /// <summary>The full-body player paperdoll texture for the creative inventory's Survival-Inventory tab
-        /// (the model posed at rest, front view), rendered and cached on first request. Main-thread only.</summary>
-        public static Texture GetPlayerIcon()
+        /// <summary>Renders the full-body player paperdoll for the creative inventory's Survival-Inventory tab and
+        /// returns its texture. <paramref name="bodyTransform"/> orients the whole model (body yaw) and
+        /// <paramref name="headYaw"/>/<paramref name="headPitch"/> turn the head — so the model looks toward the
+        /// cursor. Re-renders into one persistent target each call; main-thread only.</summary>
+        public static Texture RenderPlayer(Matrix4 bodyTransform, float headYaw, float headPitch)
         {
-            if (_playerIcon != null) return _playerIcon;
             EnsureLoaded();
-            var mesh = EntityRenderer.BuildPlayerIconMesh(Matrix4.Identity);
-            _playerIcon = RenderMeshToTexture(mesh, _playerFrameBind, PlayerWidth, PlayerHeight);
+            EnsurePlayerTarget();
+            var mesh = EntityRenderer.BuildPlayerIconMesh(bodyTransform, headYaw, headPitch);
+            RenderPlayerMesh(mesh);
             return _playerIcon;
+        }
+
+        private static void EnsurePlayerTarget()
+        {
+            if (_playerColorTex != null) return;
+            _playerColorTex = new GpuTexture(PlayerWidth, PlayerHeight, ColorFormat,
+                TextureUsage.RenderAttachment | TextureUsage.TextureBinding, label: "playerIcon.color");
+            _playerDepthTex = new GpuTexture(PlayerWidth, PlayerHeight, DepthFormat,
+                TextureUsage.RenderAttachment, label: "playerIcon.depth");
+            _playerIcon = Texture.FromGpu(_playerColorTex);
+        }
+
+        private static void RenderPlayerMesh(MeshBuffer mesh)
+        {
+            var streams = UploadMesh(mesh);
+            var encoder = GpuCommandEncoder.Create("playerIcon");
+            var pass = RenderPassBuilder.Begin(encoder,
+                stackalloc[] { ColorAttachment.ClearTo(_playerColorTex.View, 0, 0, 0, 0) },
+                new DepthAttachment(_playerDepthTex.View, LoadOp.Clear, 0f));
+
+            pass.SetPipeline(_pipeline);
+            pass.SetBindGroup(0, _playerFrameBind);
+            pass.SetBindGroup(1, _atlasBind);
+            for (uint i = 0; i < 5; i++) pass.SetVertexBuffer(i, streams.Vbo[i]);
+            pass.SetIndexBuffer(streams.Ibo, IndexFormat.Uint32);
+            pass.DrawIndexed((uint)mesh.IndicesCount);
+
+            pass.End();
+            pass.Release();
+            encoder.SubmitImmediate("playerIcon");
+
+            for (var i = 0; i < 5; i++) streams.Vbo[i].Dispose();
+            streams.Ibo.Dispose();
+            mesh.Clear();
         }
 
         private static Texture Render(Block block)

@@ -714,13 +714,27 @@ namespace MinecraftClone3API.Graphics
             return mesh;
         }
 
-        /// <summary>Builds a single mesh of the player model posed at rest (base skin + the modern overlay layer
-        /// baked into <c>player.geo.json</c>), for the creative inventory paperdoll. Feet sit at y=0, centred on
-        /// x/z and facing +Z; the caller's camera frames it. Armour is not drawn.</summary>
-        public static MeshBuffer BuildPlayerIconMesh(Matrix4 centre)
+        /// <summary>Builds the player model for the creative inventory paperdoll (base skin + the modern overlay
+        /// layer baked into <c>player.geo.json</c>). <paramref name="centre"/> orients the whole body (a yaw
+        /// toward the cursor); the head bones additionally yaw/pitch about the neck so the model looks at the
+        /// cursor, as in vanilla. Feet sit at y=0, centred on x/z and facing +Z. Armour is not drawn.</summary>
+        public static MeshBuffer BuildPlayerIconMesh(Matrix4 centre, float headYaw, float headPitch)
         {
+            var model = LoadModel(PlayerModelPath);
+            var texture = LoadPlayerSkin();
+            var layerSize = BlockTextureManager.Sizes[texture.ArrayId];
+            var headLook = new Vector3(headPitch, headYaw, 0f);
+
             var mesh = new MeshBuffer();
-            BakeIconParts(mesh, LoadModel(PlayerModelPath), LoadPlayerSkin(), centre);
+            foreach (var part in model.Parts)
+            {
+                // The head bone and the hat overlay share the name "head", so both follow the look direction.
+                var rot = part.Name == "head" ? part.Rotation + headLook : part.Rotation;
+                var m = Matrix4X4.CreateRotationX(rot.X) * Matrix4X4.CreateRotationY(rot.Y) *
+                        Matrix4X4.CreateRotationZ(rot.Z) * Matrix4X4.CreateTranslation(part.Pivot) * centre;
+                foreach (var box in part.Boxes)
+                    AddBox(mesh, box, texture, layerSize, false, m);
+            }
             return mesh;
         }
 

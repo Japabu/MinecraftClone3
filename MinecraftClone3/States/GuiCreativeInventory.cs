@@ -466,11 +466,17 @@ namespace MinecraftClone3.States
 
         private void DrawPlayerModel()
         {
-            var icon = ItemIconRenderer.GetPlayerIcon();
-            if (icon == null) return;
-            GuiRenderer.DrawTexture(icon,
-                Rectangle.FromSize(_bgX + InvPlayerX * Scale, _bgY + InvPlayerY * Scale, InvPlayerW * Scale, InvPlayerH * Scale),
-                null);
+            var rect = Rectangle.FromSize(_bgX + InvPlayerX * Scale, _bgY + InvPlayerY * Scale,
+                InvPlayerW * Scale, InvPlayerH * Scale);
+
+            // Look toward the cursor like vanilla: yaw from the horizontal offset, pitch from the vertical, the
+            // body turning about half as far as the head (which gets the remainder on top of the body yaw).
+            var mouse = ScaledResolution.ToGuiCoords(ClientResources.Input.MousePosition);
+            var f = MathF.Atan((mouse.X - (rect.MinX + rect.MaxX) / 2f) / 80f);
+            var g = MathF.Atan((mouse.Y - (rect.MinY + rect.MaxY) / 2f) / 80f);
+
+            var icon = ItemIconRenderer.RenderPlayer(Matrix4X4.CreateRotationY(f * 0.45f), f * 0.45f, g * 0.5f);
+            GuiRenderer.DrawTexture(icon, rect, null);
         }
 
         public override void Render()
