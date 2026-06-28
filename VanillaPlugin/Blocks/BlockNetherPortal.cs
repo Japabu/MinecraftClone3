@@ -25,6 +25,17 @@ namespace VanillaPlugin.Blocks
 
         private static readonly Vector3D<int> Up = new Vector3D<int>(0, 1, 0);
 
+        private static readonly Vector3D<int>[] FaceNeighbors =
+        {
+            new Vector3D<int>(1, 0, 0), new Vector3D<int>(-1, 0, 0),
+            new Vector3D<int>(0, 1, 0), new Vector3D<int>(0, -1, 0),
+            new Vector3D<int>(0, 0, 1), new Vector3D<int>(0, 0, -1),
+        };
+
+        // True on the tick thread while a collapse is draining: re-entrant OnNeighborChanged calls from the
+        // SetBlock notifications become no-ops, so the whole sheet clears in one flat loop, never a deep stack.
+        [System.ThreadStatic] private static bool _collapsing;
+
         private Block _obsidian;
         private Block Obsidian => _obsidian ??= GameRegistry.GetBlock("Vanilla:Obsidian");
 
@@ -55,8 +66,35 @@ namespace VanillaPlugin.Blocks
         /// cascades it to the rest of the portal, so breaking one frame block collapses the whole sheet at once.</summary>
         public override void OnNeighborChanged(WorldServer world, Vector3D<int> blockPos, Vector3D<int> changedPos)
         {
+            if (_collapsing) return;
             if (Supported(world, changedPos)) return;
-            if (!FrameIntact(world, blockPos)) world.SetBlock(blockPos, BlockRegistry.BlockAir);
+            if (!FrameIntact(world, blockPos)) Collapse(world, blockPos);
+        }
+
+        /// <summary>Clears the whole connected sheet of portal blocks in one breadth-first pass. Clearing a block
+        /// still notifies its neighbours, but the <see cref="_collapsing"/> guard makes those re-entrant
+        /// <see cref="OnNeighborChanged"/> calls no-ops — so a large portal collapses as a flat loop instead of a
+        /// per-block recursion that could overflow the tick thread's stack.</summary>
+        private void Collapse(WorldServer world, Vector3D<int> start)
+        {
+            _collapsing = true;
+            try
+            {
+                var frontier = new Queue<Vector3D<int>>();
+                frontier.Enqueue(start);
+                while (frontier.Count > 0)
+                {
+                    var p = frontier.Dequeue();
+                    if (world.GetBlock(p.X, p.Y, p.Z) != this) continue;
+                    world.SetBlock(p, BlockRegistry.BlockAir);
+                    foreach (var off in FaceNeighbors)
+                    {
+                        var n = p + off;
+                        if (world.GetBlock(n.X, n.Y, n.Z) == this) frontier.Enqueue(n);
+                    }
+                }
+            }
+            finally { _collapsing = false; }
         }
 
         /// <summary>True while each of the four in-plane neighbours (the two along the portal axis, plus up/down)

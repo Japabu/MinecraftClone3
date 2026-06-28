@@ -766,8 +766,6 @@ namespace MinecraftClone3API.Client.Blocks
             HasSky = dim.HasSky;
             FogColor = dim.FogColor;
             AmbientLight = dim.AmbientLight;
-            // TEMP portal diagnostic — remove before merge.
-            Logger.Info($"[portal] client dimension change applied: HasSky={dim.HasSky}");
             _lastEvictChunk = new Vector3D<int>(int.MinValue);
             _lastLodEvictChunk = new Vector3D<int>(int.MinValue);
             _lastLodStepChunk = new Vector3D<int>(int.MinValue);

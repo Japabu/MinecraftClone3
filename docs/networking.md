@@ -72,7 +72,10 @@ covers all-air chunks the open sky produces), then `EnsureDestinationPortal` bui
 server **replays the join handshake** (`LoginAccept` with the new spawn, `WorldTime`, entity sync,
 `PlayerReady`) so the client finishes loading at the portal. A **post-transfer immunity** (set on arrival,
 cleared only once the player steps off a portal) stops an arrival from bouncing straight back or re-triggering
-while they stand still — the soak only runs when they deliberately step out and back into a portal.
+while they stand still — the soak only runs when they deliberately step out and back into a portal. Because
+player position is client-authoritative, the move handler also drops the stale post-transfer moves the client
+keeps sending from the dimension it just left (`AwaitingArrivalSync` until the client's first move lands near
+the new spawn) — otherwise those old-dimension coords would yank the arrival off the portal and bounce it back.
 
 **Inventory is server-authoritative** (see [inventory.md](inventory.md)). The server owns each
 `ClientSession.Inventory`, persists it per player, and pushes the whole thing once via `InventoryState` on

@@ -71,7 +71,10 @@ relevant permanent doc. Not a changelog.
   no fire aftereffect). A round trip reconnects to the original portal when one exists within the search box
   (`SearchExtent`, 16 horizontal × 48 vertical) — the transfer now waits for that whole region to generate before
   searching, so it no longer builds a duplicate against not-yet-loaded chunks; beyond the search box (a far first
-  trip) it builds a fresh portal at the scaled floor, which may be far from where you left.
+  trip) it builds a fresh portal at the scaled floor, which may be far from where you left. Portal validity is
+  checked on neighbour change (not polled), so a frame broken while the *portal's own* chunk is unloaded won't
+  self-collapse until something next changes a block beside it once that chunk reloads — a narrow edge that
+  self-corrects on the next interaction (the orphaned pane still works meanwhile).
 - **Dimension transfer briefly stalls the client.** `WorldClient.ResetForDimensionChange` parks the apply
   thread and tears the whole cached world down on the main thread (reusing the eviction paths), so the
   transfer frame can hitch by up to the apply-thread park latency (~50 ms) plus the teardown. One-time per

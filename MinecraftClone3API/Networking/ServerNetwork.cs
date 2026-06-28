@@ -76,8 +76,8 @@ namespace MinecraftClone3API.Networking
         // client paints a thickening portal tint over it); creative is fast but not a single tick, so merely
         // brushing a portal block doesn't fling you instantly. An arrival can't re-trigger until it steps off the
         // portal once (PortalImmune), so the soak only ever runs once you deliberately walk into a portal.
-        private const int SurvivalPortalSoakTicks = 80;
-        private const int CreativePortalSoakTicks = 10;
+        public const int SurvivalPortalSoakTicks = 80;
+        public const int CreativePortalSoakTicks = 10;
 
         // A move arriving more than this many blocks from where a transfer just placed the player is treated as
         // a stale update from the old dimension and dropped (see ClientSession.AwaitingArrivalSync). Far larger
@@ -1064,9 +1064,6 @@ namespace MinecraftClone3API.Networking
             var toWorld = GetOrCreateWorld(toKey);
             var approx = portals.ScaleToTarget(fromKey, toKey, feet);
 
-            // TEMP portal diagnostic — remove before merge.
-            Logger.Info($"[portal] BeginTransfer {fromKey} -> {toKey}  feet={feet}  approx={approx}  playerPos={session.Player.Position}");
-
             session.World.RemovePlayer(session.Player);
             BroadcastTo(session.World, new EntityDespawnPacket {EntityId = session.EntityId}, session);
 
@@ -1151,9 +1148,6 @@ namespace MinecraftClone3API.Networking
                 var stand = buildPortal
                     ? portals.EnsureDestinationPortal(world, session.PendingPortalApprox)
                     : session.PendingPortalApprox.ToVector3() + new Vector3D<float>(0.5f, 0f, 0.5f);
-
-                // TEMP portal diagnostic — remove before merge.
-                Logger.Info($"[portal] arrive in {world.DimensionKey} at {stand}  buildPortal={buildPortal}  approx={session.PendingPortalApprox}");
 
                 session.Player.Position = stand;
                 session.Player.Velocity = Vector3D<float>.Zero;

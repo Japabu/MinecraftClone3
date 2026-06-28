@@ -72,10 +72,13 @@ namespace MinecraftClone3.States
         private const double MaxFrameTime = 0.25;
         private const int MaxCatchUpTicks = 5;
 
-        // Nether-portal screen tint, 0..1. Rises 1/80 per tick while the player stands in a portal block (so a
-        // survival player's 4 s soak fills the screen as it counts down), decays 1/20 per tick once they step
-        // off. Client-local and cosmetic — the authoritative transfer stays server-side.
+        // Nether-portal screen tint, 0..1. Rises while the player stands in a portal block (at the same rate as
+        // their game-mode's server soak, so it fills exactly as the transfer fires), decays 1/20 per tick once
+        // they step off. Client-local and cosmetic — the authoritative transfer stays server-side.
         private float _timeInPortal;
+        // Set on arrival (the player spawns inside the destination portal); mirrors the server's post-transfer
+        // immunity so the tint doesn't re-flood — it only decays until they step off the arrival portal once.
+        private bool _portalArrivalImmune;
 
         /// <summary>Singleplayer: runs the given world in an in-process server over a loopback connection.</summary>
         public StateWorld(WorldInfo world) : this(false, world, false) { }
@@ -271,7 +274,20 @@ namespace MinecraftClone3.States
                 _spawnApplied = false;
                 _loadProgress = 0f;
                 _timeInPortal = 0f;
+                _portalArrivalImmune = true;
                 _loadingTimer.Restart();
+            }
+
+            // If the loading screen was left on its 30 s timeout before the destination spawn arrived (very slow
+            // generation), adopt that spawn the moment it lands — otherwise the player keeps reporting stale
+            // coords from the dimension it left and the server's arrival guard never lets it sync.
+            if (!_loading && _world.SpawnReceived && !_spawnApplied)
+            {
+                _player.Position = _world.SpawnPosition;
+                _player.PrevPosition = _world.SpawnPosition;
+                _player.InterpolatedPosition = _world.SpawnPosition;
+                _player.Velocity = Vector3D<float>.Zero;
+                _spawnApplied = true;
             }
         }
 
@@ -389,7 +405,21 @@ namespace MinecraftClone3.States
         private void UpdatePortalTint()
         {
             var inPortal = PlayerInPortal();
-            _timeInPortal = Math.Clamp(_timeInPortal + (inPortal ? 1f / 80f : -1f / 20f), 0f, 1f);
+
+            // Just arrived standing in the destination portal: the server holds the player immune until they
+            // step off, so don't re-flood the screen — only decay, and re-arm a normal soak once they've left.
+            if (_portalArrivalImmune)
+            {
+                if (!inPortal) _portalArrivalImmune = false;
+                _timeInPortal = Math.Max(0f, _timeInPortal - 1f / 20f);
+                return;
+            }
+
+            // Fill at the same rate as this game-mode's server soak (4 s survival / 0.5 s creative) so the tint
+            // saturates exactly as the transfer fires; fade out faster when not standing in a portal.
+            var soakTicks = (float)(_world.GameMode == GameMode.Creative
+                ? ServerNetwork.CreativePortalSoakTicks : ServerNetwork.SurvivalPortalSoakTicks);
+            _timeInPortal = Math.Clamp(_timeInPortal + (inPortal ? 1f / soakTicks : -1f / 20f), 0f, 1f);
         }
 
         /// <summary>True if a portal block fills the player's column from feet to head — the same probe the
