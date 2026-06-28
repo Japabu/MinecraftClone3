@@ -256,24 +256,28 @@ namespace VanillaPlugin
         {
             context.RegisterEntityData<SheepData>();
 
+            var overworldOnly = new[] {OverworldDimension.Key};
             var pig = new EntityType("Pig", EntityKind.Creature, 0.9f, 0.9f, 10f, 0.1f, false,
                 "minecraft:entity/pig/pig_temperate", "Vanilla/Models/Entity/pig.geo.json",
-                loot: new LootTable(new LootDrop("Vanilla:Porkchop", 1, 3)));
+                loot: new LootTable(new LootDrop("Vanilla:Porkchop", 1, 3)), spawnableDimensions: overworldOnly);
             var cow = new EntityType("Cow", EntityKind.Creature, 0.9f, 1.4f, 10f, 0.1f, false,
                 "minecraft:entity/cow/cow_temperate", "Vanilla/Models/Entity/cow.geo.json",
-                loot: new LootTable(new LootDrop("Vanilla:Beef", 1, 3), new LootDrop("Vanilla:Leather", 0, 2)));
+                loot: new LootTable(new LootDrop("Vanilla:Beef", 1, 3), new LootDrop("Vanilla:Leather", 0, 2)),
+                spawnableDimensions: overworldOnly);
             // The sheep carries a wool overlay (its own texture) that its SheepData hides once sheared.
             var sheep = new EntityType("Sheep", EntityKind.Creature, 0.9f, 1.3f, 8f, 0.1f, false,
                 "minecraft:entity/sheep/sheep", "Vanilla/Models/Entity/sheep.geo.json",
                 "Vanilla/Models/Entity/sheep_wool.geo.json", "minecraft:entity/sheep/sheep_wool",
                 () => new SheepData(),
-                loot: new LootTable(new LootDrop("Vanilla:Mutton", 1, 2)));
+                loot: new LootTable(new LootDrop("Vanilla:Mutton", 1, 2)), spawnableDimensions: overworldOnly);
             var chicken = new EntityType("Chicken", EntityKind.Creature, 0.4f, 0.7f, 4f, 0.08f, false,
                 "minecraft:entity/chicken/chicken_temperate", "Vanilla/Models/Entity/chicken.geo.json",
-                loot: new LootTable(new LootDrop("Vanilla:Chicken", 1, 1), new LootDrop("Vanilla:Feather", 0, 2)));
+                loot: new LootTable(new LootDrop("Vanilla:Chicken", 1, 1), new LootDrop("Vanilla:Feather", 0, 2)),
+                spawnableDimensions: overworldOnly);
             var zombie = new EntityType("Zombie", EntityKind.Creature, 0.6f, 1.95f, 20f, 0.13f, true,
                 "minecraft:entity/zombie/zombie", "System/Models/Entity/biped.geo.json",
-                attackDamage: 3f, loot: new LootTable(new LootDrop("Vanilla:RottenFlesh", 0, 2)));
+                attackDamage: 3f, loot: new LootTable(new LootDrop("Vanilla:RottenFlesh", 0, 2)),
+                spawnableDimensions: overworldOnly);
             // The Enderman: a tall, fast neutral mob with the long-limbed humanoid silhouette. Its slender
             // geometry (2x30 limbs, 8x12x4 body, 8x8x8 head) maps the official 64x32 enderman sheet directly.
             // Neutral until provoked: it wanders peacefully until a player looks straight at it, then gives chase;
@@ -281,7 +285,7 @@ namespace VanillaPlugin
             var enderman = new EntityType("Enderman", EntityKind.Creature, 0.6f, 2.9f, 40f, 0.17f, false,
                 "minecraft:entity/enderman/enderman", "Vanilla/Models/Entity/enderman.geo.json",
                 neutralUntilProvoked: true,
-                loot: new LootTable(new LootDrop("Vanilla:EnderPearl", 0, 1)));
+                loot: new LootTable(new LootDrop("Vanilla:EnderPearl", 0, 1)), spawnableDimensions: overworldOnly);
 
             context.Register(pig);
             context.Register(cow);

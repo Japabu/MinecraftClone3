@@ -5,7 +5,7 @@ namespace MinecraftClone3API.Entities
 {
     /// <summary>
     /// Server-authoritative survival simulation for a player: hunger/saturation/exhaustion drain, hunger-gated
-    /// health regen, starvation, drowning, and void damage, plus the client-reported fall-damage and the
+    /// health regen, starvation, drowning, void, and block-contact (lava) damage, plus the client-reported fall-damage and the
     /// food-eating effect. Stateless (all per-player state lives on <see cref="EntityPlayer"/>); constants
     /// match Minecraft on Normal difficulty.
     /// </summary>
@@ -29,6 +29,7 @@ namespace MinecraftClone3API.Entities
         private const float DrownDamage = 2f;
         private const int VoidDamageInterval = 10;
         private const float VoidDamage = 4f;
+        private const int ContactDamageInterval = 10;
         // Below this Y the player is "in the void". The Overworld floor (bedrock) sits at Y -32, matching
         // Minecraft's "min build height − 64".
         private const float VoidDamageY = -96f;
@@ -58,6 +59,7 @@ namespace MinecraftClone3API.Entities
             AccrueMovementExhaustion(p);
             Drown(world, p);
             Void(p);
+            BlockContact(world, p);
             ApplyExhaustion(p);
             Regenerate(p);
         }
@@ -103,6 +105,7 @@ namespace MinecraftClone3API.Entities
             p.FoodTimer = 0;
             p.DrownTimer = 0;
             p.VoidTimer = 0;
+            p.ContactDamageTimer = 0;
         }
 
         private static void AccrueMovementExhaustion(EntityPlayer p)
@@ -149,6 +152,35 @@ namespace MinecraftClone3API.Entities
                 }
             }
             else p.VoidTimer = 0;
+        }
+
+        /// <summary>Periodic damage while the player's body overlaps a damaging block (lava, future fire). The
+        /// worst <see cref="Block.ContactDamage"/> over the occupied cells is applied on the cadence; like fire
+        /// in Minecraft it bypasses armor (direct health subtraction, not <see cref="ApplyContactDamage"/>).</summary>
+        private static void BlockContact(WorldServer world, EntityPlayer p)
+        {
+            var minX = (int) MathF.Floor(p.Position.X - EntityPlayer.Width / 2);
+            var maxX = (int) MathF.Floor(p.Position.X + EntityPlayer.Width / 2);
+            var minY = (int) MathF.Floor(p.Position.Y);
+            var maxY = (int) MathF.Floor(p.Position.Y + EntityPlayer.Height);
+            var minZ = (int) MathF.Floor(p.Position.Z - EntityPlayer.Width / 2);
+            var maxZ = (int) MathF.Floor(p.Position.Z + EntityPlayer.Width / 2);
+
+            var damage = 0f;
+            for (var x = minX; x <= maxX; x++)
+            for (var y = minY; y <= maxY; y++)
+            for (var z = minZ; z <= maxZ; z++)
+                damage = MathF.Max(damage, world.GetBlock(x, y, z).ContactDamage);
+
+            if (damage > 0f)
+            {
+                if (++p.ContactDamageTimer >= ContactDamageInterval)
+                {
+                    p.ContactDamageTimer = 0;
+                    p.Health -= damage;
+                }
+            }
+            else p.ContactDamageTimer = 0;
         }
 
         private static void ApplyExhaustion(EntityPlayer p)

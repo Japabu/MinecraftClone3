@@ -11,8 +11,9 @@ respawning run on the **tick thread** at the chunk load/unload drains (`WorldSer
 `SaveAndDespawnChunkEntities`), so all `Entities` mutation stays single-threaded; the disk read happens off the
 tick thread on the load thread. Entities exist on disk **or** in the live world, never both, so a reload never
 duplicates them. The player is persisted separately (inventory + stats + position/look) by
-[PlayerSerializer](../MinecraftClone3API/IO/PlayerSerializer.cs). Entity persistence runs on chunk unload and
-clean shutdown (not the periodic chunk autosave), so a hard crash can lose entity motion since the last unload.
+[PlayerSerializer](../MinecraftClone3API/IO/PlayerSerializer.cs). Entity persistence runs on chunk unload, clean
+shutdown, and the 30 s autosave (a tick-thread pass bucketing live entities by chunk), so a hard crash loses at
+most one autosave interval of entity motion — matching chunks and players.
 
 ## Model
 

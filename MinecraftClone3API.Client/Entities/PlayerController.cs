@@ -428,10 +428,11 @@ namespace MinecraftClone3API.Entities
         }
 
         /// <summary>Right-click interaction: if the player is looking at an interactable block (e.g. a crafting
-        /// table) let it handle the click (open its GUI) and report that placement should be suppressed.</summary>
+        /// table) let it handle the click (open its GUI) and report that placement should be suppressed. Holding
+        /// sneak suppresses activation so the right-click places a block against the face instead (vanilla).</summary>
         private static bool TryActivateBlock(WorldBase world)
         {
-            if (_blockRaytrace == null) return false;
+            if (_blockRaytrace == null || Keybinds.IsDown(GameAction.Sneak)) return false;
             var pos = _blockRaytrace.BlockPos;
             var block = world.GetBlock(pos.X, pos.Y, pos.Z);
             return block != null && block.OnActivated(world, pos, PlayerEntity);

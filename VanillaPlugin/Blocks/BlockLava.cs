@@ -21,6 +21,7 @@ namespace VanillaPlugin.Blocks
         public override bool CanPassThrough(WorldBase world, Vector3D<int> blockPos) => true;
         public override bool CanTarget(WorldBase world, Vector3D<int> blockPos) => false;
         public override bool IsLiquid => true;
+        public override float ContactDamage => 4f; // 2 hearts per damage tick, matching MC lava
 
         public override LightLevel GetLightLevel(WorldBase world, Vector3D<int> blockPos) => new LightLevel(15, 11, 6);
 

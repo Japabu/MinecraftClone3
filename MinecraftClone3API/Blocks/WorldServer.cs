@@ -29,6 +29,9 @@ namespace MinecraftClone3API.Blocks
         // whole session (chunks otherwise persist only on unload/shutdown). Runs on the unload thread.
         public static readonly TimeSpan AutosaveInterval = TimeSpan.FromSeconds(30);
         private DateTime _lastAutosave = DateTime.Now;
+        // Set by the UnloadThread when the autosave timer fires; consumed on the tick thread in Update() to save
+        // live Entities (which only the tick thread may enumerate). Volatile for prompt cross-thread visibility.
+        private volatile bool _entityAutosaveDue;
         private readonly Dictionary<Vector3D<int>, CachedChunk> _chunksReadyToAdd = new Dictionary<Vector3D<int>, CachedChunk>();
         private readonly HashSet<Vector3D<int>> _chunksReadyToRemove = new HashSet<Vector3D<int>>();
 
@@ -518,6 +521,29 @@ namespace MinecraftClone3API.Blocks
             }
         }
 
+        /// <summary>Tick-thread periodic entity autosave: persist every live entity (bucketed by owning chunk)
+        /// WITHOUT despawning, so a hard crash loses at most one <see cref="AutosaveInterval"/> of entity motion,
+        /// matching chunks/players. Flagged due by the UnloadThread; Entities is enumerated only here (tick thread).
+        /// Each loaded chunk with no live entities is emptied, so an entity that moved away leaves no stale blob.</summary>
+        private void AutosaveEntities()
+        {
+            _entityAutosaveDue = false;
+
+            var byChunk = new Dictionary<Vector3D<int>, List<Entity>>();
+            foreach (var entity in Entities)
+            {
+                var chunkPos = ChunkInWorld(FloorToInt(entity.Position));
+                if (!byChunk.TryGetValue(chunkPos, out var list))
+                    byChunk[chunkPos] = list = new List<Entity>();
+                list.Add(entity);
+            }
+
+            var empty = new List<Entity>();
+            foreach (var entry in LoadedChunks)
+                _serializer.SaveChunkEntities(entry.Key,
+                    byChunk.TryGetValue(entry.Key, out var list) ? list : empty);
+        }
+
         private static Vector3D<int> FloorToInt(Vector3D<float> v) => new Vector3D<int>(
             (int) MathF.Floor(v.X), (int) MathF.Floor(v.Y), (int) MathF.Floor(v.Z));
 
@@ -604,6 +630,8 @@ namespace MinecraftClone3API.Blocks
 
                 _chunksReadyToRemove.Clear();
             }
+
+            if (_entityAutosaveDue) AutosaveEntities();
 
             var drainStart = Stopwatch.GetTimestamp();
             var drained = 0;
@@ -697,7 +725,8 @@ namespace MinecraftClone3API.Blocks
 
             var creatureTypes = new List<EntityType>();
             foreach (var type in GameRegistry.EntityTypes)
-                if (type.Kind == EntityKind.Creature) creatureTypes.Add(type);
+                if (type.Kind == EntityKind.Creature && type.CanSpawnInDimension(DimensionKey))
+                    creatureTypes.Add(type);
             if (creatureTypes.Count == 0) return;
 
             var chosen = creatureTypes[_spawnRng.Next(creatureTypes.Count)];
@@ -812,6 +841,7 @@ namespace MinecraftClone3API.Blocks
                     _lastAutosave = now;
                     foreach (var pair in LoadedChunks)
                         _serializer.SaveChunk(pair.Value);
+                    _entityAutosaveDue = true;
                 }
 
                 Profiler.AddUnloadAlloc(GC.GetAllocatedBytesForCurrentThread() - allocStart);

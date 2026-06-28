@@ -268,12 +268,6 @@ relevant permanent doc. Not a changelog.
   mirrors the right-side legs and one arm/leg of the humanoid): we render those faces un-mirrored, which is
   near-invisible on the near-symmetric limb textures. Applying it means swapping the left/right face regions
   and reversing U in `EntityRenderer.AddBox`.
-- **Entity persistence runs on chunk-unload + shutdown, not the periodic autosave.** Entities save when their
-  chunk unloads and on clean shutdown (see [entities.md](entities.md)), so quitting is lossless; a hard crash
-  loses entity motion since the last unload (chunks/players are bounded by the 30 s autosave, entities aren't).
-  An entity that wanders entirely out of every loaded chunk between unload cycles ticks unchecked until it
-  void-despawns rather than being saved — bounded and rare. Adding an entity pass to the periodic autosave
-  would need it to run on the tick thread (where `Entities` lives), not the unload thread.
 - **Entities are stored/queried by linear scan — fine now, wants a spatial index eventually.** The server keeps
   a flat `WorldServer.Entities` `HashSet`; `FindEntity` (entity-targeted use), `EntityCreature.NearestPlayer`
   (every creature, every tick), and the client's `PlayerController.PickEntity` (every right-click) all scan the

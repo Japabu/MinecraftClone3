@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using MinecraftClone3API.Util;
 
 namespace MinecraftClone3API.Entities
@@ -74,10 +75,16 @@ namespace MinecraftClone3API.Entities
         /// <summary>What this creature drops when killed, or null for none.</summary>
         public readonly LootTable Loot;
 
+        /// <summary>Dimension RegistryKeys (e.g. <c>Vanilla:Overworld</c>) this type may ambient-spawn in, matched
+        /// against <c>WorldServer.DimensionKey</c>. Null = never ambient-spawned (items, projectiles, player-only
+        /// types). Kept plugin-supplied so Core never hardcodes a dimension.</summary>
+        public readonly HashSet<string> SpawnableDimensions;
+
         public EntityType(string name, EntityKind kind, float width, float height, float maxHealth,
             float moveSpeed, bool hostile, string texturePath, string modelPath,
             string overlayModelPath = null, string overlayTexturePath = null, Func<EntityData> dataFactory = null,
-            float attackDamage = 0f, LootTable loot = null, bool neutralUntilProvoked = false)
+            float attackDamage = 0f, LootTable loot = null, bool neutralUntilProvoked = false,
+            string[] spawnableDimensions = null)
             : base(name)
         {
             Kind = kind;
@@ -94,7 +101,13 @@ namespace MinecraftClone3API.Entities
             DataFactory = dataFactory;
             AttackDamage = attackDamage;
             Loot = loot;
+            SpawnableDimensions = spawnableDimensions == null ? null : new HashSet<string>(spawnableDimensions);
         }
+
+        /// <summary>Whether ambient spawning may place this type in the given dimension. Null/empty
+        /// <see cref="SpawnableDimensions"/> means never (so an untagged type can't leak into every dimension).</summary>
+        public bool CanSpawnInDimension(string dimensionKey)
+            => SpawnableDimensions != null && SpawnableDimensions.Contains(dimensionKey);
 
         /// <summary>Creates a server-side instance of this type (used by <c>WorldServer.SpawnEntity</c>).</summary>
         public Entity CreateEntity()

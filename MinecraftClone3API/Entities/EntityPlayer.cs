@@ -34,6 +34,7 @@ namespace MinecraftClone3API.Entities
         public int FoodTimer;
         public int DrownTimer;
         public int VoidTimer;
+        public int ContactDamageTimer;
         public Vector3D<float> LastTickPosition;
 
         public Vector3D<float> PrevPosition;
