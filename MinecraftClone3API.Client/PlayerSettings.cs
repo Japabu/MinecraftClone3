@@ -8,10 +8,8 @@ namespace MinecraftClone3API.Client
 {
     /// <summary>
     /// Persistent player identity. <see cref="Name"/> is sent in the multiplayer login so each player's
-    /// inventory/position save under their own file server-side (an empty name would collapse every player onto
-    /// one shared save). GPU-free; mirrors <see cref="GraphicsSettings"/>'s load-at-startup / save-on-set
-    /// pattern. There is no in-game name field yet, so the name is set by editing <c>PlayerSettings.json</c>
-    /// (default <c>"Player"</c>).
+    /// inventory/position save under their own <c>Players/&lt;name&gt;.dat</c> server-side. There is no in-game
+    /// name field yet, so the name is set by editing <c>PlayerSettings.json</c> (default <c>"Player"</c>).
     /// </summary>
     public static class PlayerSettings
     {

@@ -154,9 +154,9 @@ namespace MinecraftClone3API.Entities
             else p.VoidTimer = 0;
         }
 
-        /// <summary>Periodic damage while the player's body overlaps a damaging block (lava, future fire). The
-        /// worst <see cref="Block.ContactDamage"/> over the occupied cells is applied on the cadence; like fire
-        /// in Minecraft it bypasses armor (direct health subtraction, not <see cref="ApplyContactDamage"/>).</summary>
+        /// <summary>Periodic damage while the player's body overlaps a damaging block (e.g. lava): the worst
+        /// <see cref="Block.ContactDamage"/> over the occupied cells, applied on the cadence. Bypasses armor
+        /// (direct health subtraction, not the armor-reducing <see cref="ApplyContactDamage"/>).</summary>
         private static void BlockContact(WorldServer world, EntityPlayer p)
         {
             var minX = (int) MathF.Floor(p.Position.X - EntityPlayer.Width / 2);

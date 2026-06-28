@@ -70,9 +70,8 @@ namespace MinecraftClone3API.Blocks
         public virtual bool CanTarget(WorldBase world, Vector3D<int> vector3I) => true;
         public virtual bool IsLiquid => false;
 
-        /// <summary>Damage dealt per environmental-damage tick to a player whose body overlaps this block
-        /// (0 = harmless). Lets the GPU-free server apply lava/fire-style contact damage generically — it never
-        /// needs to know what "lava" is; the plugin block sets the value and the survival sim owns the cadence.</summary>
+        /// <summary>Damage applied to a player whose body overlaps this block, per environmental-damage tick
+        /// (0 = harmless).</summary>
         public virtual float ContactDamage => 0f;
 
         /// <summary>Minecraft block hardness, driving how long the block takes to mine in survival

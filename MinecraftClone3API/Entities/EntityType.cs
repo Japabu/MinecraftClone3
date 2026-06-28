@@ -76,8 +76,7 @@ namespace MinecraftClone3API.Entities
         public readonly LootTable Loot;
 
         /// <summary>Dimension RegistryKeys (e.g. <c>Vanilla:Overworld</c>) this type may ambient-spawn in, matched
-        /// against <c>WorldServer.DimensionKey</c>. Null = never ambient-spawned (items, projectiles, player-only
-        /// types). Kept plugin-supplied so Core never hardcodes a dimension.</summary>
+        /// against <c>WorldServer.DimensionKey</c>. Null = never ambient-spawned (items, projectiles, players).</summary>
         public readonly HashSet<string> SpawnableDimensions;
 
         public EntityType(string name, EntityKind kind, float width, float height, float maxHealth,
@@ -104,8 +103,8 @@ namespace MinecraftClone3API.Entities
             SpawnableDimensions = spawnableDimensions == null ? null : new HashSet<string>(spawnableDimensions);
         }
 
-        /// <summary>Whether ambient spawning may place this type in the given dimension. Null/empty
-        /// <see cref="SpawnableDimensions"/> means never (so an untagged type can't leak into every dimension).</summary>
+        /// <summary>Whether ambient spawning may place this type in the given dimension; null/empty
+        /// <see cref="SpawnableDimensions"/> means never.</summary>
         public bool CanSpawnInDimension(string dimensionKey)
             => SpawnableDimensions != null && SpawnableDimensions.Contains(dimensionKey);
 
