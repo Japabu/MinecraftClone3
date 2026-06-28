@@ -11,8 +11,6 @@ namespace MinecraftClone3API.Client.GUI
     /// </summary>
     public static class GuiAssets
     {
-        public const string Widgets = "minecraft/textures/gui/widgets.png";
-
         // Modern (1.20.2+) HUD sprite layout: each HUD element is its own sprite PNG under sprites/hud/,
         // drawn whole (no sub-rect).
         public const string Hotbar = "minecraft/textures/gui/sprites/hud/hotbar.png";
@@ -24,7 +22,12 @@ namespace MinecraftClone3API.Client.GUI
         public const string FoodEmpty = "minecraft/textures/gui/sprites/hud/food_empty.png";
         public const string FoodFull = "minecraft/textures/gui/sprites/hud/food_full.png";
         public const string FoodHalf = "minecraft/textures/gui/sprites/hud/food_half.png";
-        public const string CreativeTab = "minecraft/textures/gui/container/creative_inventory/tab_items.png";
+        public const string CreativeSearchTab = "minecraft/textures/gui/container/creative_inventory/tab_item_search.png";
+
+        // The 12x15 scrollbar knob is its own sprite (modern packs have no monolithic widgets.png), with a
+        // dimmed variant drawn when there aren't enough items to scroll.
+        public const string Scroller = "minecraft/textures/gui/sprites/container/creative_inventory/scroller.png";
+        public const string ScrollerDisabled = "minecraft/textures/gui/sprites/container/creative_inventory/scroller_disabled.png";
         public const string Furnace = "minecraft/textures/gui/container/furnace.png";
         public const string FurnaceLit = "minecraft/textures/gui/sprites/container/furnace/lit_progress.png";
         public const string FurnaceBurn = "minecraft/textures/gui/sprites/container/furnace/burn_progress.png";

@@ -190,8 +190,12 @@ optimistically, and sends `InventoryAction` / `HeldSlot` on changes. Inputs are 
   re-asserts alpha blending before blitting because `GetIcon` may have just rendered (depth on, blend off).
 - **`HotbarRenderer`** draws the always-on HUD hotbar from the modern sprite layout (`hud/hotbar.png` +
   `hud/hotbar_selection.png`; placeholder boxes without a pack — see the sprite-layout note below).
-- **`GuiCreativeInventory`** (overlay, **E** in creative) — scrollable grid of every registered item over
-  `creative_inventory/tab_items.png`, a cursor-held stack, and the clickable hotbar row.
+- **`GuiCreativeInventory`** (overlay, **E** in creative) — Minecraft's creative **search tab** over
+  `creative_inventory/tab_item_search.png`: an auto-focused search box that filters the 9×5 grid live by item
+  name/registry-key/Minecraft-id, a working scrollbar (mouse wheel **or** dragging the `scroller`/
+  `scroller_disabled` knob, dimmed when everything fits), a cursor-held stack, and the clickable hotbar row.
+  While the search box has focus the inventory key types into it instead of closing (vanilla); **Escape** always
+  closes. Slots are infinite **source** slots reading the filtered list at the current scroll offset.
 - **`GuiInventory`** (overlay, **E** in survival) — the survival player inventory over
   `container/inventory.png`: a 2×2 crafting grid + result (scratch, returns to the inventory on close), the 3×9
   main inventory, the hotbar, and the four **armor slots** (each gated to its piece type via `Slot.CanAccept`,
