@@ -222,7 +222,8 @@ optimistically, and sends `InventoryAction` / `HeldSlot` on changes. Inputs are 
   `container/inventory.png`: a 2×2 crafting grid + result (scratch, returns to the inventory on close), the 3×9
   main inventory, the hotbar, and the four **armor slots** (each gated to its piece type via `Slot.CanAccept`,
   written through the `ArmorActionBase` wire convention; shift-click moves a worn piece back to the inventory).
-  Same `ContainerScreen` interaction as the crafting table; the offhand slot / 3D player preview are not modelled.
+  Same `ContainerScreen` interaction as the crafting table. The preview box shows the same cursor-following,
+  armor-wearing paperdoll as the creative tab (`ItemIconRenderer.RenderPlayer`); the offhand slot isn't modelled.
 - **`GuiTooltip`** (`Client/GUI/GuiTooltip.cs`) — the item-name tooltip drawn next to the cursor when hovering
   a non-empty slot; used by both container screens.
 

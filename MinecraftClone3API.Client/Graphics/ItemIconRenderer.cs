@@ -31,15 +31,16 @@ namespace MinecraftClone3API.Graphics
         private static readonly Matrix4 Projection =
             Matrix4X4.CreateOrthographicOffCenter(-0.9f, 0.9f, -0.9f, 0.9f, 10f, -10f);
 
-        // The creative inventory paperdoll: a full-body front view from slightly above, framed feet-to-head.
-        // The target is taller than wide to match the player's silhouette; the ortho box keeps the same aspect
-        // so the model isn't stretched.
+        // The creative inventory paperdoll: a full-body front view from slightly above, framed feet-to-head with
+        // headroom above the crown so a worn helmet (the body model's outermost layer, inflated ~1px past the
+        // head) isn't clipped by the frustum top. The target is taller than wide to match the player's silhouette;
+        // the ortho box keeps the same aspect so the model isn't stretched.
         public const int PlayerWidth = 80;
         public const int PlayerHeight = 112;
         private static readonly Matrix4 PlayerView =
-            Matrix4X4.CreateLookAt(new Vector3(0f, 1.15f, 3.0f), new Vector3(0f, 0.95f, 0f), Vector3.UnitY);
+            Matrix4X4.CreateLookAt(new Vector3(0f, 1.2f, 3.0f), new Vector3(0f, 1.0f, 0f), Vector3.UnitY);
         private static readonly Matrix4 PlayerProjection =
-            Matrix4X4.CreateOrthographicOffCenter(-0.75f, 0.75f, -1.05f, 1.05f, 10f, -10f);
+            Matrix4X4.CreateOrthographicOffCenter(-0.82f, 0.82f, -1.15f, 1.15f, 10f, -10f);
 
         [StructLayout(LayoutKind.Sequential)]
         private struct IconFrame
