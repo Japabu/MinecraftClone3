@@ -149,6 +149,13 @@ the linked doc; this is the short "don't violate this" list.
 - **Comments:** self-documenting code. Only `///` XML doc comments where they earn their place — **no inline
   `//` narration** of what the next line does.
 - Match the surrounding code's style, naming, and comment density.
+- **Work in a worktree — one session, one worktree.** Do every feature/fix in a git worktree created with the
+  dedicated worktree tool (`EnterWorktree`), never a manual `git worktree add`. **One chat session uses exactly
+  one worktree**, so independent sessions run in parallel without stepping on each other; a single worktree may
+  bundle several features. Worktrees branch from **local `master`** (the repo sets `worktree.baseRef=head`
+  because `origin/master` can lag local). A worktree is **merged into `master` and then deleted** only once the
+  work is done, `dotnet build` is clean, **and the maintainer has tested and reviewed it** — never merge
+  unreviewed/untested.
 - **No backwards compatibility.** Rapid development, no shipped users. Do **not** add format-version
   negotiation, save migrations, deprecation shims, or compatibility fallbacks. When a format changes, the
   world is regenerated (delete the folder). Prefer the clean break. (Crash-robustness — e.g. regenerating a

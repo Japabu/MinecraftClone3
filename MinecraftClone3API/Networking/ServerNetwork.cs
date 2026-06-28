@@ -614,9 +614,11 @@ namespace MinecraftClone3API.Networking
             var block = GameRegistry.GetBlock(place.BlockId);
             if (block.Id == 0)
             {
-                // Breaking: drop the removed block's item form (air/already-empty drops nothing).
+                // Breaking: drop the removed block's item form, gated like vanilla (see DropsOnBreak);
+                // air/already-empty drops nothing.
                 var broken = world.GetBlock(place.Position);
-                if (broken.Id != 0 && GameRegistry.TryGetItem(broken.RegistryKey, out var dropped))
+                if (broken.Id != 0 && DropsOnBreak(session, broken)
+                    && GameRegistry.TryGetItem(broken.RegistryKey, out var dropped))
                     world.DropItem(new ItemStack(dropped.Id, 1),
                         place.Position.ToVector3() + new Vector3D<float>(0.5f, 0.25f, 0.5f));
                 broken.OnBroken(world, place.Position);
@@ -624,6 +626,19 @@ namespace MinecraftClone3API.Networking
             }
             else
                 world.PlaceBlock(session.Player, place.Position, block, place.Metadata);
+        }
+
+        /// <summary>Whether breaking <paramref name="broken"/> with the session's held item should yield a drop:
+        /// creative-mode breaks drop nothing, and a block that <see cref="Block.RequiresCorrectTool"/> only drops
+        /// when the held tool matches its <see cref="Block.PreferredTool"/> and meets <see cref="Block.RequiredToolTier"/>.
+        /// Server-authoritative mirror of <c>correctForDrops</c> in <c>PlayerController.BreakSeconds</c>.</summary>
+        private static bool DropsOnBreak(ClientSession session, Block broken)
+        {
+            if (session.Player.GameMode == GameMode.Creative) return false;
+            if (!broken.RequiresCorrectTool) return true;
+            var tool = session.Inventory.SelectedItem.Item;
+            return tool != null && tool.ToolType != ToolType.None
+                && tool.ToolType == broken.PreferredTool && tool.ToolTier >= broken.RequiredToolTier;
         }
 
         /// <summary>Runs the held item's server-side use (e.g. a spawn egg spawning its mob). The held item

@@ -82,8 +82,8 @@ relevant permanent doc. Not a changelog.
   sprint, walk/fly toggle, auto-step up `StepHeight` (0.6 = MC) ledges, non-cube collision (multi-box
   `GetCollisionBoxes`, used by stairs). **Not** implemented: sprint-jump forward boost, sneaking, per-block
   slipperiness (no ice/slime blocks exist), and **collision for creative flight** (flight is deliberately
-  noclip). The exact-constant *ordering* (gravity-before-move vs after) may be a tick off MC and is tunable in
-  `PlayerPhysics.Tick`.
+  noclip). The move-then-apply-gravity ordering matches MC and is settled (see the comment in
+  `PlayerPhysics.Tick`).
 - **Stairs are the "straight, 80%" stair.** `VanillaPlugin/Blocks/BlockStairs.cs` (`Vanilla:OakStairs`) uses
   the real `minecraft:block/oak_stairs` model; orientation (facing bits 0-1, top-half bit 2) is a mesh-time
   `GetModelTransform` rotation + matching multi-box L collision. Deferred/accepted: **no corner (inner/outer)
@@ -175,10 +175,12 @@ relevant permanent doc. Not a changelog.
   walking/turning; PCF softens it and the sun's own crawl masks it. If the day cycle were paused or made very
   slow, re-introducing texel snapping would be worth it. `DayLengthSeconds` (1200, the Minecraft 20-minute day)
   sets how fast the sun moves.
-- **Only opaque chunks cast sun shadows; entities cast/receive none.** Transparent geometry (water/glass) is
+- **Only opaque chunks cast sun shadows; entities don't cast.** Transparent geometry (water/glass) is
   excluded from the shadow pass (a solid black shadow from translucent material is wrong; a coloured shadow
-  would need a transmittance pass). Remote players render "unlit" (`normal.w==1`), so they neither receive nor
-  cast shadows. Both deferred.
+  would need a transmittance pass). Entities (including remote players) *receive* sun shadows + block light —
+  they write `normal.w==0` so `ShadowResolve` lights them like terrain — but they don't *cast* (the shadow depth
+  pass draws only the opaque chunk arena, not the entity pipeline). Entity casting and transmittance shadows for
+  transparent material are deferred.
 - **Light copy-on-grow allocates on the light thread during initial lighting.** Each genuinely-new light value
   entering a chunk's light palette returns a new `PaletteStorage`, so the first torch flood over a chunk
   allocates O(distinct light values) small arrays on the `UpdateThread` (background, off the render thread).
@@ -235,9 +237,10 @@ relevant permanent doc. Not a changelog.
   registry, standalone items), recipes are loaded from the pack's `data/` tree with tag resolution, and the
   3×3 crafting table has full vanilla slot interaction (pick/place/split/drag) — see [inventory.md](inventory.md).
   Accepted scope: crafting is computed **client-side** and the result mutations go up as ordinary (unvalidated)
-  `InventoryAction`s — fine for a creative sandbox, exploitable in real MP. No survival pickup/drop, no recipe
-  book; no survival item pickup/drop. (The apple is edible and mining tools work — but tools have no durability
-  and broken blocks drop nothing; see the tool/survival limitations above.)
+  `InventoryAction`s — fine for a creative sandbox, exploitable in real MP. Survival item pickup/drop and block
+  drops exist (`EntityItem` + `DropItemRequest`/`CollectItems`); still missing are a **recipe book** and
+  **server-authoritative crafting**. (The apple is edible and mining tools work, but tools have no durability;
+  see the tool/survival limitations above.)
 - **Right-clicking a crafting table or furnace always opens it.** `Block.OnActivated` returning true suppresses
   placement, so you can't place a block against their face, and there's no sneak-to-place override.
 - **Furnaces are plain-furnace only; no XP, no blast furnace/smoker.** Smelting matches `minecraft:smelting`
@@ -249,9 +252,10 @@ relevant permanent doc. Not a changelog.
   `blockstates/<name>.json` variants (model + x/y rotation; weighted lists take the first). The `multipart`
   form (fences, redstone, walls) resolves to null → the block falls back to its single `Block.Model`. Add
   multipart support before relying on connected/multipart blocks.
-- **Crafting-grid items are returned to the inventory on close; leftovers are lost.** If the inventory is full
-  when a crafting screen closes, items still in the grid/cursor that don't fit are dropped (no world item
-  entities exist). Accepted for the creative sandbox.
+- **Crafting-grid leftovers are discarded on close.** If the inventory is full when a crafting screen closes,
+  items still in the grid/cursor that don't fit are silently lost. World item entities now exist
+  (`EntityItem`/`DropItemRequest`), so the fix is to route the overflow into a world drop instead of discarding
+  it; until then it's accepted for the creative sandbox.
 - **Entity models load from Bedrock geometry data, but the loader is a useful subset.** `BedrockModelLoader`
   reads the built-in mobs from `*.geo.json` (see [entities.md](entities.md)) and honors per-cube
   `uv`/`inflate` and X-axis bone rotation. **Not** interpreted (so an arbitrary Blockbench/community export may
@@ -292,11 +296,11 @@ relevant permanent doc. Not a changelog.
   (resolve the player AABB out along the minimum-translation axis, multi-block) is the real fix; deferred.
 - **Tools/weapons/armor — accepted limitations.** Mining tools (`ItemTool`), swords (`ItemSword`), and armor
   (`ItemArmor`) exist with Minecraft-exact speed/tier, attack damage, and defense points, but **none have
-  durability** (they never wear out — `ItemStack.Metadata` is free to repurpose as a damage value later). There
-  are also **no block drops** — a broken block vanishes, so survival can't gather resources to *craft* gear yet;
-  gear is obtainable only from the creative item picker (mob loot *does* drop now, via `LootTable`). The block's
-  `requires-tool` gate currently only throttles mining *speed* (÷100), not drops, because there is no drop system.
-  Armor reduces only **mob melee** damage (the armor-reducible path); fall/drown/void bypass it, matching MC.
+  durability** (they never wear out — `ItemStack.Metadata` is free to repurpose as a damage value later).
+  Broken blocks drop their item form and mob loot drops via `LootTable`, gated like vanilla: creative-mode
+  breaks drop nothing, and a `RequiresCorrectTool` block only drops to a matching tool of sufficient tier
+  (`ServerNetwork.DropsOnBreak`). Armor reduces only **mob melee** damage (the armor-reducible path);
+  fall/drown/void bypass it, matching MC.
 - **Survival MVP — accepted limitations.** Tool/hardness data is set with real Minecraft values only on
   `BlockBasic`; other block types (leaves, grass, torch, stairs, crafting table, **furnace** — its file is
   off-limits — glowstone, water) use the `1.5` hardness / no-preferred-tool defaults.

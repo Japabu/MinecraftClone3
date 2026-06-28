@@ -29,6 +29,10 @@ namespace MinecraftClone3.States
 
         private const double LoadingTimeoutSeconds = 30;
 
+        // Bound the main-thread MP connect so an unreachable host fails fast to the menu instead of hanging on
+        // the OS default connect timeout (tens of seconds).
+        private const double ConnectTimeoutSeconds = 5;
+
         private readonly bool _multiplayer;
         private readonly bool _benchmark;
 
@@ -100,7 +104,9 @@ namespace MinecraftClone3.States
                 try
                 {
                     var tcp = new TcpClient();
-                    tcp.Connect(ServerAddress, ServerNetwork.DefaultPort);
+                    if (!tcp.ConnectAsync(ServerAddress, ServerNetwork.DefaultPort)
+                            .Wait(TimeSpan.FromSeconds(ConnectTimeoutSeconds)))
+                        throw new TimeoutException($"Connection timed out after {ConnectTimeoutSeconds:0}s");
                     connection = new TcpConnection(tcp);
                 }
                 catch (Exception ex)
