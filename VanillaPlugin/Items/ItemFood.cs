@@ -24,6 +24,8 @@ namespace VanillaPlugin.Items
             _saturationModifier = saturationModifier;
         }
 
+        protected override CreativeTab DefaultCreativeTab => CreativeTab.FoodAndDrink;
+
         public override string TexturePath => _texturePath;
         public override string MinecraftId => _minecraftId;
 

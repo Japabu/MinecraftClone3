@@ -35,6 +35,12 @@ others.
 - **`ItemBlock`** (`Items/ItemBlock.cs`) — the auto-generated item form of a block. Registering a block
   (`PluginContext.Register(Block)`) also registers an `ItemBlock` for it under the same registry key, so every
   block is an item: placeable (`GetBlock()` returns the block) and rendered as a 3D isometric icon.
+- **Creative tab** — `Item.CreativeTab` / `Block.CreativeTab` (`Items/CreativeTab.cs`) place an item in the
+  creative menu's category, mirroring Minecraft's `CreativeModeTabs`. Both are a settable property over a
+  `DefaultCreativeTab` virtual: item subclasses set a family default (food → Food &amp; Drink, tools → Tools,
+  weapons/armor → Combat, spawn eggs → Spawn Eggs; otherwise Ingredients), block subclasses theirs (terrain/ore/
+  log/leaf → Natural, glass → Coloured, containers → Functional; otherwise Building), and an inline block sets it
+  explicitly at registration. `ItemBlock` inherits its block's tab. See the creative screen under Rendering.
 - **Standalone items** subclass `Item` (e.g. Vanilla's `ItemSimple` — stick, coal, ingots, diamond; `ItemFood`
   — apple): no block, a 2D sprite, not placeable.
 - **`ItemRegistry`** (`Util/ItemRegistry.cs`) — parallels `BlockRegistry` but with its **own id space** (item
@@ -190,12 +196,25 @@ optimistically, and sends `InventoryAction` / `HeldSlot` on changes. Inputs are 
   re-asserts alpha blending before blitting because `GetIcon` may have just rendered (depth on, blend off).
 - **`HotbarRenderer`** draws the always-on HUD hotbar from the modern sprite layout (`hud/hotbar.png` +
   `hud/hotbar_selection.png`; placeholder boxes without a pack — see the sprite-layout note below).
-- **`GuiCreativeInventory`** (overlay, **E** in creative) — Minecraft's creative **search tab** over
-  `creative_inventory/tab_item_search.png`: an auto-focused search box that filters the 9×5 grid live by item
-  name/registry-key/Minecraft-id, a working scrollbar (mouse wheel **or** dragging the `scroller`/
-  `scroller_disabled` knob, dimmed when everything fits), a cursor-held stack, and the clickable hotbar row.
-  While the search box has focus the inventory key types into it instead of closing (vanilla); **Escape** always
-  closes. Slots are infinite **source** slots reading the filtered list at the current scroll offset.
+- **`GuiCreativeInventory`** (overlay, **E** in creative) — Minecraft's full tabbed creative menu, geometry
+  matched to vanilla `CreativeModeInventoryScreen` (195×136 panel, 26×32 tabs spaced 27px, top row at −28 /
+  bottom row at +132, scrollbar knob over a 95px travel). Each item declares a category via its
+  `Item.CreativeTab`/`Block.CreativeTab` (see the Item model section); the screen buckets every registered item
+  by category and shows a **tab row** top + bottom — the content-bearing categories (Building/Coloured/Natural/
+  Functional/Redstone, Tools/Combat/Food/Ingredients/Spawn-Eggs; empty ones hidden), plus two special tabs:
+  - **Search** (top-right, compass) over `tab_item_search.png`: an auto-focused box filtering **all** items live
+    by name/registry-key/Minecraft-id. While focused the inventory key types into it instead of closing; **Escape**
+    always closes.
+  - **Survival Inventory** (bottom-right, chest) over `tab_inventory.png`: the four armor slots (gated by piece),
+    the 3×9 main inventory + hotbar, and the **destroy** slot (a source that trashes what's dropped on it). No
+    crafting grid (vanilla hides it here); the 3D player model isn't drawn (the baked black panel stands in).
+
+  A category tab shows its bucket in the scrollable 9×5 grid over `tab_items.png` with the tab title drawn at
+  (8,6); category/search grid cells are infinite **source** slots, the bottom hotbar row is always the player's.
+  The scrollbar scrolls by wheel **or** by dragging the `scroller`/`scroller_disabled` knob (dimmed when
+  everything fits). Tabs draw from the per-position `tab_{top,bottom}_{selected,unselected}_{1..7}` sprites
+  (unselected behind the panel, the selected one on top so it connects) and show the category name as a hover
+  tooltip. The whole screen falls back to drawn placeholders without a resource pack.
 - **`GuiInventory`** (overlay, **E** in survival) — the survival player inventory over
   `container/inventory.png`: a 2×2 crafting grid + result (scratch, returns to the inventory on close), the 3×9
   main inventory, the hotbar, and the four **armor slots** (each gated to its piece type via `Slot.CanAccept`,

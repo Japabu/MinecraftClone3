@@ -22,6 +22,8 @@ namespace VanillaPlugin.Items
             _minecraftId = Identifier.FromResourcePath(texturePath);
         }
 
+        protected override CreativeTab DefaultCreativeTab => CreativeTab.SpawnEggs;
+
         public override string TexturePath => _texturePath;
         public override string MinecraftId => _minecraftId;
         public override bool IsUsable => true;

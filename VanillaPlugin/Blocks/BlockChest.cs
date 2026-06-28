@@ -31,6 +31,8 @@ namespace VanillaPlugin.Blocks
             MinecraftId = "minecraft:chest";
         }
 
+        protected override CreativeTab DefaultCreativeTab => CreativeTab.FunctionalBlocks;
+
         public override bool RendersAsBlockEntity => true;
         public override string BlockEntityModelPath => "Vanilla/Models/Entity/chest.geo.json";
         public override string BlockEntityTexturePath => "minecraft:entity/chest/normal";

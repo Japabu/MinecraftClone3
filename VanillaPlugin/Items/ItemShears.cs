@@ -20,6 +20,8 @@ namespace VanillaPlugin.Items
         {
         }
 
+        protected override CreativeTab DefaultCreativeTab => CreativeTab.ToolsAndUtilities;
+
         public override string TexturePath => "minecraft/textures/item/shears.png";
         public override string MinecraftId => "minecraft:shears";
         public override int MaxStackSize => 1;
