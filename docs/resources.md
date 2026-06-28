@@ -7,11 +7,13 @@ That builds the block/item/entity **registry** (ids, recipes, worldgen) with no 
 blocks only declare a `ModelPath`/`BlockStateId` string in their constructor.
 
 **The server stops there.** It reads **no models or textures** and needs no resource pack: parsing them is a
-client-only step. **The client additionally does the GL + asset steps** — `ClientResources.Load`,
+client-only step. **The client additionally does the GPU + asset steps** — `ClientResources.Load`,
 `BoundingBoxRenderer.Load`, `EntityRenderer.Load`, then **`GameRegistry.LoadBlockModels()`** (parses every
 block's declared model/blockstate from the pack, single-threaded, registering its textures into the CPU
-arrays), `EntityRenderer.LoadModels`, and finally `BlockTextureManager.Upload` (the only GL step). Model JSON
-and PNGs are read CPU-side via StbImage; deferring the parse to this pass — rather than the block
+arrays), `EntityRenderer.LoadModels`, and finally `BlockTextureUploader.Upload` (the only GPU step:
+`Queue.WriteTexture`s each accumulated layer into the four size-bucketed `rgba8unorm` `texture_2d_array`
+atlases — 16/64/256/1024 — then builds each mip chain on the GPU via the `MipGenerator` compute pass).
+Model JSON and PNGs are read CPU-side via StbImage; deferring the parse to this pass — rather than the block
 constructors — is what keeps the headless server render-asset-free.
 
 **Animated textures (frame strips).** A texture whose height is a whole multiple of its width is a Minecraft
@@ -31,7 +33,7 @@ the composition shader, flagged by `BlockWater.GetRenderMaterial`. A refractive 
 is deferred.
 
 Because server-side light simulation calls `Block.GetLightLevel`, **block code that runs on the server must
-not touch client/GL/window state** (this is what crashed `BlockTorch` — it read the keyboard).
+not touch client/GPU/window state** (this is what crashed `BlockTorch` — it read the keyboard).
 
 Content staging (see the two exe `.csproj` files): the `System` plugin (from `MinecraftClone3/Content/System`)
 and `VanillaPlugin` (its content + freshly built DLL under `Dlls/`) are copied next to each executable so both

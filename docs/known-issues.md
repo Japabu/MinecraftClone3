@@ -33,6 +33,29 @@ relevant permanent doc. Not a changelog.
     init) and the split where Core uses literal Silk types while Client/exe keep readability aliases
     (`Vector3`, `Matrix4`, …) — both documented in-code.
 
+- **Alpha-tested foliage seams into "shells" at distance (deferred — needs a real AA pass).** Cutout blocks
+  (`BlockLeaves`/`BlockGlass`, `TransparencyType.Cutoff`) are alpha-tested cubes sampled through the trilinear
+  block-atlas mip chain. Leaf textures are high-frequency cutouts, so every mip level looks meaningfully
+  different (in both alpha *and* colour); at distance perspective compresses each mip-transition blend into
+  ~1 screen pixel, so the chain reads as hard concentric rings ("cubes") centred on the camera that slide as
+  you move. **This is not a migration regression** — GL `master` shows it too (its 16× anisotropy reduces but
+  doesn't remove it), and disabling mips entirely (sampling mip 0) is the only thing that fully kills it.
+  - Ruled out by testing: the `fwidth` median-preserving alpha test (already in `WorldGeometry.wgsl`) only
+    sharpens the *edge*, not the per-level drift. Coverage-preserving mips (Castaño / DirectXTex
+    `ScaleMipMapsAlphaForCoverage`) can't hold coverage on a 16px texture — after one box-downsample it has
+    only ~5 distinct alpha values, so coverage lands in coarse ±0.1 steps and the seam persists. Anisotropy
+    is both forbidden by WebGPU under nearest-magnification *and* insufficient (master has it and still seams).
+    Freezing only the alpha *test* to mip 0 (mipped colour) still seams — so the colour mip chain contributes,
+    not just the alpha.
+  - The known-good workaround (built, verified, then reverted pending a proper fix): tag cutout faces with a
+    per-vertex bit and sample them at **mip 0** for colour *and* alpha, leaving solid terrain on the full mip
+    chain. That removes the seams (it's effectively "mipmapped leaves off", à la Minecraft) at the cost of no
+    minification AA on leaves — faint edge shimmer on distant canopy in motion.
+  - The elegant fixes all need an AA pass the deferred renderer doesn't have yet: **hashed alpha testing**
+    (Wyman/McGuire) denoised by **TAA**, or **MSAA alpha-to-coverage** (needs a multisampled target — costly
+    in deferred), or brute-force **SSAA** (supersample + downsample, which also preserves the crisp pixel-art
+    look). Revisit when an AA/temporal pass lands (see the dropped-anisotropy note above); until then leaves
+    keep the plain trilinear+`fwidth` path and the seam is accepted.
 - **Benchmark screenshots omit the HUD.** `Screenshot` reads the HDR scene target, which is captured *before*
   `Renderer.EndFrame` tonemaps it to the surface and flushes the GUI (`GuiBatch`) over it — so the hotbar,
   crosshair, REC indicator and other overlays are on screen but not in the PNG. Capturing them needs the

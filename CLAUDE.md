@@ -36,7 +36,7 @@ MinecraftClone3.sln
 ├── MinecraftClone3API.Client Client renderer library (needs a GPU + window). References Core.
 │   ├── Blocks/               WorldClient (client world replica)
 │   ├── Graphics/             WorldRenderer, Renderer (frame conductor), ChunkRenderData, ChunkMeshArena + ChunkCuller
-│   │                         (GPU-driven cull), EntityRenderer, Camera, RenderDebug, GlResources/GlTextureUploader
+│   │                         (GPU-driven cull), EntityRenderer, Camera, RenderDebug, GlResources/BlockTextureUploader
 │   │                         (GPU halves of the resource readers)
 │   │   └── Rhi/              WebGPU wrappers (all `unsafe` Silk.NET.WebGPU interop): Gpu/GpuContext, GpuBuffer,
 │   │                         GpuTexture/GpuSampler, GpuShaderModule, Gpu{Render,Compute}Pipeline, bind groups, passes

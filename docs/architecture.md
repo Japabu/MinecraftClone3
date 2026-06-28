@@ -1,18 +1,18 @@
 # Core architecture: one client path, two server transports
 
-## Assembly boundary: GL-free Core vs. the Client renderer
+## Assembly boundary: GPU-free Core vs. the Client renderer
 
-The engine is split into two libraries so the "server never touches GL" rule is **compiler-enforced**:
+The engine is split into two libraries so the "server never touches the GPU" rule is **compiler-enforced**:
 
-- **`MinecraftClone3API`** (Core) — GL-free. Block storage/logic, worldgen, entities, networking, plugins, IO,
-  and the GL-free CPU model/mesh data (`BlockModel`, `BlockTexture`, `MeshBuffer`, the CPU half of
-  `BlockTextureManager`, `ChunkMesher`). References OpenTK for **math only**. The dedicated server links *only*
-  this — so a server-reachable path that reaches for the renderer or ambient input/window state fails to
-  compile.
-- **`MinecraftClone3API.Client`** — the GL renderer, GUI, input (`PlayerController`), the GL halves of the
-  resource readers (`GlResources`/`GlTextureUploader`), and `WorldClient`. References Core.
+- **`MinecraftClone3API`** (Core) — GPU-free. Block storage/logic, worldgen, entities, networking, plugins, IO,
+  and the GPU-free CPU model/mesh data (`BlockModel`, `BlockTexture`, `MeshBuffer`, the CPU half of
+  `BlockTextureManager`, `ChunkMesher`). References Silk.NET.Maths for **math only** (no Silk.NET.WebGPU/
+  Windowing/Input). The dedicated server links *only* this — so a server-reachable path that reaches for the
+  renderer or ambient input/window state fails to compile.
+- **`MinecraftClone3API.Client`** — the WebGPU renderer, GUI, input (`PlayerController`), the GPU halves of the
+  resource readers (`GlResources`/`BlockTextureUploader`), and `WorldClient`. References Core.
 
-Model/texture parsing is GL-free, so it *lives* in Core — but the server still never runs it. Blocks only
+Model/texture parsing is GPU-free, so it *lives* in Core — but the server still never runs it. Blocks only
 declare a `ModelPath`/`BlockStateId` string at construction; resolving them to a `BlockModel` is deferred to a
 client-only pass (`GameRegistry.LoadBlockModels`, called from `GuiResourceLoading`). So the headless server
 builds the registry without reading a single model or texture and needs no resource pack (see
@@ -25,7 +25,7 @@ codec) — a one-way grant: Core never references Client, and the server (a sepa
 gets nothing. Cross-boundary client→Core data that Core needs to log (the profiler's per-frame world/GPU
 samples) is **pushed** in via `ClientFrameStats`/`ClientProfiling` rather than pulled, keeping `Profiler`
 itself in Core. The client exe links Client; `VanillaPlugin` links Client too (its furnace/crafting blocks
-open GUIs) but the server loads it reflectively and never invokes those GL members, so the Client assembly
+open GUIs) but the server loads it reflectively and never invokes those client members, so the Client assembly
 never reaches the server's binary.
 
 ## One client path, two server transports
@@ -52,7 +52,7 @@ talks to it over an in-memory loopback connection; multiplayer swaps the loopbac
 ```
 
 - **`WorldServer`** (`Blocks/WorldServer.cs`): the authority. Block storage, terrain gen, RGB block-light +
-  sky-light propagation, save/load, entity simulation. **No meshing, no GL** — runs fully headless.
+  sky-light propagation, save/load, entity simulation. **No meshing, no GPU** — runs fully headless.
 - **`WorldClient`** (`MinecraftClone3API.Client/Blocks/WorldClient.cs`): the client replica. Holds chunks streamed from the
   server, **caches them and owns their eviction** (drops a chunk past `CacheDistance`, then sends a
   `ChunkRelease`), meshes them, renders them, holds remote entities. **No terrain gen, no disk, no lighting.**

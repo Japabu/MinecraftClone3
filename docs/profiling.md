@@ -37,27 +37,28 @@ F4 chunk borders are the one exception (kept on `ChunkBorderRenderer.Enabled`).
     `srvStageQ/applyQ/renderReadyQ/disposeQ` — pipeline queue depths, so a balloon localizes *which* stage is
     the wall.
 
-  > ⚠️ **WebGPU state:** the GPU-side columns currently read **0** — `gpuMs`/`shadowMs`/`geomMs`/`compMs` (the
-  > WebGPU timestamp-query port, `timestampWrites`, is deferred — `GpuTimers` is a no-op), the `chunks drawn` /
-  > `lod drawn` numerators (the GPU cull compute owns the post-cull count; no CPU readback — the CPU visible set
-  > is intentionally gone under GPU-driven culling), and `gapMs` (not carried onto the Silk frame loop). The CPU
-  > columns (`frameMs`/`updateMs`/`renderMs`/`swapMs`≈present) and the denominators are live. The rest of this
-  > section describes the intended design (and the GL build's behaviour).
+  > ⚠️ **GPU-timer state:** the GPU-side columns currently read **0** — `gpuMs`/`shadowMs`/`geomMs`/`compMs`
+  > (WebGPU timestamp queries need a `QuerySet` RHI wrapper + Metal's write-location rules; until that lands
+  > `GpuTimers` is a safe no-op preserving the frame/pass hooks), and `gapMs` (no between-frame gap is carried
+  > on the Silk frame loop). The `chunks drawn` / `lod drawn` **numerators** also read 0: the GPU cull compute
+  > owns the post-cull count and there is no CPU readback — under GPU-driven culling the CPU never builds a
+  > visible set, by design. The CPU columns (`frameMs`/`updateMs`/`renderMs`/`swapMs`) and the denominators are
+  > live. The rest of this section describes the design once timestamp queries are wired up.
 
   Reading the timers: `frameMs` is the real frame interval (catches drops); `updateMs`/`renderMs` are CPU
-  work. The four stalls a CPU sampler can't see: `swapMs` = the `SwapBuffers` call; `gapMs` = OpenTK's
-  between-frame `NewInputFrame`+`ProcessWindowEvents` (where an **async/vsync present surfaces on
-  Linux/GLX**); `gpuMs` = actual GPU render time (`GL_TIME_ELAPSED`). `gpuMs` large ⇒ GPU-bound; `gpuMs`
-  small but `gapMs` large ⇒ present/event overhead. `shadowMs`/`geomMs`/`compMs` split `gpuMs` into the
-  three deferred passes via `GL_TIMESTAMP` markers (`Client/Graphics/GpuTimers.cs`, populated only while
-  recording): large `shadowMs` ⇒ the depth pass is geometry/draw-call-bound, large `compMs` ⇒ composition is
-  fill/shader-bound (the 12-tap PCF). **Both whole-frame and per-pass timers read from a query *ring*
-  harvested newest-ready, not a 1-frame ping-pong** — with vsync off the CPU runs several frames ahead, so a
-  1-frame read would perpetually see "not available" and freeze the timers stale. ⚠️ **With vsync on, read
-  `compMs` only from a vsync-off capture** — the composition pass (first to write the default framebuffer)
-  absorbs swapchain back-pressure, so `compMs` reads a vsync-quantized stall, not real fill. When `updateMs`
-  is large, the srv/net/cli splits localize it. `updCalls` ≫ 1 means updates are running behind and being
-  batched. **The profiler reads only lock-free mirrors** (`volatile`/`Interlocked` depth fields), never
+  work. The stalls a CPU sampler can't see: `swapMs` = surface present (`Renderer.EndFrame` — the tonemap pass +
+  GUI flush + `_frame.Present()`); `gpuMs` = actual GPU render time. `gpuMs` large ⇒ GPU-bound; `gpuMs` small but `swapMs`
+  large ⇒ present back-pressure. `shadowMs`/`geomMs`/`compMs` split `gpuMs` into the three deferred passes via
+  WebGPU **timestamp queries** (`timestampWrites` on each pass, resolved into a readback buffer —
+  `Client/Graphics/GpuTimers.cs`, gated on `Enabled` = recording): large `shadowMs` ⇒ the depth pass is
+  geometry/draw-call-bound, large `compMs` ⇒ composition is fill/shader-bound (the 12-tap PCF). The cull
+  compute dispatch folds into `geomMs` (it precedes the GPU-culled opaque draws). **Whole-frame and per-pass
+  timers read from a query *ring* harvested newest-ready, not a 1-frame ping-pong** — with vsync off the CPU
+  runs several frames ahead, so a 1-frame read would perpetually see "not available" and freeze the timers
+  stale. ⚠️ **With vsync on, read `compMs`/`swapMs` only from a vsync-off capture** — present pacing absorbs
+  the swapchain back-pressure, so they read a vsync-quantized stall, not real work. When `updateMs` is large,
+  the srv/net/cli splits localize it. `updCalls` ≫ 1 means updates are running behind and being batched. **The
+  profiler reads only lock-free mirrors** (`volatile`/`Interlocked` depth fields), never
   `ConcurrentDictionary`/`ConcurrentQueue.Count` or a `_meshLock` take, so recording doesn't contend with the
   apply/mesh threads and inflate the very stutter it measures.
 
@@ -87,21 +88,14 @@ dotnet-gcdump collect  -p <pid>                                     # heap snaps
 `pidof MinecraftClone3` (or `dotnet-counters ps`) to find the PID. Rider/Visual Studio have built-in CPU +
 allocation + timeline profilers if preferred.
 
-**GPU frame capture (RenderDoc).** For per-draw GPU timing, overdraw, shader/buffer inspection of the
-deferred passes, capture a frame with RenderDoc. RenderDoc only hooks our GL context over **GLX (X11)** —
-under native Wayland GLFW 3.4 makes an EGL context it can't capture. So `Program.Main` forces the GLFW X11
-backend (`InitHintPlatform.Platform`) when launched under RenderDoc (auto-detected via `RENDERDOC_CAPOPTS`)
-or when `MC3_FORCE_X11=1`; normal runs keep native Wayland. Build first, then launch the **native apphost**
-(not `dotnet run`, which forks):
-
-```
-renderdoccmd capture -d <bin/Debug/net10.0> <bin/Debug/net10.0/MinecraftClone3>   # F12 in-world to snap
-```
-
-`GraphicsDebug` (`Client/Graphics/GraphicsDebug.cs`) emits `KHR_debug` groups + object labels so a capture is
-navigable: the passes nest as **Shadow / Geometry → Opaque/Transparent/Overlays / ShadowResolve /
-Composition** (RenderDoc shows per-group GPU time for free), and the G-buffer/shadow targets and shader
-programs get names. Every call is a no-op unless `Enabled` (same detection, or `MC3_GL_DEBUG=1`). **A
+**GPU frame capture.** For per-draw GPU timing, overdraw, and shader/buffer inspection of the deferred
+passes, capture a frame with a WebGPU-aware debugger (the platform native tool — Xcode's Metal frame debugger
+on macOS, RenderDoc on Vulkan/D3D12). `GraphicsDebug` (`Client/Graphics/GraphicsDebug.cs`) wraps the frame encoder's
+`PushDebugGroup`/`PopDebugGroup` so a capture can nest the passes as **Shadow / Geometry →
+Opaque/Transparent/Overlays / ShadowResolve / Composition** and show per-group GPU time and tree structure —
+though the per-pass `GraphicsDebug.PushGroup` calls aren't wired into the renderer yet. Object labels (the G-buffer/shadow targets, pipelines, buffers) are set
+at resource creation in the RHI wrappers, so `GraphicsDebug.Label` is a no-op. Groups are issued only when
+`Enabled` (`RENDERDOC_CAPOPTS` set, or `MC3_GL_DEBUG=1` / `MC3_FORCE_X11=1`), so normal runs pay nothing. **A
 depth-only pass being the GPU bottleneck means geometry/draw-call-bound, not fill/shader-bound** — the shadow
 pass redraws all in-range opaque chunks from the sun's POV, so the fix is reducing geometry submitted (shorter
 `ShadowDistance`, smaller `ShadowMapSize`), not shader work.
