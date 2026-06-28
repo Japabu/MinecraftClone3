@@ -64,15 +64,11 @@ relevant permanent doc. Not a changelog.
   glowstone/quartz-ore), obsidian portals lit with flint & steel (`VanillaPortals`), 8:1 Overworld↔Nether
   travel with find-or-build destination portals, the multi-dimension server, and the sunless red-fog render
   mode. **Deferred / accepted:** only one biome (no soul-sand valley / crimson-warped forests, no fortresses,
-  no nether mobs — ambient spawning is dimension-blind, so **Overworld animals can spawn in the Nether**);
-  the portal renders the pack's real axis-oriented thin pane but is **not animated** (a static texture frame);
-  **lava deals no damage** and is a pass-through fluid (no flow, no fire); the **current dimension is not
-  persisted** — a player's position/look persists (`PlayerSerializer`) and is restored only when they log back
-  into the *same* dimension they left, so a player who logged off in the Nether relogs at the **Overworld
-  spawn** (the saved dimension key doesn't match) rather than back in the Nether. Restoring into a non-Overworld
-  dimension at login would need the dimension-transfer flow run at join time. An Overworld return portal builds
-  at the floor under the scaled coords, which may be far from where you left (no surface-match beyond a local
-  floor scan / portal search radius of 16).
+  and no nether-specific mobs — ambient spawning is dimension-gated, so the Nether simply has no ambient spawns
+  until nether mobs exist); the portal renders the pack's real axis-oriented thin pane but is **not animated** (a
+  static texture frame); lava now deals contact damage but is still a **pass-through fluid** (no flow, no fire
+  aftereffect). An Overworld return portal builds at the floor under the scaled coords, which may be far from
+  where you left (no surface-match beyond a local floor scan / portal search radius of 16).
 - **Dimension transfer briefly stalls the client.** `WorldClient.ResetForDimensionChange` parks the apply
   thread and tears the whole cached world down on the main thread (reusing the eviction paths), so the
   transfer frame can hitch by up to the apply-thread park latency (~50 ms) plus the teardown. One-time per

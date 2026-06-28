@@ -23,14 +23,14 @@ namespace MinecraftClone3API.IO
             return Path.Combine(worldDir, PlayersFolder, safe + ".dat");
         }
 
-        /// <summary>Loads a player's inventory and stats, or returns false if there is no save yet (caller seeds
-        /// defaults). The saved position is restored only when it belongs to <paramref name="currentDimensionKey"/>
-        /// (the dimension the player is logging into); a player who logged off in another dimension keeps the
-        /// caller-set spawn position, matching the not-yet-persisted cross-dimension relog. A corrupt file is
-        /// treated as "no save" rather than crashing.</summary>
+        /// <summary>Loads a player's inventory, stats, and saved position/look, and reports the dimension they
+        /// logged off in via <paramref name="savedDimensionKey"/> so the caller can transfer them back there.
+        /// Returns false if there is no save yet (caller seeds defaults); a corrupt file is treated as "no save"
+        /// rather than crashing. On a false return <paramref name="savedDimensionKey"/> is null.</summary>
         public static bool Load(string worldDir, string name, Inventory inventory, EntityPlayer player,
-            string currentDimensionKey)
+            out string savedDimensionKey)
         {
+            savedDimensionKey = null;
             var file = FileFor(worldDir, name);
             if (!File.Exists(file)) return false;
 
@@ -53,17 +53,12 @@ namespace MinecraftClone3API.IO
                     player.Air = reader.ReadInt32();
                     player.GameMode = (GameMode) reader.ReadByte();
 
-                    var savedDimension = reader.ReadString();
+                    savedDimensionKey = reader.ReadString();
                     var position = new Vector3D<float>(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
-                    var pitch = reader.ReadSingle();
-                    var yaw = reader.ReadSingle();
-                    if (savedDimension == currentDimensionKey)
-                    {
-                        player.Position = position;
-                        player.LastTickPosition = position;
-                        player.Pitch = pitch;
-                        player.Yaw = yaw;
-                    }
+                    player.Position = position;
+                    player.LastTickPosition = position;
+                    player.Pitch = reader.ReadSingle();
+                    player.Yaw = reader.ReadSingle();
                 }
 
                 return true;

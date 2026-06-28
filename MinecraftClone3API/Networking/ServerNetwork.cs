@@ -548,9 +548,24 @@ namespace MinecraftClone3API.Networking
 
             // Load restores the player's saved position too (or leaves it at spawn for a new player); the join
             // handshake pre-streams the column under wherever they land.
-            if (!PlayerSerializer.Load(_world.WorldDir, session.PlayerName, session.Inventory, session.Player,
-                    _world.DimensionKey))
+            var loaded = PlayerSerializer.Load(_world.WorldDir, session.PlayerName, session.Inventory,
+                session.Player, out var savedDimensionKey);
+            if (!loaded)
                 SeedCreativeInventory(session.Inventory);
+
+            // Cross-dimension relog: the player logged off in another (still-registered) dimension. Reuse the
+            // portal/respawn transfer flow to drop them back there at their saved coords (Load restored them); the
+            // destination handshake (LoginAccept + entity sync) is replayed by ProcessPendingTransfers once its
+            // column streams in. The inventory must be sent here since that path doesn't resend it.
+            if (loaded && savedDimensionKey != _world.DimensionKey
+                && GameRegistry.TryGetDimension(savedDimensionKey, out _))
+            {
+                session.Connection.Send(new InventoryStatePacket {Inventory = session.Inventory});
+                var toWorld = GetOrCreateWorld(savedDimensionKey);
+                MoveToDimension(session, toWorld, session.Player.Position.ToVector3i(), buildPortal: false);
+                Logger.Info($"Player {session.EntityId} logged in, restoring to \"{savedDimensionKey}\"");
+                return;
+            }
 
             session.ReadyGate = session.Player.Position;
             session.Connection.Send(new LoginAcceptPacket {EntityId = session.EntityId, Spawn = session.Player.Position});
