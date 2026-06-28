@@ -24,6 +24,8 @@ namespace VanillaPlugin.Items
             _defense = defense;
         }
 
+        protected override CreativeTab DefaultCreativeTab => CreativeTab.Combat;
+
         public override string TexturePath => _texturePath;
         public override string MinecraftId => _minecraftId;
         public override int MaxStackSize => 1;

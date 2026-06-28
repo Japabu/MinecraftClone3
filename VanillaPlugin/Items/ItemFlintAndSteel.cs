@@ -18,6 +18,8 @@ namespace VanillaPlugin.Items
             _portals = portals;
         }
 
+        protected override CreativeTab DefaultCreativeTab => CreativeTab.ToolsAndUtilities;
+
         public override string MinecraftId => "minecraft:flint_and_steel";
         public override string TexturePath => "minecraft/textures/item/flint_and_steel.png";
         public override int MaxStackSize => 1;

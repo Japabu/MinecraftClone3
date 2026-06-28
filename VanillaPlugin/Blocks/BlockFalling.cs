@@ -23,6 +23,8 @@ namespace VanillaPlugin.Blocks
         {
         }
 
+        protected override CreativeTab DefaultCreativeTab => CreativeTab.NaturalBlocks;
+
         public override bool NeedsServerTick => true;
 
         public override void OnNeighborChanged(WorldServer world, Vector3D<int> blockPos, Vector3D<int> changedPos)

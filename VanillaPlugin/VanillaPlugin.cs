@@ -38,23 +38,23 @@ namespace VanillaPlugin
             // is unbreakable (-1). Stone/ores/obsidian require the correct tool tier to mine at full speed.
             context.Register(new BlockBasic("Stone", "minecraft:block/stone", true, 1.5f, ToolType.Pickaxe, 0, true));
             context.Register(new BlockBasic("Cobblestone", "minecraft:block/cobblestone", true, 2.0f, ToolType.Pickaxe, 0, true));
-            context.Register(new BlockBasic("Dirt", "minecraft:block/dirt", true, 0.5f, ToolType.Shovel));
+            context.Register(new BlockBasic("Dirt", "minecraft:block/dirt", true, 0.5f, ToolType.Shovel) { CreativeTab = CreativeTab.NaturalBlocks });
             context.Register(new BlockFalling("Sand", "minecraft:block/sand", 0.5f, ToolType.Shovel));
             context.Register(new BlockFalling("Gravel", "minecraft:block/gravel", 0.6f, ToolType.Shovel));
-            context.Register(new BlockBasic("Snow", "minecraft:block/snow_block", true, 0.2f, ToolType.Shovel, 0, true));
+            context.Register(new BlockBasic("Snow", "minecraft:block/snow_block", true, 0.2f, ToolType.Shovel, 0, true) { CreativeTab = CreativeTab.NaturalBlocks });
             context.Register(new BlockBasic("Bedrock", "minecraft:block/bedrock", true, -1f));
             context.Register(new BlockBasic("Obsidian", "minecraft:block/obsidian", true, 50.0f, ToolType.Pickaxe, 3, true));
             context.Register(new BlockBasic("Bricks", "minecraft:block/bricks", true, 2.0f, ToolType.Pickaxe, 0, true));
             context.Register(new BlockBasic("StoneBricks", "minecraft:block/stone_bricks", true, 1.5f, ToolType.Pickaxe, 0, true));
-            context.Register(new BlockBasic("CoalOre", "minecraft:block/coal_ore", true, 3.0f, ToolType.Pickaxe, 0, true));
-            context.Register(new BlockBasic("IronOre", "minecraft:block/iron_ore", true, 3.0f, ToolType.Pickaxe, 1, true));
-            context.Register(new BlockBasic("GoldOre", "minecraft:block/gold_ore", true, 3.0f, ToolType.Pickaxe, 2, true));
-            context.Register(new BlockBasic("DiamondOre", "minecraft:block/diamond_ore", true, 3.0f, ToolType.Pickaxe, 2, true));
-            context.Register(new BlockBasic("OakLog", "minecraft:block/oak_log", true, 2.0f, ToolType.Axe));
+            context.Register(new BlockBasic("CoalOre", "minecraft:block/coal_ore", true, 3.0f, ToolType.Pickaxe, 0, true) { CreativeTab = CreativeTab.NaturalBlocks });
+            context.Register(new BlockBasic("IronOre", "minecraft:block/iron_ore", true, 3.0f, ToolType.Pickaxe, 1, true) { CreativeTab = CreativeTab.NaturalBlocks });
+            context.Register(new BlockBasic("GoldOre", "minecraft:block/gold_ore", true, 3.0f, ToolType.Pickaxe, 2, true) { CreativeTab = CreativeTab.NaturalBlocks });
+            context.Register(new BlockBasic("DiamondOre", "minecraft:block/diamond_ore", true, 3.0f, ToolType.Pickaxe, 2, true) { CreativeTab = CreativeTab.NaturalBlocks });
+            context.Register(new BlockBasic("OakLog", "minecraft:block/oak_log", true, 2.0f, ToolType.Axe) { CreativeTab = CreativeTab.NaturalBlocks });
             context.Register(new BlockBasic("OakPlanks", "minecraft:block/oak_planks", true, 2.0f, ToolType.Axe));
             context.Register(new BlockLeaves("Leaves", "minecraft:block/oak_leaves"));
             context.Register(new BlockWater());
-            context.Register(new BlockBasic("BrewingStand", "minecraft:block/brewing_stand", false));
+            context.Register(new BlockBasic("BrewingStand", "minecraft:block/brewing_stand", false) { CreativeTab = CreativeTab.FunctionalBlocks });
 
             // Wood sets for the other tree species (log/planks/leaves), so forests and crafting have variety.
             foreach (var wood in WoodTypes)
@@ -78,21 +78,21 @@ namespace VanillaPlugin
             RegisterStone(context, "QuartzBlock", "quartz_block");
             RegisterStone(context, "Prismarine", "prismarine");
             RegisterStone(context, "Terracotta", "terracotta");
-            context.Register(new BlockBasic("Clay", "minecraft:block/clay", true, 0.6f, ToolType.Shovel));
-            context.Register(new BlockBasic("Bookshelf", "minecraft:block/bookshelf", true, 1.5f, ToolType.Axe));
+            context.Register(new BlockBasic("Clay", "minecraft:block/clay", true, 0.6f, ToolType.Shovel) { CreativeTab = CreativeTab.NaturalBlocks });
+            context.Register(new BlockBasic("Bookshelf", "minecraft:block/bookshelf", true, 1.5f, ToolType.Axe) { CreativeTab = CreativeTab.FunctionalBlocks });
             context.Register(new BlockBasic("HayBlock", "minecraft:block/hay_block", true, 0.5f));
-            context.Register(new BlockBasic("Pumpkin", "minecraft:block/pumpkin", true, 1.0f, ToolType.Axe));
-            context.Register(new BlockBasic("Melon", "minecraft:block/melon", true, 1.0f, ToolType.Axe));
+            context.Register(new BlockBasic("Pumpkin", "minecraft:block/pumpkin", true, 1.0f, ToolType.Axe) { CreativeTab = CreativeTab.NaturalBlocks });
+            context.Register(new BlockBasic("Melon", "minecraft:block/melon", true, 1.0f, ToolType.Axe) { CreativeTab = CreativeTab.NaturalBlocks });
 
             // Coloured terracotta, one per dye colour.
             foreach (var color in DyeColors)
-                RegisterStone(context, ToPascal(color) + "Terracotta", color + "_terracotta");
+                RegisterStone(context, ToPascal(color) + "Terracotta", color + "_terracotta", CreativeTab.ColoredBlocks);
 
             // Additional ores (tier gates which tool can harvest them; redstone/lapis/copper need stone+).
-            context.Register(new BlockBasic("RedstoneOre", "minecraft:block/redstone_ore", true, 3.0f, ToolType.Pickaxe, 2, true));
-            context.Register(new BlockBasic("LapisOre", "minecraft:block/lapis_ore", true, 3.0f, ToolType.Pickaxe, 1, true));
-            context.Register(new BlockBasic("EmeraldOre", "minecraft:block/emerald_ore", true, 3.0f, ToolType.Pickaxe, 2, true));
-            context.Register(new BlockBasic("CopperOre", "minecraft:block/copper_ore", true, 3.0f, ToolType.Pickaxe, 1, true));
+            context.Register(new BlockBasic("RedstoneOre", "minecraft:block/redstone_ore", true, 3.0f, ToolType.Pickaxe, 2, true) { CreativeTab = CreativeTab.NaturalBlocks });
+            context.Register(new BlockBasic("LapisOre", "minecraft:block/lapis_ore", true, 3.0f, ToolType.Pickaxe, 1, true) { CreativeTab = CreativeTab.NaturalBlocks });
+            context.Register(new BlockBasic("EmeraldOre", "minecraft:block/emerald_ore", true, 3.0f, ToolType.Pickaxe, 2, true) { CreativeTab = CreativeTab.NaturalBlocks });
+            context.Register(new BlockBasic("CopperOre", "minecraft:block/copper_ore", true, 3.0f, ToolType.Pickaxe, 1, true) { CreativeTab = CreativeTab.NaturalBlocks });
 
             context.Register(new BlockGrass());
             context.Register(new BlockTorch());
@@ -101,7 +101,7 @@ namespace VanillaPlugin
             context.Register(new BlockFurnace());
             context.Register(new BlockChest());
             context.Register(new BlockGlowstone());
-            context.Register(new BlockBasic("WhiteWool", "minecraft:block/white_wool", true, 0.8f));
+            context.Register(new BlockBasic("WhiteWool", "minecraft:block/white_wool", true, 0.8f) { CreativeTab = CreativeTab.ColoredBlocks });
             context.Register(new BlockGlass());
 
             // One stained-glass + one wool block per Minecraft dye colour; each auto-gets a creative item via
@@ -110,13 +110,13 @@ namespace VanillaPlugin
             {
                 context.Register(new BlockStainedGlass(color));
                 if (color != "white")
-                    context.Register(new BlockBasic(ToPascal(color) + "Wool", "minecraft:block/" + color + "_wool", true, 0.8f));
+                    context.Register(new BlockBasic(ToPascal(color) + "Wool", "minecraft:block/" + color + "_wool", true, 0.8f) { CreativeTab = CreativeTab.ColoredBlocks });
             }
 
             // Nether content.
-            context.Register(new BlockBasic("Netherrack", "minecraft:block/netherrack", true));
-            context.Register(new BlockBasic("SoulSand", "minecraft:block/soul_sand", true));
-            context.Register(new BlockBasic("NetherQuartzOre", "minecraft:block/nether_quartz_ore", true));
+            context.Register(new BlockBasic("Netherrack", "minecraft:block/netherrack", true) { CreativeTab = CreativeTab.NaturalBlocks });
+            context.Register(new BlockBasic("SoulSand", "minecraft:block/soul_sand", true) { CreativeTab = CreativeTab.NaturalBlocks });
+            context.Register(new BlockBasic("NetherQuartzOre", "minecraft:block/nether_quartz_ore", true) { CreativeTab = CreativeTab.NaturalBlocks });
             context.Register(new BlockLava());
             context.Register(new BlockNetherPortal());
 
@@ -229,13 +229,13 @@ namespace VanillaPlugin
         private static void RegisterWoodSet(PluginContext context, string id)
         {
             var name = ToPascal(id);
-            context.Register(new BlockBasic(name + "Log", "minecraft:block/" + id + "_log", true, 2.0f, ToolType.Axe));
+            context.Register(new BlockBasic(name + "Log", "minecraft:block/" + id + "_log", true, 2.0f, ToolType.Axe) { CreativeTab = CreativeTab.NaturalBlocks });
             context.Register(new BlockBasic(name + "Planks", "minecraft:block/" + id + "_planks", true, 2.0f, ToolType.Axe));
             context.Register(new BlockLeaves(name + "Leaves", "minecraft:block/" + id + "_leaves"));
         }
 
-        private static void RegisterStone(PluginContext context, string name, string id)
-            => context.Register(new BlockBasic(name, "minecraft:block/" + id, true, 1.5f, ToolType.Pickaxe, 0, true));
+        private static void RegisterStone(PluginContext context, string name, string id, CreativeTab tab = CreativeTab.BuildingBlocks)
+            => context.Register(new BlockBasic(name, "minecraft:block/" + id, true, 1.5f, ToolType.Pickaxe, 0, true) { CreativeTab = tab });
 
         /// <summary>"dark_oak" → "DarkOak": maps a Minecraft snake_case id to a registry-name segment.</summary>
         private static string ToPascal(string id)

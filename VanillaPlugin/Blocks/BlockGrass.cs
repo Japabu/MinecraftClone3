@@ -1,5 +1,6 @@
 ﻿using System;
 using MinecraftClone3API.Blocks;
+using MinecraftClone3API.Items;
 using MinecraftClone3API.Util;
 using Silk.NET.Maths;
 
@@ -10,6 +11,8 @@ namespace VanillaPlugin.Blocks
         public BlockGrass() : base("Grass", "minecraft:block/grass_block", true)
         {
         }
+
+        protected override CreativeTab DefaultCreativeTab => CreativeTab.NaturalBlocks;
 
         public override Vector4D<float> GetTintColor(WorldBase world, Vector3D<int> blockPos, int tintId)
             => tintId == 0 ? GetCurrentColor(blockPos) : new Vector4D<float>(1f, 1f, 1f, 1f);

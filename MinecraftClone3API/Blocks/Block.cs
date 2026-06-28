@@ -57,6 +57,17 @@ namespace MinecraftClone3API.Blocks
         /// it explicitly. Null for blocks with no Minecraft equivalent.</summary>
         public string MinecraftId;
 
+        /// <summary>The creative-menu tab this block (and its auto-generated <see cref="ItemBlock"/>) appears
+        /// under. Defaults to <see cref="DefaultCreativeTab"/>; set explicitly at registration to override a
+        /// single inline block.</summary>
+        public CreativeTab CreativeTab { get => _creativeTab ?? DefaultCreativeTab; set => _creativeTab = value; }
+        private CreativeTab? _creativeTab;
+
+        /// <summary>The tab a block falls in when none is set; subclasses override to categorise a whole family
+        /// (ores/logs/terrain → Natural, glass → Coloured, containers → Functional). Plain building materials
+        /// keep the default.</summary>
+        protected virtual CreativeTab DefaultCreativeTab => CreativeTab.BuildingBlocks;
+
         public virtual bool IsVisible(WorldBase world, Vector3D<int> blockPos) => true;
         public virtual bool IsFullBlock(WorldBase world, Vector3D<int> blockPos) => true;
         public virtual TransparencyType IsTransparent(WorldBase world, Vector3D<int> blockPos) => TransparencyType.None;

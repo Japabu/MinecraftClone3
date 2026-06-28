@@ -32,6 +32,8 @@ namespace VanillaPlugin.Blocks
             BlockStateId = "minecraft:furnace";
         }
 
+        protected override CreativeTab DefaultCreativeTab => CreativeTab.FunctionalBlocks;
+
         public override bool NeedsServerTick => true;
 
         public override LightLevel GetLightLevel(WorldBase world, Vector3D<int> blockPos) =>
