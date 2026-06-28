@@ -74,15 +74,10 @@ namespace MinecraftClone3API.Networking
 
         // Ticks a player must stand in a portal before transferring. Survival is the vanilla 4 s charge-up (the
         // client paints a thickening portal tint over it); creative is fast but not a single tick, so merely
-        // brushing a portal block doesn't fling you instantly.
+        // brushing a portal block doesn't fling you instantly. An arrival can't re-trigger until it steps off the
+        // portal once (PortalImmune), so the soak only ever runs once you deliberately walk into a portal.
         private const int SurvivalPortalSoakTicks = 80;
         private const int CreativePortalSoakTicks = 10;
-
-        // After a transfer the destination portal is fully inert for this long (counted only once the player is
-        // back in control, so the loading screen doesn't burn it) — an arrival can't bounce straight back, and
-        // you can't ping-pong between the linked portals. After it expires, standing in the arrival portal still
-        // does nothing until you step off it once (PortalImmune).
-        private const int PortalTransferCooldownTicks = 60;
 
         private TcpListener _listener;
         private Thread _acceptThread;
@@ -577,10 +572,9 @@ namespace MinecraftClone3API.Networking
                 session.Connection.Send(new InventoryStatePacket {Inventory = session.Inventory});
                 var toWorld = GetOrCreateWorld(savedDimensionKey);
                 MoveToDimension(session, toWorld, session.Player.Position.ToVector3i(), buildPortal: false);
-                // The saved coords may be inside the portal they left through; hold the post-transfer cooldown +
-                // immunity so the arrival doesn't immediately soak into a transfer back.
+                // The saved coords may be inside the portal they left through; stay portal-immune until they step
+                // out so the arrival doesn't immediately soak into a transfer back.
                 session.PortalImmune = true;
-                session.PortalCooldown = PortalTransferCooldownTicks;
                 Logger.Info($"Player {session.EntityId} logged in, restoring to \"{savedDimensionKey}\"");
                 return;
             }
@@ -1003,25 +997,16 @@ namespace MinecraftClone3API.Networking
             {
                 if (!session.LoggedIn || session.PendingPortalWorld != null) continue;
 
-                // Just-transferred: the portal is inert until the cooldown runs out. It counts down only once the
-                // player is back in control (ReadySent) so the loading screen can't burn it, guaranteeing a few
-                // real seconds where an arrival can't bounce back or ping-pong between the linked portals.
-                if (session.PortalCooldown > 0)
-                {
-                    if (session.ReadySent) session.PortalCooldown--;
-                    session.PortalTimer = 0;
-                    continue;
-                }
-
                 if (!TryFindPortalCell(portals, session, out var cell))
                 {
+                    // Clear of every portal: drop the post-arrival immunity and reset the soak. An arrival starts
+                    // immune, so it can't bounce back or re-trigger while standing still — only stepping off (here)
+                    // and back in begins a fresh soak.
                     session.PortalImmune = false;
                     session.PortalTimer = 0;
                     continue;
                 }
 
-                // After the cooldown, an arrival standing in the destination portal still won't re-trigger until
-                // they step off it once — so standing still never bounces, only deliberately re-entering does.
                 if (session.PortalImmune) continue;
                 var soak = session.Player.GameMode == GameMode.Creative
                     ? CreativePortalSoakTicks : SurvivalPortalSoakTicks;
@@ -1070,7 +1055,6 @@ namespace MinecraftClone3API.Networking
             session.Player.Position = approx.ToVector3() + new Vector3D<float>(0.5f, 0f, 0.5f);
             MoveToDimension(session, toWorld, approx, buildPortal: true);
             session.PortalImmune = true;
-            session.PortalCooldown = PortalTransferCooldownTicks;
             session.PortalTimer = 0;
         }
 

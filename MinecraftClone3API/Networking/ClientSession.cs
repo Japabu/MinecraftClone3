@@ -27,17 +27,15 @@ namespace MinecraftClone3API.Networking
         public Vector3D<float>? ReadyGate;
 
         /// <summary>Portal transfer state. <see cref="PortalTimer"/> counts ticks the player has stood in a
-        /// portal block; after a transfer the destination portal is fully inert while <see cref="PortalCooldown"/>
-        /// counts down (only once the player is back in control, so the loading screen doesn't burn it), then
-        /// <see cref="PortalImmune"/> keeps it inert until the player steps off it once — together they stop an
-        /// arrival bouncing straight back or ping-ponging between the linked portals.
+        /// portal block; <see cref="PortalImmune"/> is set right after a transfer and cleared once the player
+        /// steps off a portal, so arriving inside one neither bounces straight back nor re-triggers while they
+        /// stand still — only deliberately stepping out and back in starts a fresh soak.
         /// A non-null <see cref="PendingPortalWorld"/> means a transfer is mid-flight: once
         /// <see cref="PendingPortalApprox"/>'s column has streamed into that world the destination is finalized —
         /// building/linking a portal when <see cref="PendingBuildPortal"/> (a portal transfer) or just dropping
         /// the player there when not (a respawn back to the Overworld spawn).</summary>
         public int PortalTimer;
         public bool PortalImmune;
-        public int PortalCooldown;
         public WorldServer PendingPortalWorld;
         public Vector3D<int> PendingPortalApprox;
         public bool PendingBuildPortal;
