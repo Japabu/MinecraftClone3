@@ -484,11 +484,13 @@ namespace MinecraftClone3.States
         // thread has actually decoded it into LoadedChunks, so the player has ground before physics start.
         private bool SpawnChunksApplied()
         {
-            // Only the feet chunk is required: the chunk below can be all-air (never streamed), and the server's
-            // ready signal already gates on it being loaded-or-empty, so requiring it here would re-introduce the
-            // empty-below-chunk hang.
+            // The feet chunk itself can be all-air (a seed spawn floats the player just above the surface, so the
+            // ground — and the only chunk that ever streams — is the one below). Accept either the feet chunk or the
+            // one below so an empty feet chunk can't hang the loading screen; the server's PlayerReady already gates
+            // on the ground chunk having streamed, so by the time it arrives one of these is decoded.
             var feetChunk = WorldBase.ChunkInWorld(_player.Position.ToVector3i());
-            return _world.LoadedChunks.ContainsKey(feetChunk);
+            return _world.LoadedChunks.ContainsKey(feetChunk)
+                || _world.LoadedChunks.ContainsKey(feetChunk - new Vector3D<int>(0, 1, 0));
         }
 
         public override void Render()

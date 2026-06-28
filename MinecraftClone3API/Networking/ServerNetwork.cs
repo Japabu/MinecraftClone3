@@ -371,18 +371,25 @@ namespace MinecraftClone3API.Networking
 
                 var spawnChunk = WorldBase.ChunkInWorld(session.ReadyGate.Value.ToVector3i());
                 var belowChunk = spawnChunk - new Vector3D<int>(0, 1, 0);
-                if (!session.SentChunks.Contains(spawnChunk)) continue;
-                // The chunk under the feet can be all-air (never published to LoadedChunks, so never streamed);
-                // accept it as ready once it's generated-but-empty so the signal can't hang on a chunk that will
-                // never arrive — otherwise the player waits the full loading timeout.
-                var belowReady = session.SentChunks.Contains(belowChunk)
-                    || (session.World.IsChunkGenerated(belowChunk) && !session.World.LoadedChunks.ContainsKey(belowChunk));
-                if (!belowReady) continue;
+                // The spawn column is ready once the feet chunk and the one below it have each either streamed or
+                // can never stream, so the signal can't hang on a chunk that never arrives. This covers a seed spawn
+                // whose feet land in the empty air chunk above the surface (the feet chunk itself is all-air, so the
+                // ground is the chunk below) and a player on the world's bedrock floor (the chunk below is out of
+                // the generator's band). The ground chunk is non-empty, so it is still gated on actually streaming.
+                if (!ColumnChunkReady(session, spawnChunk) || !ColumnChunkReady(session, belowChunk)) continue;
 
                 session.Connection.Send(new PlayerReadyPacket());
                 session.ReadySent = true;
             }
         }
+
+        // A chunk in the spawn column is "ready" when it has streamed to the client, or when it can never stream:
+        // outside the generator's vertical band (below the floor / above the ceiling), or generated-but-empty
+        // (all-air — published to _populatedChunks but never to LoadedChunks, so never sent).
+        private static bool ColumnChunkReady(ClientSession session, Vector3D<int> chunkPos) =>
+            session.SentChunks.Contains(chunkPos)
+            || session.World.IsChunkOutsideGeneratedBand(chunkPos)
+            || (session.World.IsChunkGenerated(chunkPos) && !session.World.LoadedChunks.ContainsKey(chunkPos));
 
         private void HandlePacket(ClientSession session, Packet packet)
         {
