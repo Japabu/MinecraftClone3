@@ -738,7 +738,9 @@ namespace MinecraftClone3API.Graphics
         private static Vector3 PartRotation(string name, Entity entity)
         {
             if (name == "head")
-                return new Vector3(entity.Pitch, 0, 0);
+                // Positive Pitch looks up (Forward.Y = sin Pitch), but a positive head-bone rotation about +X
+                // tilts the face down, so the look angle must be negated to track it.
+                return new Vector3(-entity.Pitch, 0, 0);
 
             if (name.StartsWith("leg") || name.StartsWith("arm"))
             {
