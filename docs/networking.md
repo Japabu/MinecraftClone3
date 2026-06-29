@@ -33,9 +33,12 @@ in deterministic plugin order, so client and server agree within a session.
   S→C  BlockChanges          ChunkPos + (localIndex, blockId, light, sky)[]   (edits + block-light + sky-light)
   C→S  ChunkRelease          client dropped a chunk from its cache; clears its SentChunks entry
   C→S  PlaceBlockRequest     pos + block id (id 0 = break) + placement metadata (computed client-side)
+  C→S  UseItemRequest        right-clicked a usable held item at a block pos (server runs Item.OnUseServer)
+  C→S  UseItemOnEntityRequest   entity id; right-clicked the held item on a creature (shears on a sheep, etc.)
   C→S  AttackEntityRequest   entity id; left-clicked a creature to melee it (server applies held weapon damage)
   C→S/S→C  EntityMove         own player up; relayed down with held item + 4 worn-armor ids (server-filled)
   S→C  EntitySpawn/EntityDespawn   remote players appearing/leaving
+  S→C  EntityData            an entity's type-tagged data changed (e.g. a sheep was sheared); client replaces its copy
   S→C  WorldTime             world clock in seconds (TickCount·SecondsPerTick); on join + ~1/s, drives day/night
   S→C  LodColumnData         Phase-2 distant horizon: one region of surface-only LOD columns (loopback: by ref;
                              TCP: GZip), streamed nearest-first BEYOND the chunk view distance (see rendering.md)
@@ -43,6 +46,7 @@ in deterministic plugin order, so client and server agree within a session.
   C→S  InventoryAction       slot index + ItemStack; client edited a slot (index ≥ ArmorActionBase = armor slot)
   C→S  HeldSlot              selected hotbar index changed (number key / scroll wheel)
   C→S  DropItemRequest       drop the held hotbar item (Q); bool All = whole stack (Ctrl+Q)
+  C→S  DropStackRequest      drop an arbitrary client-side stack (crafting-grid/cursor leftovers); carries the stack itself
   C→S  OpenContainer/CloseContainer   client opened/closed a container block (furnace) screen
   S→C  ContainerState        open container's item slots + progress fields, streamed each tick to its viewers
   C→S  ContainerSlot         client edited one of a container block's own slots (input/fuel/output)
@@ -101,9 +105,7 @@ generically from the block's `ContainerBlockData`) to its viewers, which the cli
 `ContainerView`. Editing a furnace slot sends `ContainerSlot` (trusted, like `InventoryAction`); the player's
 own inventory rows in the furnace screen still use `InventoryAction`. `CloseContainer` stops the stream. Like
 `InventoryState`, `ContainerState` carries the server's live arrays by reference over loopback, so the client
-**copies them by value**. The `InventoryState` packet carries
-the live server `Inventory` by reference over loopback, so the client receive **copies it slot-by-slot**
-(`ItemStack` is a struct) rather than aliasing the server's array.
+**copies them by value** (`ItemStack` is a struct, copied slot-by-slot) rather than aliasing the server's array.
 
 **Survival stats are server-authoritative** (see [entities.md](entities.md)). The server runs the survival sim
 on `ClientSession.Player` and, each `Pump`, `SyncPlayerStats()` sends a `PlayerStats` packet to the **owning**
@@ -117,18 +119,20 @@ temp-and-rename write; a version mismatch resets the player rather than misreadi
 
 **Placement metadata is computed client-side, never read on the server.** `Block.OnPlaced(world, pos,
 player, int metadata)` receives the metadata from the `PlaceBlockRequest`; the client derives it via
-`Block.GetPlacementMetadata(KeyboardState, EntityPlayer, BlockRaytraceResult)` (default `0`) in
+`Block.GetPlacementMetadata(EntityPlayer, BlockRaytraceResult)` (default `0`) in
 `PlayerController.PlaceBlock`. The player + ray let a block orient by the placer's look and clicked face
-(stairs: facing from yaw, half from the clicked face); `BlockTintedGlass` uses only the held-key tint. The
+(stairs face from yaw; a slab picks its top/bottom half from the clicked face and cursor height). The
 headless server never touches input — `ServerNetwork.ApplyPlaceRequest` just passes `place.Metadata` to
 `WorldServer.PlaceBlock` → `OnPlaced`. A stair's facing is block *data*, so it rides the whole-chunk
 `ChunkData` resend, not the `BlockChanges` delta.
 
 **Chunk caching & eviction is client-owned.** The client keeps every chunk it receives and, each
-`WorldClient.Update`, drops chunks whose centre is farther than `CacheDistance` (240) from the player,
-sending a `ChunkRelease` for each. `CacheDistance` is kept comfortably above the server's send range
-(`ServerNetwork.ViewDistance`, 160) so a freshly streamed chunk is never evicted-then-re-requested at the
-boundary — that hysteresis gap makes revisits free. The server's send loop only ever *adds* to `SentChunks`
+`WorldClient.Update`, drops chunks whose centre is farther than `CacheDistance` from the player, sending a
+`ChunkRelease` for each. Both distances are slider-driven floats in singleplayer (`StateWorld` sets
+`ServerNetwork.ViewDistance = chunks·Chunk.Size`, default 160, and `WorldClient.CacheDistance = ViewDistance +
+CacheHysteresis`, the 80-block gap, so default 240). `CacheDistance` is kept comfortably above the server's
+send range so a freshly streamed chunk is never evicted-then-re-requested at the boundary — that hysteresis
+gap makes revisits free. The server's send loop only ever *adds* to `SentChunks`
 (gated so a held chunk is never resent); entries leave only on `ChunkRelease` or a dirty resend. The
 server-side `UnloadThread` evicts idle chunks from `WorldServer.LoadedChunks` (its own memory) — unrelated to
 what the client holds.
@@ -146,19 +150,21 @@ it each tick (enumerate + `TryRemove`, which terminates so a busy light thread c
 chunk, and sends one compact `BlockChanges` packet per chunk to every session whose `SentChunks` holds it.
 The client (`WorldClient.ApplyBlockChanges`) mutates the cached `Chunk` **in place** (`SetBlock` +
 `SetLightLevel` + `SetSkyLight`, no decompress/deserialize) and remeshes only that chunk plus any **face**
-neighbour a changed boundary block touches. (Edge/corner-diagonal AO seams across chunks are a pre-existing
+neighbour a changed boundary block touches. (Edge/corner-diagonal AO seams across chunks are an accepted
 limitation; face culling — the only correctness concern — needs only the direct face neighbour.)
 
 **Block-data changes still ride whole-chunk resends.** `BlockChanges` carries only id + light + sky, so a
-block *data* change (`SetBlockData`, e.g. tinted glass metadata, which affects `ConnectsToBlock` meshing and
-`OnLightPassThrough`) marks `WorldServer.DirtyChunks` and `ServerNetwork.ResendDirtyChunks()` resends the
-whole `ChunkData`. Rare; deltas handle the common place/break/light path.
+block *data* change (`SetBlockData`, e.g. a stair's/ladder's facing stored as `BlockDataMetadata`) marks
+`WorldServer.DirtyChunks` and `ServerNetwork.ResendDirtyChunks()` resends the whole `ChunkData`. Rare; deltas
+handle the common place/break/light path.
 
 `ServerNetwork.Pump()` runs once per server tick, in order: adopt pending connections → drain & handle each
-session's packets (incl. `ChunkRelease`) → drop disconnected sessions → **stream chunks** (nearest-first,
-in-range-not-yet-sent only, capped at `MaxChunksPerTick` per session per tick) → **send `PlayerReady`** to
-any session whose `SentChunks` now covers the spawn column → relay entities → sync containers → **sync player
-stats** → **flush block changes** (delta packets) → **resend dirty chunks** (block-data only).
+session's packets (incl. `ChunkRelease`) → drop disconnected sessions → **update portals** → **process
+pending transfers** → **stream chunks** (nearest-first, in-range-not-yet-sent only, capped at
+`MaxChunksPerTick` per session per tick) → **stream LOD regions** → **send `PlayerReady`** to any session
+whose `SentChunks` now covers the spawn column → send time sync → relay entities → sync containers → **sync
+player stats** → save players (periodic) → **flush block changes** (delta packets) → **resend dirty chunks**
+(block-data only).
 
 **LOD horizon streaming.** `LodColumnData` mirrors `ChunkDataPacket` exactly — `From` carries the live region
 by reference (loopback never serializes), and compression + serialization are **lazy inside `Write`/`Read`** at

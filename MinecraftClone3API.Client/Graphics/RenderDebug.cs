@@ -23,7 +23,7 @@ namespace MinecraftClone3API.Graphics
         public static int LodDrawn;
         public static bool ShadowPass;
 
-        // Per-frame timings written by the game loop (GameClient.OnRenderFrame), read by the overlay.
+        // Per-frame timings written by the game loop (Program.OnRender), read by the overlay.
         // FrameMs is EMA-smoothed so the displayed FPS is steady; GpuMs/UpdateMs are raw last-frame values.
         public static double FrameMs;
         public static double GpuMs;

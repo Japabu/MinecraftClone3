@@ -47,7 +47,7 @@ namespace MinecraftClone3API.Blocks
         // The caches memoise every node the BFS *visits* (read or changed); _lightChanged records only
         // the nodes whose light actually changed, so the writeback dirties just those chunks rather than
         // resending the whole visited sphere on every edit. Pre-sized so a large flood doesn't churn the
-        // backing arrays (Dictionary.Resize was the entire light-thread cost in a trace).
+        // backing arrays.
         private readonly Queue<LightNode> _lightSpreadQueue = new Queue<LightNode>(1024);
         private readonly Queue<LightNode> _lightRemoveQueue = new Queue<LightNode>(1024);
         private readonly Dictionary<Vector3D<int>, LightLevel> _lightLevelCache = new Dictionary<Vector3D<int>, LightLevel>(8192);
@@ -96,9 +96,9 @@ namespace MinecraftClone3API.Blocks
         public volatile int TerrainRadius = 10;
 
         // Chunks generated per LoadThread iteration per player. Large enough that the ~11k-position interest
-        // scan amortizes over a big gen batch (the old cap of 16 meant ~275 scans to fill RD16), small enough
-        // that a moving player's interest is re-read often enough to follow them. With the no-idle-sleep change
-        // (sleep only when nothing is pending) this lets the world stream in flat-out instead of dribbling.
+        // scan amortizes over a big gen batch, small enough that a moving player's interest is re-read often
+        // enough to follow them. Combined with idle-sleeping only when nothing is pending, this lets the world
+        // stream in flat-out instead of dribbling.
         private const int MaxChunksPerLoad = 128;
 
         // Cores the parallel chunk-gen batch may use — leave two for the client mesh pool + main/render thread.
@@ -626,7 +626,6 @@ namespace MinecraftClone3API.Blocks
 
             TickCount++;
 
-            //Update entities
             foreach (var playerEntity in PlayerEntities)
             {
                 playerEntity.Update();
@@ -926,10 +925,10 @@ namespace MinecraftClone3API.Blocks
                 }
 
                 ExtensionHelper.ZipMerge(_loadPlayerChunkLists, _loadMerged);
-                // Generate the batch in PARALLEL across cores — chunk gen is the streaming bottleneck (a
-                // single thread was ~95% busy) and is embarrassingly parallel (the generator's per-thread
-                // scratch makes Generate thread-safe; _populatedChunks is concurrent, disk load is lock-guarded,
-                // staging is locked). Bounded so the mesh pool + main thread keep their cores.
+                // Generate the batch in PARALLEL across cores — chunk gen is the streaming bottleneck and is
+                // embarrassingly parallel (the generator's per-thread scratch makes Generate thread-safe;
+                // _populatedChunks is concurrent, disk load is lock-guarded, staging is locked). Bounded so
+                // the mesh pool + main thread keep their cores.
                 System.Threading.Tasks.Parallel.ForEach(_loadMerged, _genParallelOptions, chunkPos =>
                 {
                     // Players with overlapping interest produce duplicate positions in the merged
@@ -1114,7 +1113,6 @@ namespace MinecraftClone3API.Blocks
             changed.Clear();
             if (blockEmittingLightLevel.Binary != oldBlockLightLevel.Binary) changed.Add(blockPos);
 
-            //foreach color channel
             for (var color = 0; color < 3; color++)
             {
                 var spreadQueue = _lightSpreadQueue;
@@ -1139,10 +1137,8 @@ namespace MinecraftClone3API.Blocks
                     {
                         var nextNode = node.Position + face.GetNormali();
 
-                        //If chunk does not exist stop
                         if (LightChunkEmpty(nextNode)) continue;
 
-                        //Cache light level if not already cached
                         if (!cachedLightLevels.TryGetValue(nextNode, out var nextNodeLightLevel))
                         {
                             nextNodeLightLevel = GetBlockLightLevel(nextNode);
@@ -1156,13 +1152,10 @@ namespace MinecraftClone3API.Blocks
                             spreadQueue.Enqueue(new LightNode(nextNode, nextNodeLightLevel[color]));
                             continue;
                         }
-                        //If the next nodes light level is zero stop
                         if (nextNodeLightLevel[color] == 0) continue;
 
-                        //If next node block is an occluder stop
                         if (IsOpaqueFullBlock(nextNode)) continue;
 
-                        //Set next nodes light level and advance
                         nextNodeLightLevel[color] = 0;
                         cachedLightLevels[nextNode] = nextNodeLightLevel;
                         changed.Add(nextNode);
@@ -1180,18 +1173,14 @@ namespace MinecraftClone3API.Blocks
                     {
                         var nextNode = node.Position + face.GetNormali();
 
-                        //If chunk does not exist stop
-                        //TODO: Fix potential bugs
                         if (LightChunkEmpty(nextNode)) continue;
 
-                        //Cache light level if not already cached
                         if (!cachedLightLevels.TryGetValue(nextNode, out var nextNodeLightLevel))
                         {
                             nextNodeLightLevel = GetBlockLightLevel(nextNode);
                             cachedLightLevels[nextNode] = nextNodeLightLevel;
                         }
 
-                        //Cache block if not already cached
                         if (!cachedBlocks.TryGetValue(nextNode, out var nextNodeBlock))
                         {
                             nextNodeBlock = GetBlock(nextNode);
@@ -1200,13 +1189,10 @@ namespace MinecraftClone3API.Blocks
 
                         var newValue = nextNodeBlock.OnLightPassThrough(this, nextNode, node.Value, color);
 
-                        //If the next nodes light level is higher or equal to our value stop
                         if (nextNodeLightLevel[color] >= newValue) continue;
 
-                        //If next node block is an occluder stop
                         if (nextNodeBlock.IsOpaqueFullBlock(this, nextNode)) continue;
 
-                        //Set next nodes light level and advance
                         nextNodeLightLevel[color] = newValue;
                         cachedLightLevels[nextNode] = nextNodeLightLevel;
                         changed.Add(nextNode);

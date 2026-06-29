@@ -8,9 +8,7 @@ namespace MinecraftClone3API.Graphics
     /// the RHI has no <c>QuerySet</c> wrapper yet. Until that lands this is a SAFE NO-OP preserving the public
     /// surface (<see cref="Enabled"/>, the frame/pass hooks, the <see cref="Pass"/> enum, and <see cref="Ms"/>)
     /// so the callers — WorldRenderer's per-pass timing and the RenderDebug overlay — compile and run; every
-    /// pass simply reports 0 ms.</para>
-    ///
-    /// TODO(M7): real WebGPU timestamp queries (QuerySet + ResolveQuerySet → readback buffer).</summary>
+    /// pass simply reports 0 ms.</para></summary>
     public static class GpuTimers
     {
         public enum Pass { Shadow, Geometry, Composition }

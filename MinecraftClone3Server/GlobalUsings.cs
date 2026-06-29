@@ -1,8 +1,7 @@
-// Engine math aliases. OpenTK.Mathematics was replaced by Silk.NET.Maths (one ecosystem with the rest of the
-// Silk.NET window/input/WebGPU stack, and it has the integer vectors block coordinates need). These aliases
-// keep the familiar type names (Vector3, Vector3i, Matrix4, ...) so call sites read unchanged; the static
-// helper classes (Vector3D.Dot, Matrix4X4.CreateTranslation, Scalar.Clamp) come from `using Silk.NET.Maths`.
-// Colours are Vector4D<float> and math goes through System.MathF / Silk.NET.Maths.Scalar.
+// Engine math aliases over Silk.NET.Maths (one ecosystem with the rest of the Silk.NET window/input/WebGPU
+// stack, and it has the integer vectors block coordinates need). These aliases keep short type names
+// (Vector3, Vector3i, Matrix4, ...); the static helpers (Vector3D.Dot, Matrix4X4.CreateTranslation,
+// Scalar.Clamp) come from `using Silk.NET.Maths`. Colours are Vector4D<float>.
 global using Silk.NET.Maths;
 global using Vector2 = Silk.NET.Maths.Vector2D<float>;
 global using Vector3 = Silk.NET.Maths.Vector3D<float>;

@@ -1,14 +1,14 @@
-// Deferred composition. Ported from Composition.vs/.fs. A vertex-less fullscreen triangle reconstructs world
+// Deferred composition. A vertex-less fullscreen triangle reconstructs world
 // position from the G-buffer depth, combines baked block + sky light with the resolved sun shadow, draws a
 // procedural Minecraft-style sky for background (cleared far-plane) pixels, shades water (animated normals +
 // Fresnel sky reflection + sun/moon specular), and fades everything into the horizon colour with distance fog.
 // Output is linear HDR (rgba16float); tonemapping happens in a later pass.
 //
-// HARD CONTRACTS vs. the GL original:
+// HARD CONTRACTS:
 //   * REVERSE-Z: the G-buffer depth is already WebGPU clip-space z in [0,1]; it is used AS-IS (no depth*2-1).
 //   * The depth target is Depth32float, bound as texture_depth_2d and read with textureLoad(integer coords).
 //   * NDC reconstruction follows Tonemap.wgsl's UV orientation (uv passed as a varying); uViewProjectionInv is
-//     supplied by C# already built for reverse-Z / this UV convention, so ndcXY = uv*2-1 as in the GL source.
+//     supplied by C# already built for reverse-Z / this UV convention, so ndcXY = uv*2-1.
 
 // ---------------------------------------------------------------------------------------------------------
 // group(0) binding(0): all scalar/vector/matrix uniforms, std140-style layout.
@@ -99,7 +99,7 @@ struct CompositionParams {
 @group(1) @binding(7) var gbufferSampler: sampler;
 @group(1) @binding(8) var celestialSampler: sampler;
 
-// --- tunables (const in the GL source) -------------------------------------------------------------------
+// --- tunables --------------------------------------------------------------------------------------------
 const DepthSharpness: f32 = 256.0;
 const WaterFlagLo: f32 = 0.7;
 const WaterFlagHi: f32 = 0.8;
@@ -131,8 +131,8 @@ fn sampleTex(t: texture_2d<f32>, uv: vec2<f32>) -> vec4<f32> {
     return textureSampleLevel(t, gbufferSampler, uv, 0.0);
 }
 
-// REVERSE-Z: depth is WebGPU clip-space z in [0,1] already, used as-is. ndcXY follows the GL source (uv*2-1)
-// and Tonemap's UV orientation; uViewProjectionInv is supplied for reverse-Z.
+// REVERSE-Z: depth is WebGPU clip-space z in [0,1] already, used as-is. ndcXY follows Tonemap's UV
+// orientation (uv*2-1); uViewProjectionInv is supplied for reverse-Z.
 fn PositionFromDepth(uv: vec2<f32>, depth: f32) -> vec3<f32> {
     // ndc.y is negated vs uv: the uv basis (used to sample the G-buffer) runs y-down relative to clip-space y,
     // so reconstructing with a plain uv*2-1 yields a vertically-mirrored world position.
@@ -276,7 +276,7 @@ fn ApplyFog(color: vec3<f32>, viewDepth: f32) -> vec3<f32> {
 
 // Underwater murk: when the camera's eye is inside a liquid block (uUnderwater = 1) the whole scene and the sky
 // fog into uUnderwaterColor over a short distance (dense water), keeping a slight permanent tint near the
-// camera. uUnderwaterColor is already dimmed by the daylight on the CPU side. Minecraft's "you're underwater" look.
+// camera. uUnderwaterColor is already dimmed by the daylight on the CPU side.
 fn ApplyUnderwater(color: vec3<f32>, viewDepth: f32) -> vec3<f32> {
     let fog = max(clamp((viewDepth - 0.5) / (24.0 - 0.5), 0.0, 1.0), 0.12);
     return mix(color, params.uUnderwaterColor, fog);

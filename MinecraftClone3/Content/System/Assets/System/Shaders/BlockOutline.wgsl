@@ -1,4 +1,4 @@
-// Block-selection wireframe box. Ported from BlockOutline.vs/.fs. Drawn into the G-buffer as an unlit
+// Block-selection wireframe box. Drawn into the G-buffer as an unlit
 // overlay (diffuse = colour, normal.w = 1 so Composition skips shading). Per-draw transform + colour are
 // push constants.
 

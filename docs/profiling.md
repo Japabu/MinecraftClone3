@@ -1,9 +1,9 @@
 # Debug & profiling tools
 
-In-world keys (handled in `PlayerController.Update`). The toggles + per-frame stats live in
+In-world keys (handled in `PlayerController.OnKeyDown`). The toggles + per-frame stats live in
 `Client/Graphics/RenderDebug.cs` (a single static): `PlayerController` flips the toggles, `WorldRenderer`
-reads them and writes the stats, `StateWorld.Render` draws the overlays, `GameClient` writes frame timings.
-F4 chunk borders are the one exception (kept on `ChunkBorderRenderer.Enabled`).
+reads them and writes the stats, `StateWorld.Render` draws the overlays, `Program.OnRender` writes frame
+timings. F4 chunk borders are the one exception (kept on `ChunkBorderRenderer.Enabled`).
 
 - **F1** — toggle the controls/help overlay: a fixed keybind list drawn top-left. `RenderDebug.ShowControls`.
 - **F3** — toggle the on-screen diagnostics overlay: FPS + smoothed frame ms, `gpu`/`cpu upd` ms, **chunks
@@ -13,14 +13,18 @@ F4 chunk borders are the one exception (kept on `ChunkBorderRenderer.Enabled`).
   the `WorldClient`/`WorldServer` lock-free depth mirrors. The cheap always-available live HUD; the CSV
   profilers (F10) are the heavy tools. (Per-frame *sum* timers are kept off F3 — a single-frame sum flickers
   meaninglessly at 120 Hz; they live in the CSV.)
+- **F2** — toggle a fixed time-of-day (pins the sun position for reproducible lighting).
+  `WorldRenderer.FixedTimeOfDay`.
 - **F4** — toggle chunk-border wireframes (current chunk red, neighbours yellow).
-  `Client/Graphics/ChunkBorderRenderer.cs`, drawn in the geometry pass (depth-tested). (F5/F6 unused.)
+  `Client/Graphics/ChunkBorderRenderer.cs`, drawn in the geometry pass (depth-tested).
+- **F5** — cycle the camera perspective: first-person → third-person behind → third-person facing the
+  player. `PlayerController.Perspective` (`CameraPerspective`). (F6 unused.)
 - **F7** — toggle the raw shadow-factor view: composition outputs the per-pixel shadow term as greyscale
   (white = lit, black = shadowed), to spot acne/peter-panning. `RenderDebug.ShadowFactor` → `uDebugShadow`.
 - **F10** — toggle the frame profiler. Writes a CSV per render frame to
   `~/.local/share/MinecraftClone3/profiling.csv`. An on-screen `● REC` shows while recording; toggling off
   (or leaving the world) flushes and closes the file. Code: `Util/Profiler.cs`, fed from
-  `GameClient.OnRenderFrame` + `StateWorld.Update` (phase times) and the `WorldServer`/`WorldClient` pipeline
+  `Program.OnRender` + `StateWorld.Update` (phase times) and the `WorldServer`/`WorldClient` pipeline
   threads. Columns:
   - `t, frameMs, fps, updateMs, renderMs, swapMs, gapMs, gpuMs, shadowMs/geomMs/compMs (per-pass GPU),
     updCalls, gen0/1/2, dGen0/1/2 (per-frame GC events), heapMB, allocMB (per frame, all threads)`
@@ -37,27 +41,17 @@ F4 chunk borders are the one exception (kept on `ChunkBorderRenderer.Enabled`).
     `srvStageQ/applyQ/renderReadyQ/disposeQ` — pipeline queue depths, so a balloon localizes *which* stage is
     the wall.
 
-  > ⚠️ **GPU-timer state:** the GPU-side columns currently read **0** — `gpuMs`/`shadowMs`/`geomMs`/`compMs`
-  > (WebGPU timestamp queries need a `QuerySet` RHI wrapper + Metal's write-location rules; until that lands
-  > `GpuTimers` is a safe no-op preserving the frame/pass hooks), and `gapMs` (no between-frame gap is carried
-  > on the Silk frame loop). The `chunks drawn` / `lod drawn` **numerators** also read 0: the GPU cull compute
-  > owns the post-cull count and there is no CPU readback — under GPU-driven culling the CPU never builds a
-  > visible set, by design. The CPU columns (`frameMs`/`updateMs`/`renderMs`/`swapMs`) and the denominators are
-  > live. The rest of this section describes the design once timestamp queries are wired up.
+  > ⚠️ **GPU-timer columns read 0.** `gpuMs`/`shadowMs`/`geomMs`/`compMs` are always 0 because `GpuTimers`
+  > (`Client/Graphics/GpuTimers.cs`) is a safe no-op pending a `QuerySet` RHI wrapper for WebGPU timestamp
+  > queries; `gapMs` is also 0 (no between-frame gap is carried on the Silk frame loop). The `chunks drawn` /
+  > `lod drawn` **numerators** also read 0: under GPU-driven culling the cull compute owns the post-cull count
+  > with no CPU readback, so the CPU never builds a visible set. The live columns are the CPU ones
+  > (`frameMs`/`updateMs`/`renderMs`/`swapMs`) and the cull denominators.
 
   Reading the timers: `frameMs` is the real frame interval (catches drops); `updateMs`/`renderMs` are CPU
-  work. The stalls a CPU sampler can't see: `swapMs` = surface present (`Renderer.EndFrame` — the tonemap pass +
-  GUI flush + `_frame.Present()`); `gpuMs` = actual GPU render time. `gpuMs` large ⇒ GPU-bound; `gpuMs` small but `swapMs`
-  large ⇒ present back-pressure. `shadowMs`/`geomMs`/`compMs` split `gpuMs` into the three deferred passes via
-  WebGPU **timestamp queries** (`timestampWrites` on each pass, resolved into a readback buffer —
-  `Client/Graphics/GpuTimers.cs`, gated on `Enabled` = recording): large `shadowMs` ⇒ the depth pass is
-  geometry/draw-call-bound, large `compMs` ⇒ composition is fill/shader-bound (the 12-tap PCF). The cull
-  compute dispatch folds into `geomMs` (it precedes the GPU-culled opaque draws). **Whole-frame and per-pass
-  timers read from a query *ring* harvested newest-ready, not a 1-frame ping-pong** — with vsync off the CPU
-  runs several frames ahead, so a 1-frame read would perpetually see "not available" and freeze the timers
-  stale. ⚠️ **With vsync on, read `compMs`/`swapMs` only from a vsync-off capture** — present pacing absorbs
-  the swapchain back-pressure, so they read a vsync-quantized stall, not real work. When `updateMs` is large,
-  the srv/net/cli splits localize it. `updCalls` ≫ 1 means updates are running behind and being batched. **The
+  work. `swapMs` = surface present (`Renderer.EndFrame` — the tonemap pass + GUI flush + `_frame.Present()`),
+  the stall a CPU sampler can't see; a large `swapMs` ⇒ present back-pressure. When `updateMs` is large, the
+  srv/net/cli splits localize it. `updCalls` ≫ 1 means updates are running behind and being batched. **The
   profiler reads only lock-free mirrors** (`volatile`/`Interlocked` depth fields), never
   `ConcurrentDictionary`/`ConcurrentQueue.Count` or a `_meshLock` take, so recording doesn't contend with the
   apply/mesh threads and inflate the very stutter it measures.
@@ -68,10 +62,10 @@ F4 chunk borders are the one exception (kept on `ChunkBorderRenderer.Enabled`).
   decomposition** of the chunk's whole life across the 4 pipeline threads — columns `t, posX/Y/Z, source
   (disk/gen/edit/stream), mp`, then the tiling spans `genMs`(work) `stageWaitMs` `drainWaitMs` `streamWaitMs`
   `netWaitMs` `applyWaitMs` `applyMs`(work) `meshWaitMs` `meshMs`(work) `uploadWaitMs`, and `totalMs`.
-  Adjacent stamps tile the timeline, so in SP the spans sum to `totalMs` (an instrumentation self-check). A
-  **multiplayer client** has no in-process server, so server stages are blank and `totalMs` starts at
-  `applyWaitMs` (`mp=1`, `source=stream`); a **block-edit** (or a re-stream after eviction) emits a separate
-  `source=edit` row covering only the mesh→upload tail. Memory is bounded by a `MaxLive` cap + `Abandon` at
+  Adjacent stamps tile the timeline, so in SP the spans sum to `totalMs` (an instrumentation self-check); on a
+  **multiplayer client** (`mp=1`) the server stages are blank and `totalMs` starts at `applyWaitMs`. A
+  **block-edit** (or a re-stream after eviction) emits a separate `source=edit` row covering only the
+  mesh→upload tail. Memory is bounded by a `MaxLive` cap + `Abandon` at
   the drop sites + a TTL sweep; every stamp early-outs on `!Profiler.Recording`, so a non-recording run pays
   nothing.
 
@@ -104,9 +98,9 @@ pass redraws all in-range opaque chunks from the sun's POV, so the fix is reduci
 and an automated camera flies a deterministic scripted path while `Profiler` + `ChunkTracer` record, then
 prints a percentile report and exits — the reliable, repeatable way to measure a render/pipeline change.
 Code: `Util/Benchmark.cs`, wired from `Program.Main` (CLI parse + vsync-off + settings pin), `StateWorld`
-(drives the camera via `Benchmark.DriveCamera` instead of player input), and `GameClient.OnRenderFrame`
-(`Benchmark.Tick` per frame, `Close()` on `Finished`). **Benchmark Release, not Debug — Debug understates FPS
-hugely.**
+(drives the camera via `Benchmark.DriveCamera` instead of player input), and `Program.OnRender`
+(`Benchmark.Tick`/`Benchmark.CaptureFrame` per frame; the window closes when `Benchmark.Finished`).
+**Benchmark Release, not Debug — Debug understates FPS hugely.**
 
 ```
 bin/Release/net10.0/MinecraftClone3 --benchmark   # boots the flythrough, prints report, exits

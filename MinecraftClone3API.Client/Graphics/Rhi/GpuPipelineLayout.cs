@@ -19,7 +19,6 @@ namespace MinecraftClone3API.Graphics.Rhi
         {
             var labelPtr = label == null ? null : (byte*)SilkMarshal.StringToPtr(label, NativeStringEncoding.UTF8);
 
-            // Re-pack the bind-group-layout pointers into a contiguous native array.
             var bglCount = bindGroupLayouts.Length;
             var bgls = (Silk.NET.WebGPU.BindGroupLayout**)SilkMarshal.Allocate(bglCount * sizeof(IntPtr));
             for (var i = 0; i < bglCount; i++) bgls[i] = (Silk.NET.WebGPU.BindGroupLayout*)bindGroupLayouts[i];

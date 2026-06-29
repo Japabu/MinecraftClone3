@@ -1,4 +1,4 @@
-// 2D sprite / GUI quad. Ported from Sprite.vs/.fs. Per-draw rect/uv/colour come in as push constants
+// 2D sprite / GUI quad. Per-draw rect/uv/colour come in as push constants
 // (cheap per-sprite updates); the texture + sampler are a bind group. Draws a unit quad (NDC corners in
 // the vertex buffer, slot 0) remapped to the target rect.
 

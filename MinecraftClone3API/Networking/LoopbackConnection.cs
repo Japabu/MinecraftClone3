@@ -9,10 +9,9 @@ namespace MinecraftClone3API.Networking
     /// <see cref="MinecraftClone3API.Client.Blocks.WorldClient.Update"/> consumes, in the same
     /// <c>StateWorld.Update</c>), and the server builds a fresh packet per <see cref="Send"/> and never
     /// reads it back — so there is no shared mutable state to race on. This skips the per-packet
-    /// <see cref="System.IO.MemoryStream"/> + <c>ToArray</c> round trip that dominated the singleplayer
-    /// main thread (<see cref="Packet.Serialize"/>/<see cref="Packet.Deserialize"/> were ~64% of
-    /// <c>Pump</c> in a trace). The TCP path still serializes (see <see cref="TcpConnection"/>); only
-    /// the loopback shortcuts it, so the wire packets themselves are unchanged.
+    /// <see cref="System.IO.MemoryStream"/> + <c>ToArray</c> round trip that serialization would otherwise
+    /// require on the singleplayer main thread. The TCP path still serializes (see <see cref="TcpConnection"/>);
+    /// only the loopback shortcuts it, so the wire packets themselves are unchanged.
     /// </summary>
     public class LoopbackConnection
     {

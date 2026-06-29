@@ -24,11 +24,10 @@ namespace MinecraftClone3API.Client.Blocks
     /// </summary>
     public class WorldClient : WorldBase
     {
-        // Per-frame GPU upload time budget. Uploads are cheap (~0.15 ms each — a GPU buffer write),
-        // so a few ms drains tens of chunks per frame, comfortably above the mesh pool's output, while bounding
-        // the upload's contribution to frame time. Replaces a fixed count-per-frame (8) that throttled the
-        // world-fill below the pool's throughput (an F10 chunk-trace showed the upload queue ballooning to
-        // ~900 and chunks waiting seconds in it); a time budget self-scales to how cheap uploads actually are.
+        // Per-frame GPU upload time budget. Uploads are cheap (~0.15 ms each — a GPU buffer write), so a few
+        // ms drains tens of chunks per frame, comfortably above the mesh pool's output, while bounding the
+        // upload's contribution to frame time. A time budget self-scales to how cheap uploads actually are,
+        // unlike a fixed count-per-frame that would throttle the world-fill below the pool's throughput.
         private const double UploadBudgetMs = 4.0;
         private static readonly long UploadBudgetTicks = (long) (UploadBudgetMs * Stopwatch.Frequency / 1000.0);
 
@@ -77,10 +76,10 @@ namespace MinecraftClone3API.Client.Blocks
         public readonly ChunkMeshArena OpaqueArena;
 
         // Main-thread mirror of RenderData's values, iterated by the renderer each frame in place of
-        // enumerating the ConcurrentDictionary (a per-frame O(bucket) scan + enumerator allocation a
-        // trace showed dominating the render thread). Kept in sync O(1) on add (DrainRenderReady) and
-        // swap-removal on evict (UnloadChunk) via ChunkRenderData.RenderListIndex. Only the main thread
-        // touches this list — the mesh thread looks chunks up through RenderData directly.
+        // enumerating the ConcurrentDictionary (whose per-frame O(bucket) scan + enumerator allocation
+        // dominated the render thread). Kept in sync O(1) on add (DrainRenderReady) and swap-removal on
+        // evict (UnloadChunk) via ChunkRenderData.RenderListIndex. Only the main thread touches this list
+        // — the mesh thread looks chunks up through RenderData directly.
         public readonly List<ChunkRenderData> RenderList = new List<ChunkRenderData>();
 
         public readonly Dictionary<int, Entity> Entities = new Dictionary<int, Entity>();
@@ -248,13 +247,12 @@ namespace MinecraftClone3API.Client.Blocks
             _applyThread = new Thread(ApplyThread) {Name = "Client Apply Thread", IsBackground = true};
             _applyThread.Start();
 
-            // Meshing is the chunk-pipeline bottleneck (an F10 trace showed chunks spending ~99% of their
-            // load latency waiting in the mesh queue, the single mesh thread pegged at 100%). It is
-            // embarrassingly parallel: workers mesh distinct chunks (the _meshPending claim under _meshLock
-            // guarantees no two take the same one), read chunk storage without writing (copy-on-grow
-            // tolerates concurrent readers — Invariant 5), and only hand finished meshes to the main-thread
-            // GPU upload (Invariant 1), so a pool scales throughput ~linearly with cores. Leave two cores for
-            // the main (render) and server load threads.
+            // Meshing is the chunk-pipeline bottleneck (chunks spend nearly all their load latency waiting in
+            // the mesh queue). It is embarrassingly parallel: workers mesh distinct chunks (the _meshPending
+            // claim under _meshLock guarantees no two take the same one), read chunk storage without writing
+            // (copy-on-grow tolerates concurrent readers — Invariant 5), and only hand finished meshes to the
+            // main-thread GPU upload (Invariant 1), so a pool scales throughput ~linearly with cores. Leave
+            // two cores for the main (render) and server load threads.
             var meshWorkers = Math.Max(1, Environment.ProcessorCount - 2);
             // Reserve a fraction of the pool as LOD-first workers so the distant horizon can never be fully
             // starved by chunk meshing. The chunk-first workers still treat LOD as lowest priority (near terrain
@@ -291,9 +289,9 @@ namespace MinecraftClone3API.Client.Blocks
 
             _phaseTimer.Restart();
             // Upload meshed chunks until a per-frame time budget is spent, then leave the rest queued. The
-            // mesh pool produces chunks far faster than one frame can upload, so a fixed count-per-frame
-            // throttled the fill; the budget drains as many as fit in a few ms (uploads are cheap) and bounds
-            // the frame cost. Each queued position is dequeued at most once per frame.
+            // mesh pool produces chunks far faster than one frame can upload, so the budget drains as many as
+            // fit in a few ms (uploads are cheap) and bounds the frame cost rather than throttling the fill to
+            // a fixed count. Each queued position is dequeued at most once per frame.
             var uploadDeadline = Stopwatch.GetTimestamp() + UploadBudgetTicks;
             var requeue = _uploadRequeueScratch;
             requeue.Clear();
@@ -318,7 +316,7 @@ namespace MinecraftClone3API.Client.Blocks
                 // TryUpload never blocks: if the mesh thread is mid-remesh of this chunk (holding its VAO
                 // locks) it returns false; collect it and requeue *after* the loop so it retries a later
                 // frame (never re-dequeued this frame) instead of the render thread stalling on the remesh
-                // lock. That blocking wait was the per-edit frame-time spike. See ChunkRenderData.TryUpload.
+                // lock (which would spike frame time on every edit). See ChunkRenderData.TryUpload.
                 if (RenderData.TryGetValue(pos, out var renderData))
                 {
                     if (renderData.TryUpload(OpaqueArena))

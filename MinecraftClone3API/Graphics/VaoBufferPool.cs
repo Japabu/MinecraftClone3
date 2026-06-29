@@ -9,14 +9,14 @@ namespace MinecraftClone3API.Graphics
     /// of lists in <see cref="VertexArrayObject.Add"/> (first vertex) and returns them in
     /// <see cref="VertexArrayObject.Clear"/> once the data has been uploaded to the GPU on the main
     /// thread; distinct chunks mesh and upload concurrently, so the bags are thread-safe. Without
-    /// this, every remesh newed six capacity-1024 lists, which a trace flagged as the mesh thread's
-    /// steady-state allocator under editing and streaming.
+    /// this, every remesh would new six capacity-1024 lists — the mesh thread's steady-state allocator
+    /// under editing and streaming.
     /// </summary>
     internal static class VaoBufferPool
     {
         // Pre-sized to a typical surface chunk's vertex count so a freshly-allocated burst list (when the pool
-        // is drained under heavy streaming) doesn't grow 1024→2048→…→8192, discarding every intermediate array
-        // — that doubling churn was the mesh thread's per-burst allocation spike (tens of MB/frame → GC hitch).
+        // is drained under heavy streaming) doesn't grow 1024→2048→…→8192, discarding every intermediate array;
+        // that doubling churn is a mesh-thread per-burst allocation spike.
         private const int InitialCapacity = 6144;
 
         private static readonly ConcurrentBag<List<Vector3D<float>>> Vector3Lists = new ConcurrentBag<List<Vector3D<float>>>();

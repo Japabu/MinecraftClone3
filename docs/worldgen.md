@@ -13,7 +13,7 @@ plugin adds a biome or feature by registering one — no Vanilla edits.
                      │
                      ▼ CreateGenerator(seed)
    IChunkGenerator ── NoiseChunkGenerator (the reusable noise generator)
-   - Generate(CachedChunk, pos)        - SeaLevel=8, BedrockY=-32, WorldTop=96, MinChunkY=-2..MaxChunkY=6
+   - Generate(CachedChunk, pos)        - SeaLevel=8, BedrockY=-32, WorldTop=96 (Min/MaxChunkY derived, ≈-2..6)
    - Spawn(), Min/MaxChunkY            - seeded OpenSimplexNoise per field (continental/hills/peaks/temp/humidity)
         uses ▶ BiomeSource (ClimateBiomeSource: nearest biome in temp/humidity Voronoi)
         uses ▶ List<Carver>  (NoiseCaveCarver: 3D-noise spaghetti caves)
@@ -30,7 +30,7 @@ the block registries; `PluginContext.Register(Biome|Feature|Dimension)` prefixes
 every biome tagged `Vanilla:Overworld`, so a plugin biome auto-participates.
 
 **Per-chunk pipeline (`NoiseChunkGenerator.Generate`, no neighbour block reads):**
-1. **Biome + surface-height map** for the chunk's 16×16 columns (reused scratch). Biome is climate
+1. **Biome + surface-height map** for the chunk's 16×16 columns (per-thread `ThreadLocal` scratch). Biome is climate
    (temp/humidity Voronoi) for land, with **height-derived overrides**: base height well below sea → Ocean,
    shoreline band → Beach. Surface height = base noise + **blended** `HeightBias` + peaks·**blended**
    `HeightVariation`: `SurfaceHeight` bilinearly interpolates the four surrounding biomes' `HeightBias`/
@@ -47,18 +47,20 @@ every biome tagged `Vanilla:Overworld`, so a plugin biome auto-participates.
    stay unstreamed).
 7. **Decoration** — for the chunk and each origin in a **±1-chunk XZ margin**, seed a `WorldGenRandom` from
    `(seed, originChunk, feature.Salt)` and run the dimension's shared features (ores) then the origin's
-   centre-biome features (trees + ground cover) for each `DecorationStep` (Ores, Vegetation). Ground cover is
-   `PatchFeature` — scatters a single-block plant (grass tuft/fern/flower) in small clusters on exposed grass
-   columns above sea level; reach is bounded by the patch radius so it stays inside the margin. Features emit in **absolute
-   coordinates through `IChunkGenRegion`, which clips writes to the chunk being generated** — so a tree or
-   vein straddling a border is computed identically by both chunks (Minecraft's population-seed model) with
-   **no neighbour writes**. Recomputed per vertical chunk too (the RNG is Y-independent), so a feature
-   crossing a vertical boundary is stamped consistently.
+   centre-biome features (trees, plus `PatchFeature` ground cover — scattered single-block plants on exposed
+   grass) for each `DecorationStep` (Ores, Vegetation). Features emit in **absolute coordinates through
+   `IChunkGenRegion`, which clips writes to the chunk being generated** — so a tree or vein straddling a border
+   is computed identically by both chunks (Minecraft's population-seed model) with **no neighbour writes**.
+   Recomputed per vertical chunk too (the RNG is Y-independent), so a feature crossing a vertical boundary is
+   stamped consistently.
 
 **Determinism & threading.** Seeds are **process-stable**: `OpenSimplexNoise` is a seeded instance
 (Fisher–Yates perm from a SplitMix64 stream), `WorldGenRandom` is a struct SplitMix64 PRNG, and
 `Feature.Salt` is an **FNV-1a** hash of the registry key (never `string.GetHashCode`, which is per-run
-randomized). `Generate` runs only on the server **LoadThread** (single writer — Invariant 5). The **seed
+randomized). `Generate` is pure/thread-safe and the server **LoadThread fans a batch across cores**
+(`Parallel.ForEach`, bounded to `ProcessorCount - 2`) — each task gets per-thread `ThreadLocal` scratch and
+its only writes land in a distinct fresh chunk, so `PaletteStorage`'s per-container single-writer rule
+(Invariant 5) still holds. The **seed
 persists** to each world's `level.dat`; both call sites construct `new WorldServer(long seed, string
 worldDir)` — `StateWorld` SP with `WorldInfo.Seed`/`Directory`, `MinecraftClone3Server` via
 `WorldMetadata.LoadOrCreate`. `WorldServer` owns a per-instance `WorldSerializer(worldDir)` (safe: exactly

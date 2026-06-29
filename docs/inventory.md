@@ -20,8 +20,8 @@ others.
   right-click action (e.g. Vanilla's `ItemSpawnEgg` spawns a creature — see [entities.md](entities.md));
   right-clicking a usable item sends a `UseItemRequestPacket`. `CanUseServer(player)` gates whether the action
   may run (default true) and `ConsumesOnUse` (default false) decrements one from the held stack on success.
-  This is the **food** path: Vanilla's `ItemFood` (Apple — MC nutrition 4 / saturation modifier 0.3) is usable,
-  consumes-on-use, and `CanUseServer` only true in survival with hunger to refill;
+  This is the **food** path: Vanilla's `ItemFood` (the whole food set — e.g. Apple, MC nutrition 4 / saturation
+  modifier 0.3) is usable, consumes-on-use, and `CanUseServer` only true in survival with hunger to refill;
   `ServerNetwork.ApplyUseRequest` checks `CanUseServer`, runs `OnUseServer` (`PlayerSurvival.Eat`), then
   decrements the slot and re-pushes `InventoryState`. Right-click already routes here, so no new packet.
   `Item` also carries combat/equip data: `AttackDamage` (melee damage left-clicking an entity — default
@@ -42,7 +42,7 @@ others.
   log/leaf → Natural, glass → Coloured, containers → Functional; otherwise Building), and an inline block sets it
   explicitly at registration. `ItemBlock` inherits its block's tab. See the creative screen under Rendering.
 - **Standalone items** subclass `Item` (e.g. Vanilla's `ItemSimple` — stick, coal, ingots, diamond; `ItemFood`
-  — apple): no block, a 2D sprite, not placeable.
+  — the food set, e.g. apple/bread/cooked meats): no block, a 2D sprite, not placeable.
 - **`ItemRegistry`** (`Util/ItemRegistry.cs`) — parallels `BlockRegistry` but with its **own id space** (item
   ids travel only in inventory packets, never in chunk storage). Id 0 is the empty stack; real items start at
   1. Ids are assigned in registration order, deterministic for a fixed plugin set. `GameRegistry` exposes
@@ -98,8 +98,7 @@ resource pack's `lang/*.json` (see [resources.md](resources.md)) — there is no
 ## Furnace (a server-authoritative container block)
 
 Unlike the crafting table (a purely client-side scratch grid), a furnace has **persistent, server-owned state**
-that **ticks even with the screen closed** — so it's the engine's first *block entity* and first *networked
-container*. The pieces:
+that **ticks even with the screen closed** — so it is a *block entity* and a *networked container*. The pieces:
 
 - **State** — `BlockDataFurnace` (`VanillaPlugin/BlockDatas/`) is a `ContainerBlockData`
   (`Blocks/ContainerBlockData.cs`): facing + three `ItemStack` slots (input/fuel/output) + burn/cook counters,
@@ -132,7 +131,7 @@ block is set to air) dumps every stored stack — and it **renders as a block en
 chunk-mesh cube; see [rendering.md](rendering.md)) via `Block.RendersAsBlockEntity` + `BlockEntityModelPath`/
 `BlockEntityTexturePath`. The crafting recipe loads from the pack by `MinecraftId = "minecraft:chest"`.
 
-**Right-click interaction.** `Block.OnActivated(window, world, pos, player)` (default false) lets a block
+**Right-click interaction.** `Block.OnActivated(world, blockPos, player)` (default false) lets a block
 handle a right-click (and suppress placing the held item). It is **client-only** — `PlayerController` calls it
 before `PlaceBlock`; the headless server never does — so a block may open a GUI there (`BlockCraftingTable`,
 `BlockFurnace`, `BlockChest`).
@@ -175,21 +174,22 @@ and result agree) drives both the in-slot counts and the reduced count shown on 
 
 The server owns the inventory; the flow is in [networking.md](networking.md) (`InventoryState` /
 `InventoryAction` / `HeldSlot`). On login `ServerNetwork` loads the player's saved inventory or seeds a creative
-default (`SeedCreativeInventory` — the first nine placeable block items across the hotbar) and sends it as
-`InventoryState`. `ClientSession.Inventory` is saved (`<worldDir>/Players/<name>.dat`) on disconnect and stop.
+default (`SeedCreativeInventory` — fills the hotbar with usable items first, then placeable blocks) and sends
+it as `InventoryState`. `ClientSession.Inventory` is saved (`<worldDir>/Players/<name>.dat`) on disconnect and stop.
 
 `WorldClient` keeps a local `Inventory` replica, copies the `InventoryState` it receives slot-by-slot, edits
 optimistically, and sends `InventoryAction` / `HeldSlot` on changes. Inputs are trusted, not validated
 (creative sandbox) — same stance as placement metadata.
 
-> The `Login` packet carries the player name as the save key; the client currently sends an empty name, so a
-> singleplayer world saves to `Players/player.dat`. Distinct per-player MP inventories need real player names.
+The `Login` packet carries the player name as the save key: singleplayer sends `"Player"` (saving to
+`Players/Player.dat`), multiplayer sends `PlayerSettings.Name`, so MP keys each player's save by their own
+name.
 
 ## Rendering
 
 - **3D isometric block icons** (`Client/Graphics/ItemIconRenderer.cs`) — each block is meshed once into the
-  void `IconWorld` and drawn with the `ItemIcon` shader into a per-block `TextureFramebuffer`, cached by block
-  id. Main-thread only. The same forward path also renders the creative inventory's **player paperdoll**
+  void `IconWorld` and drawn with the `ItemIcon` shader into a per-block `Texture` (an rgba8unorm colour
+  target with its own reverse-Z depth), cached by block id. Main-thread only. The same forward path also renders the creative inventory's **player paperdoll**
   (`ItemIconRenderer.RenderPlayer` → `EntityRenderer.BuildPlayerIconMesh` — the player box model + worn armor,
   drawn through a taller full-body camera). The paperdoll re-renders every frame into one persistent target so
   it can **follow the cursor** (body yaw + head yaw/pitch from the mouse offset, like vanilla).
@@ -240,6 +240,6 @@ The Inventory key (**E**) opens `GuiCreativeInventory` in creative, `GuiInventor
 (`StateWorld.Update`).
 
 **HUD/GUI sprite layout.** A current resource pack (1.20.2+) uses **individual sprite PNGs** under
-`gui/sprites/hud/…` and `gui/sprites/…` rather than the old monolithic `widgets.png`/`icons.png`. `GuiAssets`
-holds the per-sprite asset paths (hotbar, hotbar selection, hearts, food); each is loaded lazily and null-guarded
-so a missing pack falls back to placeholder drawing.
+`gui/sprites/hud/…` and `gui/sprites/…`. `GuiAssets` holds the per-sprite asset paths (hotbar, hotbar
+selection, hearts, food); each is loaded lazily and null-guarded so a missing pack falls back to placeholder
+drawing.

@@ -15,7 +15,6 @@ namespace VanillaPlugin
     {
         public void LoadResources(PluginContext context)
         {
-            //System.Threading.Thread.Sleep(4000);
         }
 
         public void PreLoad(PluginContext context)

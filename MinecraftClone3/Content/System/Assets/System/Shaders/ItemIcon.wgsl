@@ -1,6 +1,6 @@
 // Renders a single block's chunk-format mesh into an off-screen inventory icon. Same packed vertex layout as
 // WorldGeometry, but forward-shaded with a fixed per-face brightness (no G-buffer, no world light) for the
-// Minecraft isometric look. Ported from ItemIcon.vs/.fs.
+// Minecraft isometric look.
 
 struct IconFrame {
     view: mat4x4<f32>,

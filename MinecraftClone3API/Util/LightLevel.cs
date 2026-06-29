@@ -3,10 +3,9 @@ using Silk.NET.Maths;
 
 namespace MinecraftClone3API.Util
 {
+    /// <summary>Packs three 0..31 light channels into a ushort: R = bits 0-4, G = bits 5-9, B = bits 10-14.</summary>
     public struct LightLevel
     {
-        //Encodes light levels from 0-31 to a ushort BGR
-
         public const int Max = 31;
 
         // Full sky-light level. Sky is stored in its own 0..15 container (not in this BGR struct); the

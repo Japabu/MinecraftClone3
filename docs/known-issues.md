@@ -3,11 +3,9 @@
 This list is for *open* work only — when an item is resolved, delete it or move its rationale into the
 relevant permanent doc. Not a changelog.
 
-- **WebGPU renderer — matches the GL renderer's image closely; a few overlay features aren't ported yet.**
-  The GL→WebGPU (Silk.NET.WebGPU) migration runs on Metal and was diffed against the OpenGL `master` build
-  with a seeded benchmark fly-through (10 frames/scene, same camera path): **the sky is pixel-identical** and
-  terrain/water/shadows are within a few percent. The world is composited in display (gamma) space and the
-  present pass just clamps to [0,1] — no tonemap curve and no gamma re-encode — to match the GL output exactly.
+- **WebGPU/Metal renderer — a few overlay features aren't done yet.**
+  The world is composited in display (gamma) space and the present pass just clamps to [0,1] — no tonemap curve
+  and no gamma re-encode.
   Reverse-Z reconstruction (`PositionFromDepth` in Composition/ShadowResolve) negates ndc.y vs the uv basis and
   addresses the depth texel from uv (not the fragment's framebuffer position — wrong in the half-res shadow
   pass); the sky ray is rebuilt from two inverse-projection points (not a camera-relative single point). Open:
@@ -15,20 +13,19 @@ relevant permanent doc. Not a changelog.
     The 4 side planes — which do the real chunk culling — are correct; near/far are approximate and, under the
     infinite-far projection, the far plane is a no-op (distance is bounded by the cull compute's `maxDistance`).
     Harmless for chunk culling; tighten if a near-camera clip artifact ever shows.
-  - **Off-thread chunk upload is NOT done (migration level-up 3, deferred).** `ChunkRenderData` creation +
-    `GpuBuffer` upload still run on the main thread; the WebGPU queue is thread-safe, so moving meshing→upload
-    onto the mesh pool is the remaining performance level-up. `docs/threading.md` Invariants 1 & 2 still
-    describe the main-thread model.
-  - **GPU pass timing + GPU-culled draw counts read 0 (dev tooling, migration level-up M7 deferred).**
+  - **Off-thread chunk upload is not done.** `ChunkRenderData` creation + `GpuBuffer` upload run on the main
+    thread; the WebGPU queue is thread-safe, so moving meshing→upload onto the mesh pool is the remaining
+    performance level-up. `docs/threading.md` Invariants 1 & 2 describe the main-thread model.
+  - **GPU pass timing + GPU-culled draw counts read 0.**
     `GpuTimers` is a no-op, so the F3 `gpu … ms` field and the profiler/benchmark `gpuMs`/`shadowMs`/`geomMs`/
     `compMs` columns are 0 (needs WebGPU timestamp-query `timestampWrites`, feature-gated). The F3 `chunks drawn`
     / `lod drawn` numerators are 0 because the GPU cull compute owns the post-cull count with no CPU readback
     (the CPU visible set is intentionally gone under GPU-driven culling — would need a count buffer map-back).
-    The profiler CSV `gapMs` column is also 0 (the inter-frame gap timer wasn't carried onto the Silk loop).
+    The profiler CSV `gapMs` column is 0 (no inter-frame gap timer on the current loop).
     Gameplay/visuals are unaffected; `docs/profiling.md` documents the current 0 state.
-  - **16× anisotropic block-atlas filtering is dropped** — WebGPU forbids combining nearest-magnification (the
-    crisp pixel-art look) with hardware anisotropy, so the block sampler keeps trilinear mips but no aniso;
-    grazing-angle distant terrain is slightly blurrier than the GL build. Intrinsic platform trade-off.
+  - **The block sampler has no anisotropy** — WebGPU forbids combining nearest-magnification (the crisp
+    pixel-art look) with hardware anisotropy, so the block sampler uses trilinear mips with no aniso;
+    grazing-angle distant terrain is slightly blurry. Intrinsic platform trade-off.
   - **Deliberate, not defects** (don't "fix"): the `Gpu` static facade (global device access, single-threaded
     init) and the split where Core uses literal Silk types while Client/exe keep readability aliases
     (`Vector3`, `Matrix4`, …) — both documented in-code.
@@ -38,24 +35,18 @@ relevant permanent doc. Not a changelog.
   block-atlas mip chain. Leaf textures are high-frequency cutouts, so every mip level looks meaningfully
   different (in both alpha *and* colour); at distance perspective compresses each mip-transition blend into
   ~1 screen pixel, so the chain reads as hard concentric rings ("cubes") centred on the camera that slide as
-  you move. **This is not a migration regression** — GL `master` shows it too (its 16× anisotropy reduces but
-  doesn't remove it), and disabling mips entirely (sampling mip 0) is the only thing that fully kills it.
-  - Ruled out by testing: the `fwidth` median-preserving alpha test (already in `WorldGeometry.wgsl`) only
-    sharpens the *edge*, not the per-level drift. Coverage-preserving mips (Castaño / DirectXTex
-    `ScaleMipMapsAlphaForCoverage`) can't hold coverage on a 16px texture — after one box-downsample it has
-    only ~5 distinct alpha values, so coverage lands in coarse ±0.1 steps and the seam persists. Anisotropy
-    is both forbidden by WebGPU under nearest-magnification *and* insufficient (master has it and still seams).
-    Freezing only the alpha *test* to mip 0 (mipped colour) still seams — so the colour mip chain contributes,
-    not just the alpha.
-  - The known-good workaround (built, verified, then reverted pending a proper fix): tag cutout faces with a
-    per-vertex bit and sample them at **mip 0** for colour *and* alpha, leaving solid terrain on the full mip
-    chain. That removes the seams (it's effectively "mipmapped leaves off", à la Minecraft) at the cost of no
-    minification AA on leaves — faint edge shimmer on distant canopy in motion.
+  you move. Disabling mips entirely (sampling mip 0) is the only thing that fully kills it. The `fwidth`
+  median-preserving alpha test (in `WorldGeometry.wgsl`) only sharpens the *edge*, not the per-level drift, and
+  freezing just the alpha *test* to mip 0 over mipped colour still seams — so the colour mip chain contributes,
+  not only the alpha.
+  - A per-vertex cutout bit sampling colour *and* alpha at **mip 0** (leaving solid terrain on the full mip
+    chain) would remove the seams — effectively "mipmapped leaves off", à la Minecraft — at the cost of no
+    minification AA on leaves (faint edge shimmer on distant canopy in motion).
   - The elegant fixes all need an AA pass the deferred renderer doesn't have yet: **hashed alpha testing**
-    (Wyman/McGuire) denoised by **TAA**, or **MSAA alpha-to-coverage** (needs a multisampled target — costly
-    in deferred), or brute-force **SSAA** (supersample + downsample, which also preserves the crisp pixel-art
-    look). Revisit when an AA/temporal pass lands (see the dropped-anisotropy note above); until then leaves
-    keep the plain trilinear+`fwidth` path and the seam is accepted.
+    (Wyman/McGuire) denoised by **TAA**, **MSAA alpha-to-coverage** (needs a multisampled target — costly in
+    deferred), or brute-force **SSAA** (supersample + downsample, also preserving the crisp pixel-art look).
+    Revisit when an AA/temporal pass lands; until then leaves keep the plain trilinear+`fwidth` path and the
+    seam is accepted.
 - **Benchmark screenshots omit the HUD.** `Screenshot` reads the HDR scene target, which is captured *before*
   `Renderer.EndFrame` tonemaps it to the surface and flushes the GUI (`GuiBatch`) over it — so the hotbar,
   crosshair, REC indicator and other overlays are on screen but not in the PNG. Capturing them needs the
@@ -67,25 +58,25 @@ relevant permanent doc. Not a changelog.
   and no nether-specific mobs — ambient spawning is dimension-gated, so the Nether simply has no ambient spawns
   until nether mobs exist); the portal renders the pack's real axis-oriented thin pane and animates (via the
   shared block-texture animator), and travel charges up over ~4 s in survival (near-instant in creative) with a
-  thickening on-screen portal tint plus a nausea screen-warp; lava now deals contact damage but is still a **pass-through fluid** (no flow,
+  thickening on-screen portal tint plus a nausea screen-warp; lava deals contact damage but is still a **pass-through fluid** (no flow,
   no fire aftereffect). A round trip reconnects to the original portal when one exists within the search box
-  (`SearchExtent`, 16 horizontal × 48 vertical) — the transfer now waits for that whole region to generate before
-  searching, so it no longer builds a duplicate against not-yet-loaded chunks; beyond the search box (a far first
-  trip) it builds a fresh portal at the scaled floor, which may be far from where you left. Portal validity is
+  (`SearchExtent`, 16 horizontal × 48 vertical) — the transfer waits for that whole region to generate before
+  searching, so it reuses the existing portal rather than building a duplicate against not-yet-loaded chunks;
+  beyond the search box (a far first trip) it builds a fresh portal at the scaled floor, which may be far from
+  where you left. Portal validity is
   checked on neighbour change (not polled), so a frame broken while the *portal's own* chunk is unloaded won't
   self-collapse until something next changes a block beside it once that chunk reloads — a narrow edge that
   self-corrects on the next interaction (the orphaned pane still works meanwhile).
 - **Dimension transfer briefly stalls the client.** `WorldClient.ResetForDimensionChange` parks the apply
   thread and tears the whole cached world down on the main thread (reusing the eviction paths), so the
-  transfer frame can hitch by up to the apply-thread park latency (~50 ms) plus the teardown. One-time per
-  portal trip; accepted.
+  transfer frame can hitch by up to the apply-thread wait interval (`_applySignal.WaitOne`) plus the teardown.
+  One-time per portal trip; accepted.
 
 - **Player physics is the "80%" walk model.** Implemented: gravity, jump, swept per-axis AABB collision, Ctrl
   sprint, walk/fly toggle, auto-step up `StepHeight` (0.6 = MC) ledges, non-cube collision (multi-box
   `GetCollisionBoxes`, used by stairs). **Not** implemented: sprint-jump forward boost, sneaking, per-block
   slipperiness (no ice/slime blocks exist), and **collision for creative flight** (flight is deliberately
-  noclip). The move-then-apply-gravity ordering matches MC and is settled (see the comment in
-  `PlayerPhysics.Tick`).
+  noclip). The move-then-apply-gravity ordering matches MC (see the comment in `PlayerPhysics.Tick`).
 - **Stairs are the "straight, 80%" stair.** `VanillaPlugin/Blocks/BlockStairs.cs` (`Vanilla:OakStairs`) uses
   the real `minecraft:block/oak_stairs` model; orientation (facing bits 0-1, top-half bit 2) is a mesh-time
   `GetModelTransform` rotation + matching multi-box L collision. Deferred/accepted: **no corner (inner/outer)
@@ -110,8 +101,8 @@ relevant permanent doc. Not a changelog.
   cross-fade at the render-distance seam. See [rendering.md](rendering.md), [networking.md](networking.md),
   [worldgen.md](worldgen.md), [threading.md](threading.md). Residual edges:
   - **LOD throughput while moving — meshing is solved; gen/alloc is the remaining cost.** Reserved *LOD-first*
-    mesh workers keep the visible horizon meshed even while cruising far out with a big render distance (peak
-    visible-unmeshed ~3% in the far+heavy benchmark). What's still stride-2-driven: the store is stride-2
+    mesh workers keep the visible horizon meshed even while cruising far out at a big render distance. What's
+    still stride-2-driven: the store is stride-2
     (finest LOD = nearest ring), ~4× the column data of stride-4 → ~3× the allocation, **and** the server
     `FillLodRegion` does the full 4096-column noise even for a region that meshes away to stride-16 — so fast
     movement churns Gen2 GC / wasted gen. The clean fix is a **variable-resolution store**: generate near
@@ -152,22 +143,20 @@ relevant permanent doc. Not a changelog.
   chunks re-runs the attempts before clipping) — bounded by the local surface-height gate; a tighter per-step
   Y gate is a possible optimization. Ore/`SurfaceHeight` recompute inside the carver/features duplicates
   per-column noise — background cost, not yet memoized.
-- **Single active dimension.** `WorldServer` binds one dimension (`Vanilla:Overworld`); multi-dimension travel
-  and per-chunk dimension metadata in saves are deferred. The generator's column scratch assumes the single
-  LoadThread writer (Invariant 5).
 - **Resident-chunk growth from the vertical band.** `TerrainRadius` (10) × the full `MinChunkY..MaxChunkY`
-  (9 chunks) is a much larger loaded set than the old thin surface slab; the `UnloadThread` still evicts idle
-  chunks but the working set is bigger. Tune `TerrainRadius`/`ChunkLifetime` if memory matters.
-- **Sun shadows are one low-res map capped at `ShadowDistance` (160).** A single map covers
-  `[ShadowNear, ShadowDistance]` (= `RenderDistance`) and fades at the edge. Low-res is the deliberate default
-  (soft shadows, `ShadowMapSize` 1024). Raising `ShadowMapSize` (sharper) or `ShadowDistance` (more coverage,
+  (9 chunks) is a large resident set; the `UnloadThread` evicts idle chunks. Tune
+  `TerrainRadius`/`ChunkLifetime` if memory matters.
+- **Sun shadows are one low-res map capped at `ShadowDistance`.** A single map covers
+  `[ShadowNear, ShadowDistance]` (= `RenderDistance`) and fades at the edge. `ShadowDistance` and `ShadowMapSize`
+  are 3-way `GraphicsSettings.ShadowQuality` presets (Low 96/512, Medium 160/1024 default, High 256/2048); a
+  low-res map is the deliberate default for soft shadows. Raising `ShadowMapSize` (sharper) or `ShadowDistance` (more coverage,
   coarser texels) trades one for the other; a much larger distance would want a warped map or cascades to keep
   near detail, but CSM was deliberately removed and isn't coming back. Bias is a scene/driver-dependent
   tradeoff (`NormalBias`/`DepthBias` in `ShadowResolve.wgsl`,
   `ShadowStrength`/`ShadowSoftness`/`ShadowCasterExtent` and the shadow-pipeline `depthBias`/`slopeScale` in
   `WorldRenderer`) — may need a pass per backend. **`ShadowMapSize` (C#) and the `ShadowTexel` constant
   (`ShadowResolve.wgsl`) must change together.**
-- **The shadow depth pass is a fixed per-frame cost, except it's now skipped in caves.** It redraws all
+- **The shadow depth pass is a fixed per-frame cost, skipped only in caves.** It redraws all
   in-range opaque geometry from the sun's POV every frame regardless of window size, so it hits hardest at
   *low* framerate headroom, not specifically at fullscreen. **Gated on `_anyShadowReceiver`** (a visible
   sky-exposed chunk within `ShadowDistance`), so it's skipped deep in a cave; above ground it can't be
@@ -193,16 +182,16 @@ relevant permanent doc. Not a changelog.
 - **`PaletteStorage.IndexOf`/`Set` is a linear palette scan.** Fine for block ids (few distinct values) but a
   chunk with a large light palette (smooth RGB near a torch) pays O(palette) per `Set` on the light thread. A
   reverse `value→index` lookup built per grown snapshot would make it O(1) — deferred, background cost.
-- **Pathological all-distinct chunks store slightly more than dense.** A chunk with hundreds–thousands of
-  distinct values grows `bitsPerEntry` toward 12 and the palette toward 4096, so worst case (~14 KB) exceeds
-  the old 8 KB dense — but this never occurs in practice. No fallback-to-dense is implemented.
+- **Pathological all-distinct chunks store slightly more than a dense array would.** A chunk with hundreds–
+  thousands of distinct values grows `bitsPerEntry` toward 12 and the palette toward 4096 (~14 KB worst case),
+  but this never occurs in practice. No fallback-to-dense is implemented.
 - **`PaletteStorage.Read` doesn't validate entries are `< paletteCount`.** A packed index `≥ count` (only from
   corrupt/buggy-server bytes) would index `_palette` out of range in `Get`, thrown later on the mesh/main
   thread. The disk path fail-safes (try/catch → regenerate) and the TCP decode is wrapped in the apply
   thread's try/catch, but a *post-decode* `Get` throw is not guarded. Left unfixed deliberately: it can't fire
   in normal operation, validating would branch the per-block `Get` hot path, and a genuine palette bug should
   surface loudly.
-- **Meshing throughput is the chunk-fill cost — now parallelized, two amplifiers remain.** The mesh stage is a
+- **Meshing throughput is the chunk-fill cost — parallelized across a worker pool, two amplifiers remain.** The mesh stage is a
   **worker pool** (`Environment.ProcessorCount-2`, ≥1) draining the shared queue (one chunk per worker via the
   `_meshPending` claim, read-only chunk access, GL on the main thread). Two amplifiers deferred: (1) a single
   edit (or each newly-applied chunk during streaming) **full-remeshes the chunk plus up to six face
@@ -227,17 +216,21 @@ relevant permanent doc. Not a changelog.
   client. `WorldClient.GetSkyLight` returns `LightLevel.SkyMax` for any unloaded chunk. Side effect: the
   bottom face of a block whose neighbour chunk is merely *not-yet-loaded* briefly samples 15 until that chunk
   streams in.
+- **Block-light spread BFS has a suspected edge-case at the empty-chunk guard.** `WorldServer.UpdateLightValues`
+  bails on `LightChunkEmpty(nextNode)` during the spread; this guard is not fully verified and may drop or
+  mis-propagate light across a freshly-emptied chunk boundary. Not yet diagnosed.
+- **Smooth lighting is always on; there is no graphics-option toggle for it.** The mesher always applies the
+  smooth-lighting / AO brightness curve; a per-player flat-lighting option is not wired up.
 - `StateWorld` connects synchronously on the main thread; a far/unreachable MP host briefly blocks.
 - `ClientSession.SentChunks` shrinks only on `ChunkRelease`/dirty resend, so a misbehaving or crashed client
   could leave stale entries until it disconnects. Bounded in practice by client `CacheDistance` eviction;
   would need a server-side cap/timeout for hardening.
-- **Player identity has no in-game name UI, and inventory edits are unvalidated.** The login name is now plumbed
-  end-to-end (`PlayerSettings.Name` → `Login` packet → per-name `Players/<name>.dat`), so distinct MP inventories
-  work — but the name defaults to `"Player"` and is only changeable by editing `PlayerSettings.json` (no
-  name-entry screen yet), so two unconfigured clients still collide. A connect-screen name field (or an
-  OS-username default) is the follow-up. Inventory edits are also **unvalidated** (creative sandbox) — the
-  server stores whatever `InventoryAction`/`HeldSlot` sends beyond a slot-range clamp, same trust model as
-  placement.
+- **Player identity has no in-game name UI, and inventory edits are unvalidated.** The login name
+  (`PlayerSettings.Name` → `Login` packet → per-name `Players/<name>.dat`) defaults to `"Player"` and is only
+  changeable by editing `PlayerSettings.json` — there is no name-entry screen, so two unconfigured clients
+  collide. A connect-screen name field (or an OS-username default) is the follow-up. Inventory edits are also
+  **unvalidated** (creative sandbox) — the server stores whatever `InventoryAction`/`HeldSlot` sends beyond a
+  slot-range clamp, same trust model as placement.
 - **Inventory is creative-only; crafting is client-trusted.** Items are first-class (`Item`/`ItemBlock`
   registry, standalone items), recipes are loaded from the pack's `data/` tree with tag resolution, and the
   3×3 crafting table has full vanilla slot interaction (pick/place/split/drag) — see [inventory.md](inventory.md).

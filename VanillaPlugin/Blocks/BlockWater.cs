@@ -10,8 +10,7 @@ namespace VanillaPlugin.Blocks
     /// a minimal Vanilla cube model that references the real <c>minecraft:block/water_still</c> texture.
     /// That texture is a grey tint-mask (vanilla multiplies it by a per-biome water colour); we apply the
     /// vanilla default water blue via the model's tintindex 0. Rendered translucent (the texture carries
-    /// the alpha); you can swim/see through it and it isn't targetable. The animated surface / reflections
-    /// are a deliberate later step — see CLAUDE.md.
+    /// the alpha); you can swim/see through it and it isn't targetable.
     /// </summary>
     internal class BlockWater : Block
     {

@@ -28,13 +28,13 @@ strip would land in the square texture array mismapped.
 renderer), and `water_still.png` is a grey **tint-mask**. So `VanillaPlugin` authors a minimal cube model
 (`Vanilla/Models/Water.json`, parent `System/Models/Block`) referencing the real `minecraft:block/water_still`
 texture with `tintindex 0`, and `BlockWater` returns the vanilla default water blue from `GetTintColor` (the
-mesher drops tint *alpha*, so translucency comes from the texture's own alpha, ~0.7). The block is decoupled
-from its *look*: the animated surface + Fresnel sky reflection + sun specular (**Tier B**) live entirely in
-the composition shader, flagged by `BlockWater.GetRenderMaterial`. A refractive forward water pass (Tier C)
-is deferred.
+mesher drops tint *alpha*, so translucency comes from the texture's own alpha). The block is decoupled
+from its *look*: the animated surface + Fresnel sky reflection + sun specular live in the composition shader,
+flagged by `BlockWater.GetRenderMaterial` (see [rendering.md](rendering.md); deferred water work is tracked in
+[known-issues.md](known-issues.md)).
 
-Because server-side light simulation calls `Block.GetLightLevel`, **block code that runs on the server must
-not touch client/GPU/window state** (this is what crashed `BlockTorch` — it read the keyboard).
+Server-side light simulation calls `Block.GetLightLevel`, so block code reachable on the server must not
+touch client/GPU/window state.
 
 Content staging (see the two exe `.csproj` files): the `System` plugin (from `MinecraftClone3/Content/System`)
 and `VanillaPlugin` (its content + freshly built DLL under `Dlls/`) are copied next to each executable so both
@@ -66,8 +66,9 @@ and `AddResourcePack` indexes each (assets + lang only; **no `PluginInfo.json`/D
 loads without the "no info file" error).
 
 **The Vanilla plugin ships almost no models or textures** (those are Mojang-derived) — only code, its `Lang/`,
-and the handful of assets the jar genuinely lacks: the `Water.json` cube model and the Bedrock **entity geometry**
-files under `Vanilla/Models/Entity/` (mob geometry is compiled Java in the jar, not data — see
+and the handful of assets the jar genuinely lacks: the bespoke cube models the jar has no usable one for
+(`Vanilla/Models/Water.json`, `Lava.json`, `NetherPortal.json`) and the Bedrock **entity geometry** files under
+`Vanilla/Models/Entity/` (mob geometry is compiled Java in the jar, not data — see
 [entities.md](entities.md)). It references blocks by **explicit Minecraft resource locations** (`minecraft:block/stone`,
 `minecraft:block/grass_block`, …) and the engine loads the real Minecraft model JSON + PNGs from a
 user-provided pack. The vanilla model format **is** the engine's format (`parent`/`textures`

@@ -1,4 +1,4 @@
-// Half-resolution sun-shadow resolve. Ported from ShadowResolve.vs/.fs. A vertex-less fullscreen triangle
+// Half-resolution sun-shadow resolve. A vertex-less fullscreen triangle
 // (same as Tonemap.wgsl) runs a 12-tap rotated-Poisson PCF against the sun shadow map and writes a small
 // shadow buffer the composition pass depth-aware-upsamples back to full res.
 //   out.r = sun shadow factor (1 lit .. 0 shadowed)
@@ -6,18 +6,16 @@
 //
 // Reverse-Z notes (see the HARD CONTRACTS):
 //   * The camera G-buffer depth (uDepth, Depth32float) is already WebGPU clip z in [0,1]; it is used AS-IS in
-//     PositionFromDepth (NO GLSL `depth*2-1` remap). The ndc.xy is rebuilt from the fragment UV with the same
+//     PositionFromDepth (no depth*2-1 remap). The ndc.xy is rebuilt from the fragment UV with the same
 //     orientation as Tonemap.wgsl's fullscreen triangle.
 //   * The shadow map is written by ShadowDepth.wgsl under a reverse-Z light view-projection (near=1, far=0).
-//     The light projection the C# side supplies already yields clip z in [0,1], so the GLSL `p.z = lc.z/lc.w
-//     * 0.5 + 0.5` becomes just `p.z = lc.z / lc.w` (no *0.5+0.5 on z). Only p.xy maps clip [-1,1] -> uv [0,1]
+//     The light projection the C# side supplies already yields clip z in [0,1], so p.z = lc.z / lc.w directly
+//     (no *0.5+0.5 z remap). Only p.xy maps clip [-1,1] -> uv [0,1]
 //     (and uv.y is flipped because clip-space y is up while texture v is down).
 //   * The comparison sampler uses CompareFunction.Greater (GpuSamplers.ShadowCompare): a fragment is lit when
-//     its light-space depth is GREATER than the stored occluder depth. The GLSL `refDepth = p.z - DepthBias`
-//     (which biased toward the light under a LESS/[0,1] map) therefore becomes `refDepth = p.z + DepthBias`
-//     (bias away from the light keeps the same peter-panning-vs-acne tradeoff under GREATER).
-//   * The GLSL far-plane early-out `p.z > 1.0 -> return 1.0` (unshadowed) becomes the reverse-Z equivalent
-//     `p.z <= 0.0 -> return 1.0` (far = 0 under reverse-Z).
+//     its light-space depth is GREATER than the stored occluder depth, so refDepth = p.z + DepthBias biases
+//     the reference depth away from the light (the peter-panning-vs-acne tradeoff under GREATER).
+//   * Reverse-Z far plane is z=0, so the far-plane early-out is p.z <= 0.0 -> return 1.0 (unshadowed).
 
 // ----------------------------------------------------------------------------------------------------------
 // group(0) binding(0): ShadowResolveParams uniform. std140-correct layout. C# mirror MUST match exactly.
@@ -79,7 +77,7 @@ struct VsOut {
     @location(0) vTexCoord: vec2<f32>,
 };
 
-// Vertex-less fullscreen triangle — copied verbatim from Tonemap.wgsl so the image orientation matches.
+// Vertex-less fullscreen triangle with the same UV orientation as Tonemap.wgsl so G-buffer sampling lines up.
 @vertex
 fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
     var o: VsOut;
@@ -109,9 +107,9 @@ fn SampleShadow(worldPos: vec3<f32>, normal: vec3<f32>, rot: mat2x2<f32>) -> f32
     let ndc = lc.xyz / lc.w;
     // clip.xy [-1,1] -> uv [0,1], v flipped (clip y up, texture v down). z is already [0,1] (reverse-Z).
     let p = vec3<f32>(ndc.x * 0.5 + 0.5, ndc.y * -0.5 + 0.5, ndc.z);
-    if (p.z <= 0.0) { return 1.0; }   // reverse-Z far plane (= GLSL `p.z > 1.0`)
+    if (p.z <= 0.0) { return 1.0; }   // reverse-Z far plane (far = 0)
 
-    let refDepth = p.z + DepthBias;   // GREATER compare: bias away from the light (GLSL was `p.z - DepthBias`)
+    let refDepth = p.z + DepthBias;   // GREATER compare: bias the reference depth away from the light
     var sum = 0.0;
     for (var i = 0; i < 12; i = i + 1) {
         let off = rot * Poisson[i] * (params.uShadowSoftness * params.uShadowMapTexel);
@@ -143,7 +141,7 @@ fn fs_main(i: VsOut) -> @location(0) vec4<f32> {
     var shadow = 1.0;
     var viewDepth = params.uShadowDistance;
 
-    // Same early-outs as the GLSL inline path: skip the PCF where the directional sun term can't matter --
+    // Skip the PCF where the directional sun term can't matter --
     // unlit geometry (normal.w == 1), night/dusk (uSunFade ~ 0), sky-occluded surfaces (lightSample.a ~ 0),
     // and past the shadow distance. Those pixels write shadow = 1.
     if (normal.w != 1.0 && params.uShadowsEnabled > 0.5 && params.uSunFade > 0.0 && lightSample.a > 0.004) {

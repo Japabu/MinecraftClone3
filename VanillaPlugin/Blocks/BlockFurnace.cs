@@ -90,7 +90,6 @@ namespace VanillaPlugin.Blocks
             var recipe = GameRegistry.MatchSmelting(data.Slots[BlockDataFurnace.SlotInput]);
             var canSmelt = CanSmelt(data, recipe);
 
-            // Light fresh fuel only when there is something to smelt and we are not already burning.
             if (!data.IsBurning && canSmelt)
             {
                 var fuel = data.Slots[BlockDataFurnace.SlotFuel];

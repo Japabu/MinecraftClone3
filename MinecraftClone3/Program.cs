@@ -37,7 +37,7 @@ namespace MinecraftClone3
 
         private static void Main(string[] args)
         {
-            //Make exceptions be english (wtf microsoft???)
+            // Force exception messages to English regardless of the OS locale.
             System.Threading.Thread.CurrentThread.CurrentUICulture = CultureInfo.InvariantCulture;
 
             // Saved graphics options seed the window so it opens with the user's fullscreen choice; vsync is the
@@ -126,7 +126,7 @@ namespace MinecraftClone3
             var presentMs = _presentTimer.Elapsed.TotalMilliseconds;
 
             // dt is the wall-clock interval since the last render frame (catches real fps drops); frame time is
-            // EMA-smoothed so the displayed FPS doesn't jitter. GPU time is filled in by GpuTimers (M7).
+            // EMA-smoothed so the displayed FPS doesn't jitter. GPU time is currently unmeasured (0).
             RenderDebug.FrameMs = RenderDebug.FrameMs <= 0 ? dt * 1000 : RenderDebug.FrameMs * 0.92 + dt * 1000 * 0.08;
             RenderDebug.UpdateMs = _lastUpdateMs;
             RenderDebug.GpuMs = 0;

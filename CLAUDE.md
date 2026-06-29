@@ -24,15 +24,16 @@ in-process server over a loopback connection; multiplayer connects to a dedicate
 ```
 MinecraftClone3.sln
 ├── MinecraftClone3API        Core engine library — GPU-FREE (no graphics API; Silk.NET.Maths only). Server links only this.
-│   ├── Blocks/               WorldBase, WorldServer, Chunk (storage), CachedChunk, Block, LightLevel, PaletteStorage
+│   ├── Blocks/               WorldBase, WorldServer, Chunk (storage), CachedChunk, Block, PaletteStorage
 │   ├── Entities/             Entity, EntityPlayer, PlayerPhysics (NOT PlayerController — that's client input)
 │   ├── Graphics/             GPU-free CPU model/mesh data: BlockModel, BlockStateDefinition, BlockTexture,
 │   │                         TextureData, MeshBuffer, BlockTextureManager (CPU half), VaoBufferPool
 │   ├── IO/                   GamePaths, WorldManager (+WorldInfo), FileSystem*, ResourceReader (GPU-free), CommonResources
+│   ├── Items/                Item, ItemStack, ItemBlock, ItemUnknown, Inventory, CraftingRecipe, RecipeLoader, CreativeTab
 │   ├── Networking/           IConnection, Packet(s), Loopback/Tcp connections, ServerNetwork, ClientSession
 │   ├── Plugins/              PluginManager, IPlugin, PluginContext
 │   ├── WorldGen/             Dimension, Biome, Feature, Carver, BiomeSource, NoiseChunkGenerator, region, RNG
-│   └── Util/                 GameRegistry, BlockRegistry, ChunkMesher, WorldSerializer, OpenSimplexNoise, Profiler, ClientFrameStats
+│   └── Util/                 GameRegistry, BlockRegistry, ChunkMesher, WorldSerializer, LightLevel, OpenSimplexNoise, Profiler, ClientFrameStats
 ├── MinecraftClone3API.Client Client renderer library (needs a GPU + window). References Core.
 │   ├── Blocks/               WorldClient (client world replica)
 │   ├── Graphics/             WorldRenderer, Renderer (frame conductor), ChunkRenderData, ChunkMeshArena + ChunkCuller
@@ -42,8 +43,8 @@ MinecraftClone3.sln
 │   │                         GpuTexture/GpuSampler, GpuShaderModule, Gpu{Render,Compute}Pipeline, bind groups, passes
 │   ├── GUI/                  GuiBase, GuiButton, GuiSlider, GuiTextInput, Font, widgets
 │   ├── StateSystem/          StateEngine, StateBase, GuiBase
-│   ├── Entities/             PlayerController (client input/camera), ClientProfiling (per-frame sampler)
-│   └── Util/                 Benchmark, Inspect
+│   ├── Entities/             PlayerController (client input/camera)
+│   └── Util/                 Benchmark, Inspect, ClientProfiling (per-frame sampler)
 ├── MinecraftClone3           Client executable (Silk.NET window + input, ~120 Hz). Owns Program + States/. Links Client.
 ├── MinecraftClone3Server     Dedicated headless server executable (no GPU). Links Core only.
 └── VanillaPlugin             Content plugin: blocks (Stone, Sand, OakLog, Water, ores, ...) + the Overworld
@@ -54,11 +55,11 @@ MinecraftClone3.sln
 **The Core/Client split makes the "server code must not touch the GPU" rule compiler-enforced**: Core is
 GPU-free (Silk.NET.*Maths* only, no Silk.NET.WebGPU/Windowing/Input), the WebGPU renderer lives in
 `MinecraftClone3API.Client`, and the server links only Core — so a server-reachable path that reaches for
-GPU/window state now fails to compile rather than crashing at run time. Core grants
+GPU/window state fails to compile. Core grants
 `[InternalsVisibleTo("MinecraftClone3API.Client")]` so the renderer keeps using Core internals (mesher, chunk
 codec); this is one-way (Core never sees Client, the server never gets the grant).
-Both API assemblies keep the **same root namespaces** (`MinecraftClone3API.*`, incl. `MinecraftClone3API.Graphics`
-for the model-data types that physically moved to Core) — the assembly a file lives in is decoupled from its
+Both API assemblies keep the **same root namespaces** (`MinecraftClone3API.*`, incl. the `MinecraftClone3API.Graphics`
+model-data types that live in Core) — the assembly a file lives in is decoupled from its
 namespace, so moving a file across the boundary needs no `using` changes.
 Target framework **net10.0**. `<Nullable>` and `<ImplicitUsings>` are **disabled** — write explicit `using`s
 and don't rely on nullable annotations.
@@ -96,8 +97,8 @@ the linked doc; this is the short "don't violate this" list.
   (The WebGPU queue + resource creation are thread-safe in wgpu-native, so moving chunk *upload* off the main
   thread is a planned level-up — see `docs/known-issues.md` — but the current model is main-thread upload.)
 - **`ChunkRenderData.TryUpload()` is gated on `Updated` and must stay non-blocking** (`Monitor.TryEnter`, not
-  a blocking `Upload`). The mesh thread holds the opaque buffer + transparent-VAO locks for a whole remesh; a
-  blocking upload stalled the render thread. Don't reintroduce one.
+  a blocking `Upload`). The mesh thread holds the opaque buffer + transparent-VAO locks for a whole remesh, so
+  a blocking upload would stall the render thread.
 - **Per-`PaletteStorage`-container single writer + copy-on-grow** (full: [docs/world-model.md](docs/world-model.md)).
   A published storage's palette/bit-width are immutable; growth publishes a NEW storage via a `volatile`
   field. Each container (block ids / light / sky) has exactly one writer thread. **Never add a second writer.**
@@ -125,8 +126,8 @@ the linked doc; this is the short "don't violate this" list.
   save version and region files a magic+version header; a mismatch is rejected and regenerated (fail-fast, no
   back-compat). Within a version, blocks/items survive plugin churn (name-based, above). So a **worldgen**
   change still needs the world folder deleted (chunks load disk-first, masking the new generator); a
-  **format** change should instead **bump the version** (`WorldMetadata.Version` / `WorldSerializer.RegionVersion`
-  / `PlayerSerializer.Version`) so old saves are cleanly rejected rather than misread. Writes are atomic
+  **format** change should instead **bump the version** (`WorldMetadata.Version` / `WorldSerializer`'s
+  `ChunkVersion`/`EntityVersion` region headers / `PlayerSerializer.Version`) so old saves are cleanly rejected rather than misread. Writes are atomic
   (temp + rename); region `.rd` files self-compact to reclaim re-saved chunks; dirty chunks + players autosave
   on a timer (not only on unload/shutdown).
 - **Shaders are WGSL; the renderer targets WebGPU via wgpu-native** (Metal on macOS). Reverse-Z with z ∈ [0,1]
@@ -136,19 +137,26 @@ the linked doc; this is the short "don't violate this" list.
   per-frame, group 1 per-pass, group 2 textures/samplers) + push constants / dynamic-offset UBOs for per-draw;
   UBO field layout follows WGSL std140 (`vec3`+`f32` packs to 16 B), so C# UBO structs must mirror it exactly.
 - **Block code that runs on the server must not touch client/GPU/window state** (server-side light sim calls
-  `Block.GetLightLevel`; reading the keyboard there crashed `BlockTorch`). **Fully compiler-enforced**: Core
+  `Block.GetLightLevel`, which must not read client input/keyboard). **Fully compiler-enforced**: Core
   (which the server links) cannot reference the WebGPU renderer or the ambient input/window/`RenderDebug`
   statics — those live only in `MinecraftClone3API.Client`, and `Block`'s client-facing virtuals
-  (`GetPlacementMetadata`, `OnActivated`) now take only Core types (`EntityPlayer`/`BlockRaytraceResult`/
+  (`GetPlacementMetadata`, `OnActivated`) take only Core types (`EntityPlayer`/`BlockRaytraceResult`/
   `WorldBase`), so no graphics/input type leaks into Core at all.
 
 ---
 
 ## Conventions
 
-- **Comments:** self-documenting code. Only `///` XML doc comments where they earn their place — **no inline
-  `//` narration** of what the next line does.
-- Match the surrounding code's style, naming, and comment density.
+- **Comments are the exception, not the default.** Self-documenting code first: small functions, precise
+  names, readable structure. A comment is justified only when it explains a **why the code itself cannot** — a
+  non-obvious invariant, a gotcha, an external constraint (a spec, a hardware/driver quirk, a "looks redundant
+  but isn't" trap). These are most valuable over code that looks *simple and innocent* but has an invisible
+  reason. **Never narrate *what* the next line does** (`// loop over chunks`, `// increment i`) — delete on
+  sight. And if the urge to comment comes from code being *hard to follow*, **fix the code instead** (extract,
+  rename, simplify); a comment over confusing code is a band-aid that rots. `///` XML doc comments only where
+  they earn their place and stay concise — a `///` that just restates the signature (`/// Gets the name`) is
+  the same noise. No changelog narration in comments (no "used to", "now", "previously", dates, trace %).
+- Match the surrounding code's comment density (which should be low).
 - **Work in a worktree — one session, one worktree.** Do every feature/fix in a git worktree created with the
   dedicated worktree tool (`EnterWorktree`), never a manual `git worktree add`. **One chat session uses exactly
   one worktree**, so independent sessions run in parallel without stepping on each other; a single worktree may
