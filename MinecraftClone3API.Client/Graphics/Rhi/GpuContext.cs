@@ -190,7 +190,10 @@ namespace MinecraftClone3API.Graphics.Rhi
                 PresentMode = presentMode,
                 Width = (uint)width,
                 Height = (uint)height,
-                AlphaMode = CompositeAlphaMode.Auto,
+                // Opaque so the compositor ignores surface alpha: a game window is fully opaque, and an
+                // alpha-respecting mode would let a GUI blend that writes alpha 0 (the crosshair's inverting
+                // blend) punch a transparent hole in the frame.
+                AlphaMode = CompositeAlphaMode.Opaque,
             };
             Api.SurfaceConfigure(Surface, in config);
         }

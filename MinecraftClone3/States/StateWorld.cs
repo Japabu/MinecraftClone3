@@ -527,7 +527,7 @@ namespace MinecraftClone3.States
                     new Vector4D<float>(0f, 0f, 1f, 1f), new Vector4D<float>(0.40f, 0.13f, 0.62f, alpha));
             }
 
-            if (ClientResources.Input.CursorMode == CursorMode.Raw && !PlayerController.RenderSelf)
+            if (ClientResources.Input.CursorCaptured && !PlayerController.RenderSelf)
                 CrosshairRenderer.Render();
             HotbarRenderer.Render(_world.Inventory);
             SurvivalHud.Render(_world);
