@@ -100,5 +100,14 @@ namespace MinecraftClone3API.Client.Input
             get => _mouse?.Cursor.CursorMode ?? CursorMode.Normal;
             set { if (_mouse != null) _mouse.Cursor.CursorMode = value; }
         }
+
+        /// <summary>True while the cursor is locked for camera control. Gameplay requests
+        /// <see cref="CursorMode.Raw"/> for unaccelerated mouse motion, but platforms without raw-motion support
+        /// (macOS/GLFW) fall back to <see cref="CursorMode.Disabled"/> on read-back — both mean "captured", so a
+        /// check against <c>Raw</c> alone wrongly reads as released there.</summary>
+        public bool CursorCaptured
+        {
+            get { var m = CursorMode; return m == CursorMode.Raw || m == CursorMode.Disabled; }
+        }
     }
 }

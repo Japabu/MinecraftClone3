@@ -44,7 +44,9 @@ the accepted GL-style global. The wrappers are `Gpu`-prefixed: `GpuBuffer`, `Gpu
 `Projection`. `Renderer` is the per-frame conductor: `BeginFrame` acquires the swapchain image and opens the
 frame command encoder, states record draws into it, `EndFrame` opens the surface pass and tonemaps + flushes
 the GUI. The surface format is chosen **non-sRGB UNORM** (the renderer tonemaps in display space and would
-otherwise double-encode gamma).
+otherwise double-encode gamma), and the swapchain is configured **`CompositeAlphaMode.Opaque`** so the OS
+compositor ignores surface alpha — a GUI blend that writes alpha 0 (the crosshair's inverting blend) must not
+punch a transparent hole, so that blend also leaves destination alpha untouched.
 
 `GpuFeatures` detects the wgpu-native optional features each modern path gates on, with a graceful fallback for
 every one: **`MultiDrawIndirectCount`** (else a per-slot indirect-draw loop), **`PushConstants`** (else

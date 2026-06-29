@@ -195,7 +195,9 @@ namespace MinecraftClone3API.Graphics.Rhi
         public static BlendState InvertBlend => new BlendState
         {
             Color = new BlendComponent { SrcFactor = BlendFactor.OneMinusDst, DstFactor = BlendFactor.OneMinusSrc, Operation = BlendOperation.Add },
-            Alpha = new BlendComponent { SrcFactor = BlendFactor.OneMinusDstAlpha, DstFactor = BlendFactor.OneMinusSrcAlpha, Operation = BlendOperation.Add },
+            // Leave destination alpha untouched (only the colour inverts) so the sprite never zeroes the
+            // surface alpha — a 1-dst,1-src alpha would punch a transparent hole under an alpha-respecting compositor.
+            Alpha = new BlendComponent { SrcFactor = BlendFactor.Zero, DstFactor = BlendFactor.One, Operation = BlendOperation.Add },
         };
     }
 
