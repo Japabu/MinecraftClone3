@@ -7,7 +7,7 @@ namespace MinecraftClone3API.Graphics
     /// groups map to the frame encoder's <c>PushDebugGroup</c>/<c>PopDebugGroup</c>; object labels are set at
     /// resource-creation time in the RHI wrappers (every <c>GpuBuffer</c>/<c>GpuTexture</c>/pipeline takes a
     /// label), so <see cref="Label"/> is a no-op. Groups are issued only when <see cref="Enabled"/>
-    /// (RenderDoc sets RENDERDOC_CAPOPTS, or MC3_GL_DEBUG=1), so normal runs pay nothing.</summary>
+    /// (RENDERDOC_CAPOPTS, MC3_FORCE_X11=1, or MC3_GL_DEBUG=1), so normal runs pay nothing.</summary>
     public static class GraphicsDebug
     {
         public static readonly bool Enabled =

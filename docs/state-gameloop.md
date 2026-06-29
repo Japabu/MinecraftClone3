@@ -32,10 +32,9 @@ layer — that's how a world saves on "Save and Quit to Title" and on window clo
 **World teardown is asynchronous.** `StateWorld.Exit` runs only the GPU cleanup (`WorldClient.Disconnect` —
 buffer/VAO disposal) on the main thread; stopping the server network and joining + saving the world (GPU-free,
 but seconds-long when many chunks are dirty — a burning furnace floods light and dirties every chunk it
-touches) runs on a foreground `World Teardown` thread. Blocking the render thread for that save would leave
-Silk unable to draw or pump events; on macOS the window then goes unresponsive and its WebGPU drawable surface
-**wedges**, freezing the on-screen image on the last frame even though the game has moved on. "Save and
-Quit to Title" therefore routes through `GuiSavingWorld`, which keeps drawing a "Saving world..." screen each
+touches) runs on a foreground `World Teardown` thread. Blocking the render thread for that save would freeze
+the window (on macOS the drawable surface wedges), so "Save and
+Quit to Title" routes through `GuiSavingWorld`, which keeps drawing a "Saving world..." screen each
 frame and `ReplaceState`s to `GuiMainMenu` once `StateWorld.IsTearingDown` clears. Opening another world calls
 `StateWorld.WaitForPendingTeardown()` first (and the foreground thread keeps the process alive to finish a save
 on app exit), so a save never races the next world on disk. State flow:
@@ -152,8 +151,8 @@ position, so remote players (drawn by `EntityRenderer` as 0.6×1.8 boxes, offset
 sim, [entities.md](entities.md)) → `_network.Pump()` (handles fall/gamemode/respawn, broadcasts stats) →
 `SendMove`. Each frame `StateWorld` mirrors the server's `GameMode` onto the local player (so the fly toggle is
 gated to Creative — double-tap Space does nothing in Survival) and force-clears flight in Survival. The
-**survival HUD** (`Client/GUI/SurvivalHud.cs`) draws hearts + hunger above the hotbar from the official
-`icons.png` (placeholder bars without a resource pack), only in Survival. On death (`WorldClient.PlayerDead`,
+**survival HUD** (`Client/GUI/SurvivalHud.cs`) draws hearts + hunger above the hotbar from the per-icon
+HUD sprites (`hud/heart/*`, `hud/food_*`; placeholder bars without a resource pack), only in Survival. On death (`WorldClient.PlayerDead`,
 from the stats packet) `StateWorld` opens the **`GuiDeathScreen`** overlay (Respawn / Title); singleplayer keeps
 the integrated server ticking *while dead* (`simulate |= PlayerDead`) so the `RespawnRequest` is processed even
 though the overlay unfocused the world. When the server clears the dead flag, `StateWorld` closes the overlay
@@ -163,9 +162,9 @@ Survival/Creative" toggle button that sends `SetGameModeRequest`; the label foll
 The Inventory key opens the **survival** inventory (`GuiInventory` — 2×2 crafting + 36 slots over
 `container/inventory.png`) in survival and the creative item picker (`GuiCreativeInventory`) in creative.
 
-**Block breaking.** Creative breaks instantly on left-click (unchanged). Survival is hold-to-mine
+**Block breaking.** Creative breaks instantly on left-click. Survival is hold-to-mine
 (`PlayerController.HandleBreaking`, per display frame): holding left-click accrues progress on the targeted
-block at the Minecraft mining rate (`BreakSeconds`), and breaks it (the existing `SetBlock`-to-air request) when
+block at the Minecraft mining rate (`BreakSeconds`), and breaks it (a `SetBlock`-to-air request) when
 full; the progress resets if the target changes or the button is released. The rate follows vanilla exactly: a
 held tool's `Item.MiningSpeed` multiplier applies only when its `Item.ToolType` matches the block's
 `Block.PreferredTool`, and the per-tick destroy progress is `speed / hardness / divider` where `divider` is
@@ -182,7 +181,7 @@ on `BlockBasic`'s ctor.
 
 **HUD/GUI textures** come from the resource pack's modern (1.20.2+) **individual sprite** layout — the hotbar
 (`hud/hotbar.png` + `hud/hotbar_selection.png`) and the survival HUD hearts/food (`hud/heart/*`, `hud/food_*`)
-are separate PNGs, not the old monolithic `widgets.png`/`icons.png`; `GuiAssets` resolves each and callers fall
+are separate sprite PNGs; `GuiAssets` resolves each and callers fall
 back to coloured placeholders when absent.
 
 **Keybinds.** Movement/interaction keys are rebindable via `Keybinds` (`Client/Keybinds.cs`), a static
@@ -215,7 +214,7 @@ toolkit is **`GuiButton`** (cycles a discrete value, relabelling itself) and **`
   texel fields (`ShadowTexel` = world-space `2·radius/mapSize`, `ShadowMapTexel` = `1/mapSize`) track the
   resolution so the PCF disc scales with it. `GraphicsSettings.ShadowsEnabled` (≠ Off) gates the shadow-depth +
   resolve passes and the `ShadowsEnabled` flag in the shadow-resolve and composition pass UBOs.
-- **Render Distance** (slider, 4–24 chunks) — the flagship knob. The five coupled radii are derived from this
+- **Render Distance** (slider, 4–64 chunks) — the flagship knob. The five coupled radii are derived from this
   one setting so the `load ≥ send ≥ render`, `cache > send` chain can't be violated: client draw =
   `WorldRenderer.RenderDistance` (a computed property reading the setting live); **singleplayer**
   `StateWorld.ApplyRenderDistance` also drives `ServerNetwork.ViewDistance` (= chunks·16),
@@ -227,7 +226,7 @@ toolkit is **`GuiButton`** (cycles a discrete value, relabelling itself) and **`
 - **FOV** (slider 30–110°), **Sensitivity** (slider, the mouse-delta multiplier), **Brightness** (slider
   0–0.3 → `uMinLight` in `Composition.wgsl` (the `CompositionParams.MinLight` field), the unlit floor).
 - **LOD Quality** (slider 50–200%, `GraphicsSettings.LodHorizonQuality`) — scales how far the Phase-2
-  horizon's **detail rings** (stride-4 → 8 → 16) extend before coarsening: higher = finer horizon farther out
+  horizon's **detail rings** (stride-2 → 4 → 8 → 16) extend before coarsening: higher = finer horizon farther out
   (lower FPS), lower = coarser/cheaper. Does **not** touch render distance (chunks there are always full
   detail). `WorldClient.MeshStepFor` reads it live; a change calls `WorldClient.ForceLodMeshRescan()`
   (`StateWorld.Update`) to re-step the existing LOD regions. Default 100%.

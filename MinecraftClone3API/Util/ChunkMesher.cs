@@ -270,7 +270,6 @@ namespace MinecraftClone3API.Util
                 return;
             }
 
-            //If block does not have a model for some reason ignore it
             var (model, orient) = block.GetRenderModel(world, blockPos);
             if (model != null)
                 EmitModel(world, blockPos, x, y, z, block, model, orient, vao, transparentVao, originOffset);
@@ -333,8 +332,7 @@ namespace MinecraftClone3API.Util
         // (not just permuting the 4 corner UVs) is what keeps a non-square region (e.g. a 6×8 wall-arm top) from
         // STRETCHING when a 90/270° turn swaps the face's footprint to 8×6 — the rect swaps with it. Direction is
         // derived from the engine's CreateRotationY(-y) convention (and reduces to the corner permutation for a
-        // square rect, which was verified correct). Bottom is the mirror (its tangent basis is flipped), so it
-        // rotates by the opposite angle.
+        // square rect). Bottom is the mirror (its tangent basis is flipped), so it rotates by the opposite angle.
         private static Vector2D<float> RotateUv(Vector2D<float> uv, Vector2D<float> centre, int angle)
         {
             var d = uv - centre;
@@ -423,12 +421,8 @@ namespace MinecraftClone3API.Util
 
         private static Vector4D<float> CalculateBrightness(WorldBase world, Block block, Vector3D<int> blockPos, BlockFace face, Vector3D<float> vertexPosition)
         {
-            //if its not a full opaque block return brightness of itself
             if (!block.IsOpaqueFullBlock(world, blockPos) || !block.Model.AmbientOcclusion)
                 return SampleBrightness(world, blockPos);
-
-            //TODO: smooth lighting setting
-            //return LightLevelToBrightness(world.GetBlockLightLevel(blockPos + face.GetNormali()));
 
             var normal = face.GetNormali();
             var pos = blockPos + normal;
@@ -441,7 +435,6 @@ namespace MinecraftClone3API.Util
             // normal axis and every vertex was wrongly treated as a non-corner, leaving those faces unlit.
             if ((offset - offset * (normal * normal)).LengthSquared != 2)
             {
-                //If vertex is not a corner do not apply ambient occlusion but apply the blocks own brightness
                 return SampleBrightness(world, blockPos);
             }
 
@@ -482,7 +475,6 @@ namespace MinecraftClone3API.Util
         // Falloff per light level: brightness = Base^(15 - level). Base must be < 1 for darker
         // areas to actually look darker; Base = 1 flattens every level to full brightness.
         private const float Base = 0.8f;
-        //private const float CustomBase = 0.897499991f;
 
         private static Vector3D<float> LightLevelToBrightness(Vector3D<float> lightLevel)
         {
@@ -500,9 +492,6 @@ namespace MinecraftClone3API.Util
         private static float CustomLightLevelToBrightness(float lightLevel)
         {
             return VanillaLightLevelToBrightness(lightLevel);
-
-            //return (float)Math.Pow(CustomBase, Math.Max(31 - lightLevel, 0));
-            //return (float)Math.Pow(0.8, 1 - (lightLevel - 14) / 17);
         }
     }
 }

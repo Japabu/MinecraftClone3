@@ -54,7 +54,6 @@ namespace MinecraftClone3API.Graphics
 
                 currentPath = filename;
 
-                //Find first existing source, add it to the sources and find its parent
                 var parentSource = ResourceReader.ReadString(filename);
                 try
                 {
@@ -85,7 +84,6 @@ namespace MinecraftClone3API.Graphics
 
             FillMissingUvs(model);
 
-            //Dont load textures if there arent any
             if(model.Textures == null) Logger.Error($"\"{path}\" does not contain any texture definitions!");
             else LoadModelTextures(model, path);
 
@@ -137,10 +135,9 @@ namespace MinecraftClone3API.Graphics
                 loadedSomething = false;
                 foreach (var entry in model.Textures)
                 {
-                    //If texture is already loaded continue
                     if (loadedTextures.ContainsKey(entry.Key)) continue;
 
-                    if (!entry.Value.StartsWith("#")) //If not a variable load texture
+                    if (!entry.Value.StartsWith("#"))
                     {
                         var filename = GetRelativePaths(path, entry.Value, PngExtension).FirstOrDefault(ResourceReader.Exists);
 
@@ -155,7 +152,7 @@ namespace MinecraftClone3API.Graphics
 
                         loadedSomething = true;
                     }
-                    else //If variable try to find its value
+                    else
                     {
                         if (loadedTextures.TryGetValue(entry.Value.Substring(1), out var texture))
                         {
@@ -187,7 +184,6 @@ namespace MinecraftClone3API.Graphics
 
         internal static List<string> GetRelativePaths(string root, string path, string extension)
         {
-            //Find parent file relatively
             var paths = new List<string> {path, path + extension};
 
             var i = root.LastIndexOf("/", StringComparison.Ordinal) + 1;
@@ -292,7 +288,6 @@ namespace MinecraftClone3API.Graphics
 
         public BlockModel()
         {
-            //Default json constructor
         }
 
         /// <summary>A texture entry is either a plain sprite path (<c>"all": "minecraft:block/stone"</c>) or,

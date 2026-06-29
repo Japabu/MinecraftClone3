@@ -22,13 +22,12 @@ namespace MinecraftClone3API.Graphics
         public static float RenderDistance => GraphicsSettings.RenderDistanceChunks * Chunk.Size;
         public static float RenderDistanceSq => RenderDistance * RenderDistance;
 
-        //Changeable in settings
         public const float SortDistance = 128;
         public const float SortDistanceSq = SortDistance * SortDistance;
 
         // Reused across frames so the per-frame transparent scan allocates nothing steady-state. Opaque/LOD/
-        // shadow are GPU-culled now (the cull compute builds the indirect draw list); only the transparent
-        // chunks still need a CPU back-to-front sort, so these are the only per-frame visible-set lists kept.
+        // shadow are GPU-culled (the cull compute builds the indirect draw list); only the transparent
+        // chunks need a CPU back-to-front sort, so these are the only per-frame visible-set lists kept.
         private static readonly List<ChunkRenderData> _transparentSortedChunks = new List<ChunkRenderData>(1024);
         private static readonly List<ChunkRenderData> _transparentChunks = new List<ChunkRenderData>(1024);
 
@@ -417,7 +416,6 @@ namespace MinecraftClone3API.Graphics
             // still draws, so a block model's overlay layer (e.g. the grass-side tinted overlay over its base)
             // isn't depth-rejected — a strict Greater would drop it and lose the tint.
             var geoDepth = new DepthDesc(GBufferTargets.DepthFormat, true, CompareFunction.GreaterEqual);
-            // NOTE: if all terrain renders inside-out/invisible, flip FrontFace or CullMode — winding-convention check
             _geometryPipeline = new GpuRenderPipeline(_geometryPipeLayout, _geometryModule, "vs_main", "fs_main",
                 ChunkMeshArena.GeometryVertexLayout, opaqueTargets, geoDepth,
                 cullMode: CullMode.Back, frontFace: FrontFace.Ccw, label: "worldGeometry");

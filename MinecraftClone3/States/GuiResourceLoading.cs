@@ -58,8 +58,6 @@ namespace MinecraftClone3.States
             GuiRenderer.DrawCover(_background);
             GuiRenderer.DrawTexture(_progressBar, new Rectangle(100, 340, (int)ScaledResolution.GuiResolution.X - 100, 420), null);
             GuiRenderer.DrawTexture(_progressBarFull, Rectangle.FromSize(100, 340, 800 / 100 * _progress, 80), null);
-
-            //GuiRenderer.DrawTexture(background, new Vector4(-1,-1,1,1), new Vector4(0,0,1,1));
         }
 
         private void Start(bool reload)
@@ -73,18 +71,15 @@ namespace MinecraftClone3.States
         {
             if (!reload)
             {
-                //Add plugins in "Plugins" dir
                 var pluginsDir = new DirectoryInfo(GamePaths.PluginsDir);
                 foreach (var dir in pluginsDir.EnumerateDirectories())
                     PluginManager.AddPlugin(new FileSystemRaw(dir));
                 foreach (var file in pluginsDir.EnumerateFiles())
                     PluginManager.AddPlugin(new FileSystemCompressed(file));
 
-                //Cascade user resource packs on top of the plugins
                 PluginManager.AddResourcePacks();
             }
 
-            //Load resources
             PluginManager.LoadResources(
                 (total, state, plugin) =>
                 {
@@ -95,7 +90,6 @@ namespace MinecraftClone3.States
 
             if (!reload)
             {
-                //Load plugins
                 PluginManager.LoadPlugins(
                     (total, state, plugin) =>
                     {

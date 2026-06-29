@@ -77,7 +77,6 @@ namespace MinecraftClone3API.Graphics.Rhi
                 var labelPtr = label == null ? null
                     : (byte*)alloc.Track(SilkMarshal.StringToPtr(label, NativeStringEncoding.UTF8));
 
-                // --- Vertex state ---
                 var vbLayouts = (VertexBufferLayout*)alloc.Alloc(vertexBuffers.Length * sizeof(VertexBufferLayout));
                 for (var i = 0; i < vertexBuffers.Length; i++)
                 {
@@ -104,7 +103,6 @@ namespace MinecraftClone3API.Graphics.Rhi
                     Buffers = vertexBuffers.Length == 0 ? null : vbLayouts,
                 };
 
-                // --- Fragment state ---
                 FragmentState* fragmentPtr = null;
                 if (fragmentEntry != null && colorTargets.Length > 0)
                 {
@@ -132,7 +130,6 @@ namespace MinecraftClone3API.Graphics.Rhi
                     fragmentPtr = fragment;
                 }
 
-                // --- Depth-stencil ---
                 DepthStencilState* depthPtr = null;
                 if (depth.HasValue)
                 {

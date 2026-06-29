@@ -55,10 +55,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let mx = mn + vec3<f32>(params.chunkExtent, params.chunkExtent, params.chunkExtent);
     let center = mn + vec3<f32>(params.chunkExtent * 0.5);
 
-    var visible = m.indexCount != 0u;   // empty / freed slot
+    var visible = m.indexCount != 0u;   // freed slots keep indexCount 0 so they never draw
 
     // Distance cull: the client caches chunks past the render distance, so drop those whose centre is beyond
-    // it before the frustum test (matches the old CPU centre-distance cull). maxDistance <= 0 disables it.
+    // it before the frustum test. maxDistance <= 0 disables it.
     if (visible && params.maxDistance > 0.0 && distance(center, params.cameraPos) > params.maxDistance) {
         visible = false;
     }

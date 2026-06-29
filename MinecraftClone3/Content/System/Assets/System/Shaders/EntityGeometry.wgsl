@@ -1,4 +1,4 @@
-// Entity geometry into the G-buffer. Ported from EntityGeometry.vs/.fs. Unlike chunks (baked world-space),
+// Entity geometry into the G-buffer. Unlike chunks (baked world-space),
 // an entity is a small rigid model drawn with a per-entity (and per-animated-part) model matrix supplied via
 // a dynamic-offset uniform, so the vertex shader applies `model` here. One flat block+sky light for the whole
 // entity (sampled at its position CPU-side) so it darkens in caves and brightens in the open.

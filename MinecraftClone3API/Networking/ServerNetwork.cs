@@ -41,9 +41,9 @@ namespace MinecraftClone3API.Networking
         /// smoothly instead of stalling the tick by serializing every loaded chunk at once. Sized large for
         /// the 20 tps tick so the chunks/second streaming throughput stays high.</summary>
         // Sized to keep up with the parallel LoadThread gen: streaming only fires on the 20 tps tick, so the
-        // per-tick batch must be large or it caps throughput (192 → only 3840 chunks/s). Over loopback a chunk
-        // is carried by reference (no serialize/GZip) so a big batch is cheap; the client pumps packets every
-        // display frame (≫ 20 tps) and decodes off-thread. 512/tick × 20 tps ≈ 10 000 chunks/s.
+        // per-tick batch must be large or it caps throughput. Over loopback a chunk is carried by reference (no
+        // serialize/GZip) so a big batch is cheap; the client pumps packets every display frame (≫ 20 tps) and
+        // decodes off-thread. 512/tick × 20 tps ≈ 10 000 chunks/s.
         private const int MaxChunksPerTick = 512;
 
         // World-clock broadcast cadence (in ticks) — ~1 s at 20 tps; clients advance time locally between.

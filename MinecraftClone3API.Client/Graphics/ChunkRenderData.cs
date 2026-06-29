@@ -65,7 +65,6 @@ namespace MinecraftClone3API.Graphics
             lock (_opaque)
             lock (_transparentVao)
             {
-                //Re-mesh from scratch; the chunk may have changed since the last pass.
                 _opaque.Clear();
                 _transparentVao.Clear();
                 AddBlocksToVao();

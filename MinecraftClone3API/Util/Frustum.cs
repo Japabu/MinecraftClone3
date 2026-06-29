@@ -22,12 +22,12 @@ namespace MinecraftClone3API.Util
             var col2 = new Vector4D<float>(m.Row1.Z, m.Row2.Z, m.Row3.Z, m.Row4.Z);
             var col3 = new Vector4D<float>(m.Row1.W, m.Row2.W, m.Row3.W, m.Row4.W);
 
-            Planes[0].Set(col3 + col0); //Left
-            Planes[1].Set(col3 - col0); //Right
-            Planes[2].Set(col3 + col1); //Bottom
-            Planes[3].Set(col3 - col1); //Top
-            Planes[4].Set(col3 + col2); //Near
-            Planes[5].Set(col3 - col2); //Far
+            Planes[0].Set(col3 + col0);
+            Planes[1].Set(col3 - col0);
+            Planes[2].Set(col3 + col1);
+            Planes[3].Set(col3 - col1);
+            Planes[4].Set(col3 + col2);
+            Planes[5].Set(col3 - col2);
 
             foreach (var plane in Planes)
                 plane.Normalize();

@@ -74,8 +74,7 @@ namespace MinecraftClone3API.Networking
 
         // Gate for StreamChunks: the player chunk + loaded-chunk count at the last fully-drained interest
         // scan. When neither changed there is nothing new to stream, so the O(loaded) ConcurrentDictionary
-        // scan is skipped (it was ~88% of CPU in a trace while standing still in a fully-streamed area).
-        // Sentinel forces the first scan.
+        // scan is skipped. Sentinel forces the first scan.
         public Vector3D<int> StreamScanChunk = new Vector3D<int>(int.MinValue, int.MinValue, int.MinValue);
         public int StreamScanLoadedCount = -1;
 

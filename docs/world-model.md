@@ -1,6 +1,6 @@
 # World & chunk model: storage vs. mesh are decoupled
 
-`Chunk` is pure GL-free storage so the headless server can construct chunks. The GPU mesh lives in a
+`Chunk` is pure GPU-free storage so the headless server can construct chunks. The GPU mesh lives in a
 separate client-only `ChunkRenderData`. This split is the backbone of the whole design.
 
 ```
@@ -8,15 +8,17 @@ separate client-only `ChunkRenderData`. This split is the backbone of the whole 
             /                                    \
      WorldServer                              WorldClient
      - LoadedChunks: Chunk (storage)          - LoadedChunks: Chunk (received copies)
-     - terrain gen / light / save             - RenderData: Vector3i -> ChunkRenderData (GL mesh)
-     - 3 background threads                    - mesh-thread pool + 1 apply thread
+     - terrain gen / light / save             - RenderData: Vector3i -> ChunkRenderData (GPU mesh)
+     - 4 background threads (load /            - mesh-thread pool + 1 apply thread
+       unload / light-update / LOD)
 
    Chunk  (Blocks/Chunk.cs)            ChunkRenderData  (Client/Graphics/ChunkRenderData.cs)
-   - PaletteStorage block ids          - holds a Chunk + two VertexArrayObjects (opaque + transparent)
-   - PaletteStorage light (RGB)        - Update() : CPU meshing (ChunkMesher) — safe off-thread
-   - PaletteStorage sky (0..15)        - Upload()/Draw()/Dispose() : GL — main thread ONLY
-   - block data, min/max bounds        - Upload() gated on `Updated` (see invariants)
-   - Write(BinaryWriter)
+   - PaletteStorage block ids          - holds a Chunk + an opaque CPU MeshBuffer uploaded into the shared
+   - PaletteStorage light (RGB)          ChunkMeshArena (one batched multidraw) + a per-chunk transparent
+   - PaletteStorage sky (0..15)          SortedVertexArrayObject
+   - block data, min/max bounds        - Update() : CPU meshing (ChunkMesher) — safe off-thread
+   - Write(BinaryWriter)               - TryUpload()/DrawTransparent()/Dispose() : GPU — main thread ONLY
+                                        - TryUpload() gated on `Updated` (see invariants)
 ```
 
 **Storage is bit-packed paletted, not dense arrays** (`Blocks/PaletteStorage.cs`). A `Chunk` holds three
@@ -47,7 +49,7 @@ exception that emits *several* models at one cell — `BlockStateDefinition.IsMu
 `ResolveAll(GetBlockState)` and emits a post plus an arm model per matching `when` (the connection set the
 block computes from its neighbours); the inventory icon/viewmodel passes `inventory: true` to fall back to the
 single `Block.Model`. Coordinates are **corner-origin like Minecraft**:
-block `P` fills the AABB `[P, P+1]` and world→block is `floor(v)` (not the old centre-origin `floor(v+0.5)`).
+block `P` fills the AABB `[P, P+1]` and world→block is `floor(v)`.
 The mesher emits this by shifting each element `-0.5 → orient → +0.5`, so the orientation still rotates the
 centred element about the block centre, then the whole element lands in the `[0, 1]` cell. (Face normals +
 `cullface` are not
@@ -78,8 +80,8 @@ discarding the whole chunk.
 
 **Paletted storage is concurrency-safe by a single-writer + copy-on-grow rule** (see `PaletteStorage`'s
 class doc). A published storage's palette and bit-width are immutable; a `Set` reusing an existing value
-rewrites one packed entry in place (a benign single-entry torn read, as the old dense `ushort[]` already
-tolerated), while a `Set` introducing a new value returns a NEW storage the chunk publishes through its
+rewrites one packed entry in place (a benign single-entry torn read), while a `Set` introducing a new value
+returns a NEW storage the chunk publishes through its
 `volatile` field. Each container has exactly one writer thread (server: block ids = tick thread, light + sky
 = light/Update thread, plus the LoadThread seeds sky at gen before publish; client: all three = apply
 thread), so concurrent readers (mesher, network serialize, raytrace) always see a structurally consistent

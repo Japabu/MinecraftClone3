@@ -36,9 +36,8 @@
                  mesh — the only cost is a redundant remesh (cannot fire during the edit-free load burst).
                  A small fraction of the pool is reserved *LOD-first* (lodWorkers = min(max(1, workers/4),
                  workers-1)); the rest are chunk-first, and each kind falls through to the other queue when
-                 its own is empty. Without a reserved LOD worker, sustained movement keeps the chunk queue
-                 permanently non-empty, so LOD meshing starved completely and the horizon went unmeshed; the
-                 reserved workers keep the LOD mesh queue ~0 (see [rendering.md](rendering.md)).
+                 its own is empty. The reserved LOD workers keep the LOD mesh queue ~0 even under sustained
+                 movement, when the chunk-first workers would otherwise stay saturated (see [rendering.md](rendering.md)).
    Update()      (MAIN thread) pumps packets (routing ChunkData/BlockChanges to _applyQueue, handling
                  entity/login inline), DrainRenderReady → creates ChunkRenderData (GPU) + queues meshing,
                  TryUploads meshed chunks (GPU buffer writes, non-blocking, time-budgeted per frame), evicts, disposes
@@ -86,15 +85,15 @@ thread-safe, so moving chunk *upload* off the main thread is a planned level-up 
 off the main thread.
 
 **Invariant 2 — `ChunkRenderData.TryUpload()` is gated on `Updated` and is non-blocking.** The mesh thread
-may enqueue the same chunk for upload more than once; `TryUpload` consumes+clears the vertex lists, so a
-redundant upload would otherwise see empty lists and blank the chunk until the next re-mesh — the `Updated`
-flag makes it a no-op. Don't remove it. **`TryUpload` must also never block:** `ChunkRenderData.Update()`
-(mesh thread) holds the `_opaque`/`_transparentVao` locks for the *entire* CPU remesh (tens of ms — per-vertex
-smooth-lighting), and a single edit remeshes the chunk **plus up to six face neighbours**. `TryUpload` uses
+may enqueue the same chunk for upload more than once; `TryUpload` consumes+clears the vertex lists, so it
+must run at most once per remesh — the `Updated` flag gates it (a second call is a no-op). Don't remove it.
+**`TryUpload` must also never block:** `ChunkRenderData.Update()`
+(mesh thread) holds the `_opaque`/`_transparentVao` locks for the *entire* CPU remesh (per-vertex
+smooth-lighting makes it long), and a single edit remeshes the chunk **plus up to six face neighbours**. `TryUpload` uses
 `Monitor.TryEnter`; if the mesh thread holds the lock it returns `false` and `WorldClient` re-queues that
 chunk for a later frame instead of the render thread stalling on the lock for the whole remesh. The render
 path (`Draw`/`Sort`/`DrawTransparent`) takes **no** mesh-buffer lock, so rendering is never blocked by meshing;
-only the upload handoff needed decoupling.
+only the upload handoff is decoupled (via `TryEnter` + re-queue).
 
 **Invariant 3 — shared collections.** `LoadedChunks` is a `ConcurrentDictionary` (client: apply thread adds,
 main thread removes-on-evict, both + mesh thread read). `WorldClient.RenderData` is a `ConcurrentDictionary`
@@ -105,11 +104,15 @@ in sync O(1) (add in `DrainRenderReady`, swap-remove in `UnloadChunk` via `Chunk
 `WorldServer.PlayerEntities` is mutated only via `AddPlayer`/`RemovePlayer` (locked) and the `LoadThread`
 snapshots it under the same lock. `DirtyChunks` is a `ConcurrentDictionary` used as a set.
 `ServerNetwork._sessions` is touched only on the tick thread (the accept thread enqueues to a concurrent
-`_pending`). **Per-container single-writer (Invariant 5)** — each `PaletteStorage` container has exactly one
-writer thread; see the [world-model.md](world-model.md) copy-on-grow rule.
+`_pending`).
 
 **Invariant 4 — block/item-id agreement (within a session).** Numeric block/item ids are assigned in
 **deterministic plugin order** at load (`PluginManager` sorts by plugin id), so the client and server agree on
 the wire as long as they load the same `Plugins/`. The ids are session-local only: disk and the TCP
 chunk/inventory payloads carry the stable registry **name**, remapped on read, so worlds/inventories survive
 plugin churn and never depend on cross-run id stability (see [world-model.md](world-model.md)).
+
+**Invariant 5 — per-`PaletteStorage`-container single writer + copy-on-grow.** Each `PaletteStorage` container
+(block ids / light / sky) has exactly one writer thread; a published storage's palette and bit-width are
+immutable, and growth publishes a new storage via a `volatile` field, so readers are lock-free. Never add a
+second writer (see the [world-model.md](world-model.md) copy-on-grow rule).

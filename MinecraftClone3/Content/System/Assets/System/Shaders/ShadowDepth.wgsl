@@ -1,4 +1,4 @@
-// Shadow cascade depth-only pass. Ported from ShadowDepth.vs/.fs. Chunk positions are baked world-space
+// Shadow cascade depth-only pass. Chunk positions are baked world-space
 // (same vertex buffer as the geometry pass, slot 0), transformed by the reverse-Z light view-projection.
 // No fragment output — the pipeline writes depth only.
 

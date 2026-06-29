@@ -67,8 +67,9 @@ later passes sample them:
 no far clip to z-fight against); the depth buffer is **cleared to 0** and the geometry pipelines compare
 **`GreaterEqual`** (so a coplanar overlay layer — e.g. a tinted grass-side over its base — still draws; the
 shadow pass uses strict `Greater`). This spreads floating-point depth precision evenly across the view distance
-instead of bunching it at the near plane — the decisive win for the **distant LOD horizon**, where conventional
-depth z-fights badly. `Projection` also provides a finite variant and `ReverseZOrtho` for the sun shadow map.
+instead of bunching it at the near plane — which is what lets the **distant LOD horizon** avoid the z-fighting
+conventional depth suffers there. `Projection` also provides a finite variant and `ReverseZOrtho` for the sun
+shadow map.
 
 ## HDR + tonemap
 
@@ -162,8 +163,8 @@ coarse world-per-texel reads as a wide soft penumbra. `ShadowDistance`/`ShadowMa
 Quality preset (Low 96/512, Medium 160/1024, High 256/2048). The shadow pipeline culls `None` (the mesher
 emits single-sided exposed faces) and uses `depthBias`/`depthBiasSlopeScale` against acne.
 
-**The PCF runs at HALF resolution** (`DrawShadowResolve` → `ShadowResolve.wgsl`), the single biggest GPU pass
-on a fill-limited GPU. A fullscreen triangle reconstructs world position from the camera depth
+**The PCF runs at HALF resolution** (`DrawShadowResolve` → `ShadowResolve.wgsl`) to cut its fill cost. A
+fullscreen triangle reconstructs world position from the camera depth
 (`uViewProjectionInv`, reverse-Z), projects into light space (`uLightViewProj`), and runs a **12-tap Poisson
 disc rotated per pixel** (interleaved-gradient-noise angle) against the map. The depth comparison uses a
 **comparison sampler with `CompareFunction.Greater`** (a fragment is lit when its light-space depth exceeds the
@@ -172,8 +173,8 @@ far-plane early-out is `p.z ≤ 0`). It writes `r` = shadow factor, `g` = normal
 `ShadowDistance` far fade. Composition then **depth-aware (joint-bilateral) upsamples** the half-res buffer: a
 2×2 tap weighted by bilinear position **and** by `exp(-|Δdepth|·DepthSharpness)` so the shadow doesn't bleed
 across silhouettes. Both the resolve and the upsample are **early-outed** where the sun term can't matter — past
-`ShadowDistance`, sky-occluded (`light.a ≈ 0`), shadows-off, or at night/dusk (`SunFade ≈ 0`) — which is the
-bulk of the fullscreen win. **In-shader map border:** light-space samples that fall outside the map read as lit
+`ShadowDistance`, sky-occluded (`light.a ≈ 0`), shadows-off, or at night/dusk (`SunFade ≈ 0`).
+**In-shader map border:** light-space samples that fall outside the map read as lit
 ("outside the coverage is sunlit").
 
 Two tunable look knobs (uniforms, no recompile): `ShadowSoftness` (penumbra radius in texels, free) and
@@ -270,6 +271,8 @@ After the chunk geometry, several renderers draw into the same G-buffer pass:
 - **`PlayerController.Render`** — the block-targeting outline + the survival breaking-crack overlay
   (`destroy_stage_0..9`). The break overlay masks the normal/light MRTs so the block keeps its geometry-pass
   lighting and the cracks read as part of the surface.
+- **`ChunkBorderRenderer`** — the F4 debug overlay: wireframe boxes (the shared `OutlineRenderer` cube) around
+  the chunks near the player, the current chunk highlighted, depth-tested against terrain.
 - **`HeldItemRenderer`** (last) — the first-person held-item viewmodel, pinned to a fixed view-space pose
   composed from the resource pack's `display.firstperson_righthand` transform + MC's hand/swing constants
   (`displayMatrix · swing · translate(ITEM_POS)`); a held block draws as its 3D model, a flat item as its
@@ -282,7 +285,7 @@ After the chunk geometry, several renderers draw into the same G-buffer pass:
 (≤ `ServerNetwork.ViewDistance`) always mesh at full detail; coarse terrain only appears *past* the render
 distance, where it is far and fog-hidden — a second streaming channel of surface-only columns letting terrain
 recede to a fogged horizon `LodRingChunks` (default 64) chunks past the render distance, the Distant-Horizons
-look. The horizon is nearly free (far rings are 4×/16× cheaper + fog-occluded). The data model, server-side LOD
+look. Far rings are 4×/16× cheaper (coarser stride) and fog-occluded. The data model, server-side LOD
 generation/decoration, the packet, and the split-priority mesh worker live elsewhere — see
 [world-model.md](world-model.md), [worldgen.md](worldgen.md), [networking.md](networking.md),
 [threading.md](threading.md). The rendering side:

@@ -5,7 +5,7 @@ Mobs, animals, dropped items, and remote players. Players are **client-authorita
 server owns its position/AI and streams it to clients, which only interpolate and render.
 
 **Entities persist with their chunk.** Each world entity belongs to the chunk containing its position;
-`EntitySerializer` writes it (type + transform + subclass state, all by stable registry **name**) into a
+[`EntitySerializer`](../MinecraftClone3API/Entities/EntitySerializer.cs) writes it (type + transform + subclass state, all by stable registry **name**) into a
 per-chunk blob in a second `RegionStore` (`.rei`/`.red`, parallel to the chunk `.ri`/`.rd`). Saving and
 respawning run on the **tick thread** at the chunk load/unload drains (`WorldServer.SpawnSavedEntities` /
 `SaveAndDespawnChunkEntities`), so all `Entities` mutation stays single-threaded; the disk read happens off the
@@ -38,12 +38,12 @@ network data is needed). Subclasses:
   `WorldServer.SpawnFallingBlock` when the block is unsupported (see [world-model.md](world-model.md)); falls via
   `EntityPhysics` and on landing turns back into a placed block at its rest cell (stacking one cell up if that
   cell was filled the same tick). `Position` is the block's bottom-centre. It carries its block id on a
-  `FallingBlockData` so the client renders the right full-size block (`EntityRenderer.DrawFallingBlock`, reusing
+  `FallingBlockData` so the client renders the right full-size block (`EntityRenderer.QueueFallingBlock`, reusing
   the dropped-item block mesh at full scale, no spin).
 - **`EntityProjectile`** — a thrown ender pearl. Flies under light gravity with a **sub-stepped** swept block
   check (so a fast pearl can't tunnel a thin wall); on entering a solid collision box it queues a teleport of
   its thrower (`OwnerId`) onto `WorldServer.PendingTeleports` and dies. Rendered client-side as a single
-  **camera-facing billboard** quad of the pearl item sprite (`EntityRenderer.DrawProjectile`, oriented from the
+  **camera-facing billboard** quad of the pearl item sprite (`EntityRenderer.QueueProjectile`, oriented from the
   camera basis), not a box model. Thrown by `ItemEnderPearl.OnUseServer` along the player's look vector.
 - **`EntityPlayer`** — the player (its own tuned [PlayerPhysics](../MinecraftClone3API/Entities/PlayerPhysics.cs);
   remote copies are bare `Entity`s with `Type == null`). Also carries the survival stats
@@ -58,15 +58,15 @@ width/height. It runs **server-side only** and reuses the same collision contrac
 
 An `EntityType` ([Entities/EntityType.cs](../MinecraftClone3API/Entities/EntityType.cs)) is a registered species:
 collision `Width`/`Height`, AI fields (`Hostile`, `MoveSpeed`, `MaxHealth`), combat fields (`AttackDamage` for a
-hostile mob's contact damage, an optional `LootTable` rolled on death), an `EntityKind`
-(`Creature`/`Item`/`FallingBlock`),
+hostile mob's contact damage, an optional `Loot` (a `LootTable`) rolled on death), an `EntityKind`
+(`Creature`/`Item`/`FallingBlock`/`Projectile`),
 and the **client-only** render data (`TexturePath` + a `ModelPath` resource key). Plugins register them with
 `context.Register(EntityType)`; the `EntityRegistry` assigns each a sequential numeric `Id` in registration order.
 **Client and server load the same plugins in the same order, so the ids agree on the wire** — the same
 block-id-agreement contract. A remote player uses the reserved `EntityType.PlayerTypeId`.
 
 The in-memory model (`EntityModel`/`ModelPart`/`ModelBox`,
-[Client/Graphics/EntityModel.cs](../MinecraftClone3API/Client/Graphics/EntityModel.cs)) is GL-free data — a flat
+[Client/Graphics/EntityModel.cs](../MinecraftClone3API.Client/Graphics/EntityModel.cs)) is GL-free data — a flat
 list of parts, each a group of texture-offset boxes that pivots for animation. The server never builds it; only
 the client loads it (from a data file — see Rendering) and turns it into GPU buffers.
 
@@ -85,7 +85,7 @@ without the API knowing the concrete subclass. The base `Entity` stays free of p
 
 `EntitySpawnPacket` carries `TypeId` (+ an `ItemStack` for items); `EntityMovePacket` also carries `HurtTime`
 (damage flash) and `HeldItemId` (the player's main-hand item, so others can see what's held — a session-local id,
-safe on the live wire as the client and server share the plugin load); `EntityDespawnPacket` is unchanged.
+safe on the live wire as the client and server share the plugin load).
 `WorldServer` owns id allocation (`NextEntityId`, shared with players) and `SpawnEntity`/`DropItem`,
 queuing spawns/despawns onto `PendingSpawns`/`PendingDespawns`. Each `Pump`, `ServerNetwork.SyncEntities` drains
 those queues (broadcasting spawn/despawn), lets players collect nearby pickup-ready items into their inventory,
@@ -99,11 +99,14 @@ stack) go through `DropItemRequest` → `ServerNetwork.ApplyDropRequest`, which 
 look direction with `EntityItem.PickupDelay` raised to ~2 s so it doesn't fly straight back into the thrower
 (block-break drops keep the short ~0.5 s default).
 
+The action requests below are all **anti-spoof**: the server acts only on its own authoritative state — it reads
+the held item from its own inventory copy, and resolves any entity id against its own `WorldServer.FindEntity`
+list — never on data the client supplies.
+
 **Spawn eggs.** Each creature also registers an `ItemSpawnEgg` (a non-block `Item` with `IsUsable = true`,
-holding the `EntityType` to spawn and the official spawn-egg sprite). Right-clicking a usable item sends a
-`UseItemRequestPacket` with the targeted cell; the server reads the held item from its own authoritative
-inventory copy (so the request can't spoof the item) and calls `Item.OnUseServer`, which spawns the creature.
-Fresh players are seeded the spawn eggs on the first hotbar slots (then blocks) so entities are testable at once.
+holding the `EntityType` to spawn and the official spawn-egg sprite). Right-clicking sends a `UseItemRequestPacket`
+with the targeted cell; the server calls `Item.OnUseServer`, which spawns the creature. Fresh players are seeded
+the spawn eggs on the first hotbar slots (then blocks) so entities are testable at once.
 
 **Thrown items (ender pearl).** An `Item` with `RequiresBlockTarget == false` (the ender pearl) fires its
 `OnUseServer` even when the crosshair is on no block (aiming at the sky), so `PlayerController` sends a
@@ -118,24 +121,22 @@ snap: the client obeys by snapping its local player there and clearing its fall 
 **Item use on an entity (shears).** An `Item` with `UsableOnEntity = true` (the shears) takes precedence on
 right-click: `PlayerController.PickEntity` ray-casts the held look direction against each entity's collision AABB
 (nearer than the targeted block), and a hit sends `UseItemOnEntityRequestPacket` with the entity id. The server
-resolves the id against its **own** `WorldServer.FindEntity` list (so it can't act on an arbitrary id), runs
-`Item.OnUseOnEntity`, then broadcasts the entity's (possibly changed) `EntityData`. `ItemShears.OnUseOnEntity`
+runs `Item.OnUseOnEntity`, then broadcasts the entity's (possibly changed) `EntityData`. `ItemShears.OnUseOnEntity`
 shears a woolly sheep — flips `SheepData.Sheared` (which the client uses to drop the wool layer) and `DropItem`s
 1–3 wool.
 
 **Melee combat (attacking mobs).** A fresh left-click reuses the same `PlayerController.PickEntity` raycast: if a
 creature is hit (nearer than the targeted block) the click is an **attack**, not a block break — it sends
 `AttackEntityRequestPacket` with the entity id and swallows the rest of that hold so it doesn't also mine. The
-server resolves the id against its own `FindEntity` list and runs `EntityCombat.DamageEntity` with the held
+server runs `EntityCombat.DamageEntity` with the held
 item's `Item.AttackDamage` (bare hand = `EntityCombat.BaseHandDamage` = 1; swords raise it). `EntityCombat`
 ([Entities/EntityCombat.cs](../MinecraftClone3API/Entities/EntityCombat.cs)) is the GL-free, stateless server
 combat sink: it gates on the target's `HurtCooldown` (0.5 s invuln), subtracts `Health`, sets a `HurtTime`
 flash timer (streamed in `EntityMovePacket`; the client renders the model red while it runs — see
 [rendering.md](rendering.md)), applies horizontal + upward knockback to the target's `Velocity`, and on death
-rolls the type's `LootTable`
-([Entities/LootTable.cs](../MinecraftClone3API/Entities/LootTable.cs)) — `DropItem`-ing each stack — before
-setting `Dead`. Death/despawn then streams through the existing `PendingDespawns` path, so **no new server→client
-packet is needed**. Loot is declared on the `EntityType` by item registry key (resolved lazily, like the shears'
+rolls the type's `Loot`
+([`LootTable`](../MinecraftClone3API/Entities/LootTable.cs)) — `DropItem`-ing each stack — before
+setting `Dead`. Death/despawn streams through the `PendingDespawns` path. Loot is declared on the `EntityType` by item registry key (resolved lazily, like the shears'
 wool), e.g. zombie → rotten flesh, cow → beef + leather.
 
 ## Player survival
@@ -169,14 +170,14 @@ armor, matching Minecraft, so they stay direct subtractions.) Player knockback i
 player physics. See [inventory.md](inventory.md) for armor items + slots.
 ## Rendering
 
-`EntityRenderer` ([Client/Graphics/EntityRenderer.cs](../MinecraftClone3API/Client/Graphics/EntityRenderer.cs))
+`EntityRenderer` ([Client/Graphics/EntityRenderer.cs](../MinecraftClone3API.Client/Graphics/EntityRenderer.cs))
 draws every entity into the deferred **G-buffer** with the `EntityGeometry` shader (real normals + a per-entity
 flat light value sampled at its position, so it shades/shadows like the surrounding blocks — see
 [rendering.md](rendering.md)). Box models are textured from the **official Minecraft entity sheets**: each box uses
 Mojang's texture offsets + dimensions so the sheet maps straight on, with UVs normalized by the texture array's
 layer size. (Current Minecraft splits some mob sheets by climate variant, so the paths carry a suffix —
 `entity/pig/pig_temperate`, `entity/cow/cow_temperate`, `entity/chicken/chicken_temperate`.) Dropped items spin and
-bob: a block as the 3D icon of its block (the same mesh [ItemIconRenderer](../MinecraftClone3API/Client/Graphics/ItemIconRenderer.cs)
+bob: a block as the 3D icon of its block (the same mesh [ItemIconRenderer](../MinecraftClone3API.Client/Graphics/ItemIconRenderer.cs)
 uses for the inventory), a flat item as its extruded sprite, and a block entity (a chest) as its box model. A
 projectile (the ender pearl) instead renders as a single **camera-facing billboard** quad of its item sprite —
 the quad's local axes are mapped onto the camera's `Right`/`Up`/forward each frame so it always faces the viewer.
@@ -184,7 +185,7 @@ the quad's local axes are mapped onto the camera's `Right`/`Up`/forward each fra
 Every per-instance draw rides one shared `EntityDrawList` (a dynamic-offset slot UBO `{model, light}` over the
 entity pipeline); `EntityRenderer`, `BlockEntityRenderer`, and `HeldItemRenderer` each own one. **Block entities**
 (chests, `Block.RendersAsBlockEntity`) are skipped by the chunk mesher and drawn by
-[`BlockEntityRenderer`](../MinecraftClone3API/Client/Graphics/BlockEntityRenderer.cs): it scans loaded chunks near
+[`BlockEntityRenderer`](../MinecraftClone3API.Client/Graphics/BlockEntityRenderer.cs): it scans loaded chunks near
 the camera for block-data positions with a model, seats each box model at its cell (corner-origin `(P+0.5, P,
 P+0.5)`) oriented by `GetBlockEntityRotation`, and swings a chest's lid (+`lock`) about its hinge while its screen
 is open (`SetChestOpen`).
@@ -197,7 +198,7 @@ player model at `PlayerController.PlayerEntity`. Its walk cycle is advanced from
 **Held item.** A player's main-hand item (`Entity.HeldItemId`) hangs off the right-arm bone (`arm0`) so it swings
 with the body and remote clients see what's held — a block as its icon mesh, a flat item as its extruded sprite, a
 chest as its box model (`EntityRenderer.QueueHeldItem`). In **first person** the body is hidden, so
-[`HeldItemRenderer`](../MinecraftClone3API/Client/Graphics/HeldItemRenderer.cs) draws the lower-right viewmodel
+[`HeldItemRenderer`](../MinecraftClone3API.Client/Graphics/HeldItemRenderer.cs) draws the lower-right viewmodel
 instead: the held stack posed in view space from the resource pack's `display.firstperson_righthand` transform
 (`ItemDisplay`, the vanilla `ItemInHandRenderer` math) plus a swing arc driven by `PlayerController.SwingPhase`,
 compressed into the front reverse-Z depth band (`SetViewport` min/max depth) so the world never clips it.
@@ -214,17 +215,15 @@ from the live inventory at draw time; remote players get it streamed in the move
 
 **Models are data, not code.** Each type's geometry is a **Bedrock-edition geometry JSON** file (the
 Blockbench-native mob format — bones with `pivot`/`rotation`, cubes with absolute `origin`/`size`/`uv`), loaded
-by `BedrockModelLoader` ([Client/Graphics/BedrockModelLoader.cs](../MinecraftClone3API/Client/Graphics/BedrockModelLoader.cs)).
+by `BedrockModelLoader` ([Client/Graphics/BedrockModelLoader.cs](../MinecraftClone3API.Client/Graphics/BedrockModelLoader.cs)).
 Mob geometry is **not** in the Minecraft jar (it lives in compiled Java there), so — like `Vanilla/Models/Water.json`
 — these are the few authored model files we ship: `System/Models/Entity/biped.geo.json` (the plain humanoid, used
 by the zombie), `System/Models/Entity/player.geo.json` (the same biped **plus the modern skin's overlay layer** —
 hat/jacket/sleeves/pants, each a base part copied and grown by cube `inflate`, textured from the lower sheet rows;
 overlay bones reuse the base part name so they swing with the limb), and the animals under
-`Vanilla/Models/Entity/`. The loader reflects Bedrock's −Z-facing, y-up
-coordinates into our +Z-facing convention (`z → −z`) and rebases each cube's absolute origin onto its bone pivot;
-it honors per-cube `uv`/`inflate` and X-axis bone rotation (the quadruped body pitch), but not bone parenting,
-cube `mirror`, or Y/Z rotation conventions (unused by the built-in models). Bone names drive animation, so author
-them `head`/`body`/`leg0..3`/`arm0..1`/`wing0..1`.
+`Vanilla/Models/Entity/`. The server never loads them — only the client does, into GPU buffers. Bone names drive
+animation, so author them `head`/`body`/`leg0..3`/`arm0..1`/`wing0..1` (`BedrockModelLoader` documents the
+coordinate reflection and which Bedrock features it honors).
 
 **Overlay layers.** An `EntityType` may name a second model + texture (`OverlayModelPath`/`OverlayTexturePath`) —
 the sheep's wool. It's built as a separate `RenderModel` (its own texture indexes into the array, so each VAO's

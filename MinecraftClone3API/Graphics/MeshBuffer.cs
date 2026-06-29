@@ -9,12 +9,12 @@ namespace MinecraftClone3API.Graphics
     /// The opaque path uploads these lists into the shared <see cref="ChunkMeshArena"/>; the transparent path
     /// keeps a per-chunk <see cref="VertexArrayObject"/> (which derives from this and adds the GPU buffers).
     ///
-    /// <para>Vertices are <b>packed to 32 bytes</b> (from a former 72) — position float3 (12), uv float2 (8),
+    /// <para>Vertices are <b>packed to 32 bytes</b> — position float3 (12), uv float2 (8),
     /// a packed uint (4: texId/arrayId/normal-index/material), tint RGBA8 (4), light RGBA8 (4). Voxel normals
     /// are exactly the 6 axes so an index is lossless; tint and light are 0..1 and the G-buffer stores them as
-    /// RGBA8 anyway, so 8-bit here is lossless too. Halving the vertex roughly halves geometry-pass vertex
-    /// bandwidth (the bottleneck at high render distance) and the mesh-thread allocation. The vertex shader
-    /// unpacks back to the same varyings, so the fragment shader is unchanged.</para>
+    /// RGBA8 anyway, so 8-bit here is lossless too. Packing keeps geometry-pass vertex bandwidth (the
+    /// bottleneck at high render distance) and mesh-thread allocation down. The vertex shader unpacks back to
+    /// the same varyings, so the fragment shader is unchanged.</para>
     /// Backing lists are rented from <see cref="VaoBufferPool"/> so a remesh allocates nothing steady-state.
     /// </summary>
     public class MeshBuffer

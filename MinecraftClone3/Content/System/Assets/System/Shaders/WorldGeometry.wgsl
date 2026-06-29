@@ -1,5 +1,5 @@
 // Deferred geometry pass: opaque + transparent chunk meshes into the 3-MRT G-buffer.
-// Ported from WorldGeometry.vs/.fs. Positions are baked world-space at mesh time (no per-chunk model
+// Positions are baked world-space at mesh time (no per-chunk model
 // matrix), so every chunk shares one buffer set and draws with a single GPU-driven indirect multidraw.
 //
 // Binding convention (shared across world passes):
@@ -141,7 +141,7 @@ fn fs_main(i: VsOut) -> GBuffer {
 
     var o: GBuffer;
     o.diffuse = diffuse;
-    o.normal = i.normal * 0.5 + 0.5;   // EncodeNormal
+    o.normal = i.normal * 0.5 + 0.5;
     o.light = i.light;
     return o;
 }

@@ -12,17 +12,14 @@ namespace MinecraftClone3API.IO
             if (value is Vector2D<float> v2)
             {
                 writer.WriteValue(new[] {v2.X, v2.Y});
-                //writer.WriteRawValue($"[ {v2.X}, {v2.Y} ]");
             }
             else if (value is Vector3D<float> v3)
             {
                 writer.WriteValue(new[] { v3.X, v3.Y, v3.Z });
-                //writer.WriteRawValue($"[ {v3.X}, {v3.Y}, {v3.Z} ]");
             }
             else if (value is Vector4D<float> v4)
             {
                 writer.WriteValue(new[] { v4.X, v4.Y, v4.Z, v4.W });
-                //writer.WriteRawValue($"[ {v4.X}, {v4.Y}, {v4.Z}, {v4.W} ]");
             }
             else throw new Exception($"{value} cannot be handled by this converter!");
         }

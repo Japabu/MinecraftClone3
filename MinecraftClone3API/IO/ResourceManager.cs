@@ -66,7 +66,6 @@ namespace MinecraftClone3API.IO
 
             pluginFiles.ForEach(f =>
             {
-                //Add asset index
                 if (f.StartsWith(AssetsDir, StringComparison.OrdinalIgnoreCase))
                 {
                     var key = f.Substring(AssetsDir.Length);
@@ -78,7 +77,7 @@ namespace MinecraftClone3API.IO
 
                     AssetIndices[key] = new AssetSource(fileSystem, f);
                 }
-                //Add data index (recipes, tags, …) — the pack's data/ tree drives crafting/tag content
+                // The pack's data/ tree (recipes, tags, …) drives crafting/tag content.
                 else if (f.StartsWith(DataDir, StringComparison.OrdinalIgnoreCase))
                 {
                     var key = f.Substring(DataDir.Length);
@@ -90,7 +89,6 @@ namespace MinecraftClone3API.IO
 
                     DataIndices[key] = new AssetSource(fileSystem, f);
                 }
-                //Import language
                 else if (f.StartsWith(LangDir, StringComparison.OrdinalIgnoreCase) &&
                          f.EndsWith(LangExt, StringComparison.OrdinalIgnoreCase))
                 {

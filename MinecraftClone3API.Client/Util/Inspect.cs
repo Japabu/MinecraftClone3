@@ -26,7 +26,7 @@ namespace MinecraftClone3API.Util
         public static bool Active { get; private set; }
         public static bool Finished { get; private set; }
 
-        // Large window so artifacts are actually visible (720p hides them — that's how they got missed).
+        // Large window so artifacts are actually visible (720p hides them).
         public static int Width = 1920;
         public static int Height = 1080;
         public static int RenderDistanceChunks = 16;
