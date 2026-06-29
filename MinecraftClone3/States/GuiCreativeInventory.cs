@@ -293,6 +293,15 @@ namespace MinecraftClone3.States
         {
             if (IsInventory)
             {
+                // Shift-clicking the destroy slot wipes the whole inventory (worn armor, main, hotbar).
+                if (slot.IsSource)
+                {
+                    foreach (var s in _inventorySlots)
+                        if (!s.IsSource)
+                            s.Set(ItemStack.Empty);
+                    return;
+                }
+
                 if (slot.Group == ArmorGroup)
                 {
                     var inv = new List<Slot>(SlotsInGroup(MainGroup));

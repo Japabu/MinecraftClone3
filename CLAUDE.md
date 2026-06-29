@@ -164,6 +164,12 @@ the linked doc; this is the short "don't violate this" list.
   because `origin/master` can lag local). A worktree is **merged into `master` and then deleted** only once the
   work is done, `dotnet build` is clean, **and the maintainer has tested and reviewed it** — never merge
   unreviewed/untested.
+  - **Edit the worktree's copy, not the main repo's.** The IDE "opened file" context and sub-agents (Explore,
+    etc.) report absolute paths rooted at the *original* repo (`/…/MinecraftClone3/<sub>`); editing those
+    verbatim silently writes to the `master` checkout, not the worktree, because only the path prefix differs.
+    A `dotnet build` from the worktree still passes (it compiled the unchanged worktree), hiding the mistake.
+    Rewrite any handed-in path to the worktree prefix (`/…/MinecraftClone3/.claude/worktrees/<name>/<sub>`)
+    before Read/Edit/Write, and confirm edits landed with `git -C <worktree> status`, not just a green build.
 - **No backwards compatibility.** Rapid development, no shipped users. Do **not** add format-version
   negotiation, save migrations, deprecation shims, or compatibility fallbacks. When a format changes, the
   world is regenerated (delete the folder). Prefer the clean break. (Crash-robustness — e.g. regenerating a

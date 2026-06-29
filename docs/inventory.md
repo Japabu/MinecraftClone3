@@ -153,7 +153,8 @@ inventory slot, a crafting result, or a creative infinite source):
 - **Shift-click** — quick-move a stack to the other region. Routing is per-screen via `OnShiftClick` using the
   `MergeInto`/`SlotsInGroup` helpers and each slot's `Group` tag: the crafting table moves grid→inventory and
   main↔hotbar (and the output crafts the full batch); the creative screen grants a full stack from the item
-  list to the hotbar and trashes a shift-clicked hotbar slot.
+  list to the hotbar, trashes a shift-clicked hotbar slot, and wipes the whole inventory when the **destroy
+  slot** itself is shift-clicked.
 - **Output slot** — can't be placed into; taking crafts one batch (`OnTakeOutput` → `ConsumeOne`); merges with
   a matching cursor.
 - **Source slot** (creative item list) — left-click takes a full stack, right-click one; dropping a held stack
@@ -208,7 +209,8 @@ name.
     by name/registry-key/Minecraft-id. While focused the inventory key types into it instead of closing; **Escape**
     always closes.
   - **Survival Inventory** (bottom-right, chest) over `tab_inventory.png`: the four armor slots (gated by piece),
-    the 3×9 main inventory + hotbar, and the **destroy** slot (a source that trashes what's dropped on it). No
+    the 3×9 main inventory + hotbar, and the **destroy** slot (a source that trashes what's dropped on it, and
+    wipes the whole inventory when shift-clicked). No
     crafting grid (vanilla hides it here). The player **paperdoll** (looking toward the cursor, wearing its
     `Inventory.Armor` pieces) is rendered into the panel's box by `ItemIconRenderer.RenderPlayer`.
 
