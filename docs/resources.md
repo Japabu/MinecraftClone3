@@ -12,7 +12,8 @@ client-only step. **The client additionally does the GPU + asset steps** — `Cl
 block's declared model/blockstate from the pack, single-threaded, registering its textures into the CPU
 arrays), `EntityRenderer.LoadModels`, and finally `BlockTextureUploader.Upload` (the only GPU step:
 `Queue.WriteTexture`s each accumulated layer into the four size-bucketed `rgba8unorm` `texture_2d_array`
-atlases — 16/64/256/1024 — then builds each mip chain on the GPU via the `MipGenerator` compute pass).
+atlases — 16/64/256/1024 — then uploads each level of the hole-dilated mip chain built on the CPU by
+`BlockMipChain`; see [rendering.md](rendering.md)).
 Model JSON and PNGs are read CPU-side via StbImage; deferring the parse to this pass — rather than the block
 constructors — is what keeps the headless server render-asset-free.
 

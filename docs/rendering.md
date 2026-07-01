@@ -133,14 +133,19 @@ convention to compose with the camera math; the WGSL read flips it back.)
 ## The block atlas and packed vertex
 
 The atlas is **four size-bucketed `texture_2d_array`** (16/64/256/1024 px), bound together (`EnsureAtlasBind`);
-the shader selects by the per-vertex `arrayId`. The block sampler is **nearest magnification** (crisp pixel-art)
-+ **trilinear minification**; hardware anisotropy is dropped (WebGPU forbids nearest-mag + anisotropy together),
-with the mip chain + the foliage anti-aliased alpha test carrying minification quality. Blocks use **Repeat**
+the shader selects by the per-vertex `arrayId`. WebGPU can't put anisotropy and nearest-magnification on one
+sampler (aniso requires all-linear filters), so the atlas binds **two** samplers and `sampleAtlas` picks per
+fragment: **nearest** while magnifying (crisp pixel-art, texel ≥ pixel), **all-linear + 16× anisotropy** once
+minifying, so grazing/distant surfaces stay sharp instead of over-blurring to a coarse mip. Blocks use **Repeat**
 wrap (faces tile); **entities/worn armor** sample the same arrays through a parallel **clamp** sampler
 (`GpuSamplers.Entity`) since their unwraps don't tile and armor sheets are transparent-padded — clamp stops the
-opposite edge bleeding in at distance. Mips are built by a
-compute shader (`Mipgen.compute.wgsl`, 2×2 box downsample); mipped atlas textures are created with
-`StorageBinding` so the compute pass can write them.
+opposite edge bleeding in at distance. Mips are built on the **CPU** (`BlockMipChain`) and uploaded level by
+level (WebGPU has no `GenerateMipmap`); the downsample itself is a plain 2×2 box. The one non-obvious step is
+**hole dilation**: a cutout texture's fully-transparent holes carry black RGB, and the trilinear min filter
+re-mixes that black into every minified leaf edge at *sample* time (the texel is alpha-0 and discarded, but its
+colour still averages in) — darkening distant foliage. `BlockMipChain.Dilate` floods the surrounding colour
+outward into the holes, on the base level and every mip, so the filter blends leaf-with-leaf; it's a no-op on
+textures with no holes (opaque blocks, water).
 
 **Animated blocks** (water/lava/fire/nether portal) are driven by `BlockAnimator` (`RenderWorld` calls it once
 per frame). Each `.mcmeta` strip was sliced into one layer per frame at load; the animator simply re-uploads the

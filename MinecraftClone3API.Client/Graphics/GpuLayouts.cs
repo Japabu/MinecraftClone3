@@ -9,7 +9,7 @@ namespace MinecraftClone3API.Graphics
     /// bind group serves every world pass:
     ///   <list type="bullet">
     ///   <item><see cref="Frame"/> — group 0: the per-frame <see cref="FrameUniform"/> (view/proj/camera).</item>
-    ///   <item><see cref="BlockAtlas"/> — group 2: the four block-atlas texture arrays + the atlas sampler.</item>
+    ///   <item><see cref="BlockAtlas"/> — group 2: the four block-atlas texture arrays + the nearest & anisotropic atlas samplers.</item>
     ///   <item><see cref="ScreenTexture"/> — one sampled colour texture + sampler, for fullscreen passes
     ///   (tonemap, sprite). </item>
     ///   </list>
@@ -34,6 +34,7 @@ namespace MinecraftClone3API.Graphics
                 GpuBindGroupLayout.Texture(2, ShaderStage.Fragment, TextureSampleType.Float, TextureViewDimension.Dimension2DArray),
                 GpuBindGroupLayout.Texture(3, ShaderStage.Fragment, TextureSampleType.Float, TextureViewDimension.Dimension2DArray),
                 GpuBindGroupLayout.Sampler(4, ShaderStage.Fragment, SamplerBindingType.Filtering),
+                GpuBindGroupLayout.Sampler(5, ShaderStage.Fragment, SamplerBindingType.Filtering),
             }, "blockAtlas");
 
             ScreenTexture = new GpuBindGroupLayout(new[]

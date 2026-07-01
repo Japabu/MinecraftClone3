@@ -36,14 +36,6 @@ namespace MinecraftClone3API.Graphics.Rhi
             if (Handle == null) throw new InvalidOperationException($"wgpu: failed to create sampler '{label}'");
         }
 
-        public static GpuSampler Nearest(AddressMode address = AddressMode.ClampToEdge, bool mip = false)
-            => new GpuSampler(FilterMode.Nearest, FilterMode.Nearest,
-                mip ? MipmapFilterMode.Nearest : MipmapFilterMode.Nearest, address);
-
-        public static GpuSampler Linear(AddressMode address = AddressMode.ClampToEdge, bool mip = true)
-            => new GpuSampler(FilterMode.Linear, FilterMode.Linear,
-                mip ? MipmapFilterMode.Linear : MipmapFilterMode.Nearest, address);
-
         public void Dispose()
         {
             if (Handle != null) Gpu.Api.SamplerRelease(Handle);

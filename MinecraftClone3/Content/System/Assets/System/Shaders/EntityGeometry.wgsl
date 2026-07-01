@@ -23,6 +23,7 @@ struct EntityDraw {
 @group(2) @binding(2) var tex256: texture_2d_array<f32>;
 @group(2) @binding(3) var tex1024: texture_2d_array<f32>;
 @group(2) @binding(4) var atlasSampler: sampler;
+@group(2) @binding(5) var atlasAniso: sampler;
 
 var<private> Normals: array<vec3<f32>, 6> = array<vec3<f32>, 6>(
     vec3<f32>( 1.0, 0.0, 0.0), vec3<f32>(-1.0, 0.0, 0.0),
@@ -67,15 +68,28 @@ struct GBuffer {
     @location(2) light: vec4<f32>,
 };
 
+fn sampleArr(s: sampler, arr: i32, uv: vec2<f32>, layer: i32, ddx: vec2<f32>, ddy: vec2<f32>) -> vec4<f32> {
+    if (arr == 0) { return textureSampleGrad(tex16, s, uv, layer, ddx, ddy); }
+    if (arr == 1) { return textureSampleGrad(tex64, s, uv, layer, ddx, ddy); }
+    if (arr == 2) { return textureSampleGrad(tex256, s, uv, layer, ddx, ddy); }
+    return textureSampleGrad(tex1024, s, uv, layer, ddx, ddy);
+}
+
 fn sampleAtlas(texCoord: vec4<f32>, ddx: vec2<f32>, ddy: vec2<f32>, fallback: vec3<f32>) -> vec4<f32> {
+    let arr = i32(texCoord.w);
+    if (arr < 0) { return vec4<f32>(fallback, 1.0); }
     let uv = texCoord.xy;
     let layer = i32(texCoord.z);
-    let arr = i32(texCoord.w);
-    if (arr == 0) { return textureSampleGrad(tex16, atlasSampler, uv, layer, ddx, ddy); }
-    if (arr == 1) { return textureSampleGrad(tex64, atlasSampler, uv, layer, ddx, ddy); }
-    if (arr == 2) { return textureSampleGrad(tex256, atlasSampler, uv, layer, ddx, ddy); }
-    if (arr == 3) { return textureSampleGrad(tex1024, atlasSampler, uv, layer, ddx, ddy); }
-    return vec4<f32>(fallback, 1.0);
+    // Nearest while magnifying (crisp), 16× anisotropy once minifying (distant/grazing mobs & dropped items) —
+    // see WorldGeometry.sampleAtlas for the rationale.
+    let texSize = f32(16u << (2u * u32(arr)));
+    let dx = ddx * texSize;
+    let dy = ddy * texSize;
+    let maxSq = max(dot(dx, dx), dot(dy, dy));
+    if (maxSq <= 1.0) {
+        return sampleArr(atlasSampler, arr, uv, layer, ddx, ddy);
+    }
+    return sampleArr(atlasAniso, arr, uv, layer, ddx, ddy);
 }
 
 @fragment
