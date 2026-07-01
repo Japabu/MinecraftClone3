@@ -36,6 +36,7 @@ struct GeoParams {
 @group(2) @binding(2) var tex256: texture_2d_array<f32>;
 @group(2) @binding(3) var tex1024: texture_2d_array<f32>;
 @group(2) @binding(4) var atlasSampler: sampler;
+@group(2) @binding(5) var atlasAniso: sampler;
 
 // var<private> (not const): WGSL only allows a *constant* index into a module-scope const array, and these
 // are indexed dynamically (by the packed normal/material bits and the screen-space Bayer cell).
@@ -103,17 +104,34 @@ fn lodDiscard(worldPos: vec3<f32>, fragCoord: vec2<f32>) -> bool {
     return dither >= fade;                               // LOD: shows where the chunk is gone
 }
 
+// Sample the arrayId-selected atlas array with a given sampler. textureSampleGrad takes explicit gradients, so
+// it is legal in this non-uniform array selection (plain textureSample, which needs implicit derivatives, is not).
+fn sampleArr(s: sampler, arr: i32, uv: vec2<f32>, layer: i32, ddx: vec2<f32>, ddy: vec2<f32>) -> vec4<f32> {
+    if (arr == 0) { return textureSampleGrad(tex16, s, uv, layer, ddx, ddy); }
+    if (arr == 1) { return textureSampleGrad(tex64, s, uv, layer, ddx, ddy); }
+    if (arr == 2) { return textureSampleGrad(tex256, s, uv, layer, ddx, ddy); }
+    return textureSampleGrad(tex1024, s, uv, layer, ddx, ddy);
+}
+
 fn sampleAtlas(texCoord: vec4<f32>, ddx: vec2<f32>, ddy: vec2<f32>) -> vec4<f32> {
+    let arr = i32(texCoord.w);
+    if (arr < 0) { return vec4<f32>(0.0); }
     let uv = texCoord.xy;
     let layer = i32(texCoord.z);
-    let arr = i32(texCoord.w);
-    // textureSampleGrad takes explicit gradients, so it is legal in the non-uniform array selection below
-    // (plain textureSample, which needs implicit derivatives, is not). Derivatives are hoisted by the caller.
-    if (arr == 0) { return textureSampleGrad(tex16, atlasSampler, uv, layer, ddx, ddy); }
-    if (arr == 1) { return textureSampleGrad(tex64, atlasSampler, uv, layer, ddx, ddy); }
-    if (arr == 2) { return textureSampleGrad(tex256, atlasSampler, uv, layer, ddx, ddy); }
-    if (arr == 3) { return textureSampleGrad(tex1024, atlasSampler, uv, layer, ddx, ddy); }
-    return vec4<f32>(0.0);
+
+    // Anisotropy needs all-linear filters (WebGPU forbids nearest-mag + aniso on one sampler) and only helps
+    // when minifying. So sample the nearest atlasSampler while a texel still covers >= a pixel (crisp pixel-art
+    // magnification), and switch to atlasAniso once minifying, where grazing/distant surfaces would otherwise
+    // over-blur to a coarse mip. texSize is the bucket side (tex16/64/256/1024); maxSq is the squared
+    // texels-per-pixel of the busier axis, so <= 1 means magnifying.
+    let texSize = f32(16u << (2u * u32(arr)));
+    let dx = ddx * texSize;
+    let dy = ddy * texSize;
+    let maxSq = max(dot(dx, dx), dot(dy, dy));
+    if (maxSq <= 1.0) {
+        return sampleArr(atlasSampler, arr, uv, layer, ddx, ddy);
+    }
+    return sampleArr(atlasAniso, arr, uv, layer, ddx, ddy);
 }
 
 @fragment
@@ -130,11 +148,13 @@ fn fs_main(i: VsOut) -> GBuffer {
         var texColor = sampleAtlas(i.texCoord, ddx, ddy);
         texColor = vec4<f32>(texColor.rgb * i.color, texColor.a);
 
+        // Cutout: hard 0.5 alpha test. A gradient-based "sharpen" ((a-0.5)/fwidth(a)+0.5) would be a no-op here
+        // — dividing by a positive gradient can't move which side of the threshold a texel lands on, and there's
+        // no MSAA/alpha-to-coverage target for a soft coverage value to feed. Foliage stays crisp via the mip
+        // chain (BlockMipChain hole-dilation), not this test.
         if (geo.cutoff != 0u) {
-            // Anti-aliased alpha test: sharpen sampled alpha by its screen-space gradient so cutout foliage
-            // keeps a ~1px edge at every mip instead of dissolving (the median-preserving alpha test).
-            let a = (texColor.a - 0.5) / max(fwidth(texColor.a), 0.0001) + 0.5;
-            if (a < 0.5) { discard; }
+            if (texColor.a < 0.5) { discard; }
+            texColor.a = 1.0;   // opaque past the test (matches EntityGeometry; the G-buffer alpha is otherwise unused)
         }
         diffuse = texColor;
     }

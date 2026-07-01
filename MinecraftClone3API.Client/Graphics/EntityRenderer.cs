@@ -710,6 +710,7 @@ namespace MinecraftClone3API.Graphics
                 GpuBindGroup.Texture(2, _atlasArrays[2].View),
                 GpuBindGroup.Texture(3, _atlasArrays[3].View),
                 GpuBindGroup.Sampler(4, GpuSamplers.Entity),
+                GpuBindGroup.Sampler(5, GpuSamplers.EntityAniso),
             }, "entityAtlas");
         }
 

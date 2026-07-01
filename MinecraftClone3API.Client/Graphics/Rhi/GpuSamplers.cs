@@ -5,20 +5,29 @@ namespace MinecraftClone3API.Graphics.Rhi
     /// <summary>
     /// The shared samplers. Built once after the device exists.
     ///
-    /// <para><b>Block atlas:</b> nearest magnification (crisp pixel-art — the Minecraft look) with trilinear
-    /// minification. WebGPU forbids combining nearest magnification with hardware anisotropy (anisotropy
-    /// requires all-linear filters), so hardware aniso is dropped here; the mip chain plus the foliage
-    /// anti-aliased alpha test carry minification quality. <b>Repeat</b> wrap, since block UVs tile per face.</para>
+    /// <para><b>Block atlas:</b> two samplers the world shader picks between per fragment, because WebGPU can't
+    /// put anisotropy and nearest-magnification on one sampler (aniso requires all-linear filters). <see
+    /// cref="Block"/> is nearest-mag (crisp pixel-art) for the magnifying regime; <see cref="BlockAniso"/> is
+    /// all-linear + 16× anisotropy for the minifying regime, keeping grazing/distant surfaces sharp instead of
+    /// over-blurring to a coarse mip. <b>Repeat</b> wrap, since block UVs tile per face.</para>
     /// </summary>
     public static class GpuSamplers
     {
-        /// <summary>Trilinear-min / nearest-mag, repeat — the block atlas arrays.</summary>
+        /// <summary>Nearest-mag, repeat — the block atlas arrays while magnifying (texel &gt;= pixel).</summary>
         public static GpuSampler Block { get; private set; }
 
-        /// <summary>Trilinear-min / nearest-mag, <b>clamp</b> — entity &amp; worn-armor sheets sampled from the same
-        /// arrays. Their unwraps don't tile (and armor sheets are square-padded with transparent space), so clamp
-        /// stops the wrap from bleeding the opposite edge in at minification.</summary>
+        /// <summary>All-linear + 16× anisotropy, repeat — the block atlas while minifying. Anisotropy needs
+        /// all-linear filters, so it can't also do nearest-mag; the world shader samples this only where a texel
+        /// is smaller than a pixel and uses <see cref="Block"/> (nearest) elsewhere.</summary>
+        public static GpuSampler BlockAniso { get; private set; }
+
+        /// <summary>Nearest-mag, <b>clamp</b> — entity &amp; worn-armor sheets while magnifying. Their unwraps don't
+        /// tile (and armor sheets are transparent-padded), so clamp stops the opposite edge bleeding in.</summary>
         public static GpuSampler Entity { get; private set; }
+
+        /// <summary>All-linear + 16× anisotropy, <b>clamp</b> — entity sheets while minifying (distant/grazing
+        /// mobs and dropped items). Clamp, for the same non-tiling reason as <see cref="Entity"/>.</summary>
+        public static GpuSampler EntityAniso { get; private set; }
 
         /// <summary>Nearest, no mips, clamp — sampling the G-buffer / HDR offscreen attachments.</summary>
         public static GpuSampler Framebuffer { get; private set; }
@@ -36,8 +45,12 @@ namespace MinecraftClone3API.Graphics.Rhi
         {
             Block = new GpuSampler(FilterMode.Linear, FilterMode.Nearest, MipmapFilterMode.Linear,
                 AddressMode.Repeat, label: "block");
+            BlockAniso = new GpuSampler(FilterMode.Linear, FilterMode.Linear, MipmapFilterMode.Linear,
+                AddressMode.Repeat, maxAnisotropy: 16, label: "blockAniso");
             Entity = new GpuSampler(FilterMode.Linear, FilterMode.Nearest, MipmapFilterMode.Linear,
                 AddressMode.ClampToEdge, label: "entity");
+            EntityAniso = new GpuSampler(FilterMode.Linear, FilterMode.Linear, MipmapFilterMode.Linear,
+                AddressMode.ClampToEdge, maxAnisotropy: 16, label: "entityAniso");
             Framebuffer = new GpuSampler(FilterMode.Nearest, FilterMode.Nearest, MipmapFilterMode.Nearest,
                 AddressMode.ClampToEdge, label: "framebuffer");
             Gui = new GpuSampler(FilterMode.Nearest, FilterMode.Nearest, MipmapFilterMode.Nearest,

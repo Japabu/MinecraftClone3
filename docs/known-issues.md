@@ -30,23 +30,14 @@ relevant permanent doc. Not a changelog.
     init) and the split where Core uses literal Silk types while Client/exe keep readability aliases
     (`Vector3`, `Matrix4`, …) — both documented in-code.
 
-- **Alpha-tested foliage seams into "shells" at distance (deferred — needs a real AA pass).** Cutout blocks
-  (`BlockLeaves`/`BlockGlass`, `TransparencyType.Cutoff`) are alpha-tested cubes sampled through the trilinear
-  block-atlas mip chain. Leaf textures are high-frequency cutouts, so every mip level looks meaningfully
-  different (in both alpha *and* colour); at distance perspective compresses each mip-transition blend into
-  ~1 screen pixel, so the chain reads as hard concentric rings ("cubes") centred on the camera that slide as
-  you move. Disabling mips entirely (sampling mip 0) is the only thing that fully kills it. The `fwidth`
-  median-preserving alpha test (in `WorldGeometry.wgsl`) only sharpens the *edge*, not the per-level drift, and
-  freezing just the alpha *test* to mip 0 over mipped colour still seams — so the colour mip chain contributes,
-  not only the alpha.
-  - A per-vertex cutout bit sampling colour *and* alpha at **mip 0** (leaving solid terrain on the full mip
-    chain) would remove the seams — effectively "mipmapped leaves off", à la Minecraft — at the cost of no
-    minification AA on leaves (faint edge shimmer on distant canopy in motion).
-  - The elegant fixes all need an AA pass the deferred renderer doesn't have yet: **hashed alpha testing**
-    (Wyman/McGuire) denoised by **TAA**, **MSAA alpha-to-coverage** (needs a multisampled target — costly in
-    deferred), or brute-force **SSAA** (supersample + downsample, also preserving the crisp pixel-art look).
-    Revisit when an AA/temporal pass lands; until then leaves keep the plain trilinear+`fwidth` path and the
-    seam is accepted.
+- **Cutout foliage still lacks minification AA (faint edge shimmer at distance).** The old mip-transition
+  darkening/"shells" is gone — `BlockMipChain` dilates each cutout's transparent holes so the black RGB under
+  them stops bleeding into minified leaf edges at sample time (see [rendering.md](rendering.md)). What's left
+  is ordinary aliasing of the cutout *edge* itself: the alpha test is a plain hard 0.5 cutoff, so with no
+  multisampled target the silhouette is 1-px hard and distant canopy can shimmer in motion. Anti-aliasing it
+  needs an AA pass the deferred renderer doesn't have: **hashed alpha testing** (Wyman/McGuire) denoised by
+  **TAA**, **MSAA alpha-to-coverage** (needs a multisampled target — costly in deferred), or brute-force
+  **SSAA**. Revisit when an AA/temporal pass lands.
 - **Benchmark screenshots omit the HUD.** `Screenshot` reads the HDR scene target, which is captured *before*
   `Renderer.EndFrame` tonemaps it to the surface and flushes the GUI (`GuiBatch`) over it — so the hotbar,
   crosshair, REC indicator and other overlays are on screen but not in the PNG. Capturing them needs the

@@ -7,9 +7,9 @@ namespace MinecraftClone3API.Graphics.Rhi
 {
     /// <summary>
     /// A GPU texture plus a cached default view. Covers 2D render targets (G-buffer, HDR, depth), the block
-    /// atlas texture-arrays, and 2D sprite textures. Mip generation for sampled textures is done on the GPU
-    /// by <see cref="MipGenerator"/> (compute), so a mipped texture is created with
-    /// <see cref="TextureUsage.StorageBinding"/> as well.
+    /// atlas texture-arrays, and 2D sprite textures. Block-atlas mips are generated on the CPU
+    /// (<see cref="BlockMipChain"/>) and uploaded level by level, so a mipped texture needs only
+    /// <see cref="TextureUsage.CopyDst"/>, no storage binding.
     /// </summary>
     public sealed unsafe class GpuTexture : IDisposable
     {
